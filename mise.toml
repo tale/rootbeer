@@ -1,3 +1,4 @@
 [tools]
-meson = "1"
 lua = "5.4"
+meson = "1"
+ninja = "1"
