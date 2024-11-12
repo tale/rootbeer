@@ -1,6 +1,6 @@
-# Architect (WIP Name)
+# Rootbeer
 
-Architect is meant to be a really crappy knock-off of nix's home-manager.
+Rootbeer is meant to be a really crappy knock-off of nix's home-manager.
 
 It will be packaged together as a usable CLI tool!
 
