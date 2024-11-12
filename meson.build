@@ -6,6 +6,9 @@ project('rootbeer', 'c',
 
 sources = [
   'src/main.c',
+  'src/config/load.c',
+  'src/config/module.c',
+  'src/config/functions/debug_test.c'
 ]
 
 executable('rootbeer', sources,

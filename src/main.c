@@ -4,12 +4,7 @@
 #include <luajit.h>
 
 #include "rootbeer.h"
-
-int test_from_c(lua_State *L) {
-	const char *str = lua_tostring(L, 1);
-	printf("Hello from C: %s\n", str);
-	return 1;
-}
+#include "lua_module.h"
 
 int main(const int argc, const char *argv[]) {
 	if (argc != 2) {
@@ -20,7 +15,7 @@ int main(const int argc, const char *argv[]) {
 	const char *filename = argv[1];
 	lua_State *L = luaL_newstate();
 	luaL_openlibs(L);
-	lua_register(L, "test_from_c", test_from_c);
+	rb_lua_create_module(L);
 
 	if (luaL_dofile(L, filename) != LUA_OK) {
 		printf("Error: %s\n", lua_tostring(L, -1));
