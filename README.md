@@ -1,4 +1,4 @@
-# Rootbeer (Name still WIP)
+# Rootbeer
 > Deterministically manage your system configuration with lua!
 
 This tool aims to make managing your system configuration easy.
