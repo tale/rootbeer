@@ -13,7 +13,9 @@ sources = [
   'src/cli/parse.c',
   'src/cli/commands.c',
   'src/cli/commands/compose.c',
-  'src/cli/commands/store.c'
+  'src/cli/commands/store.c',
+
+  'src/store/manage.c'
 ]
 
 executable('rootbeer', sources,
