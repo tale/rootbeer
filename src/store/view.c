@@ -35,8 +35,6 @@ rb_revision_t **rb_store_get_all(int count) {
 		return NULL;
 	}
 
-	printf("count: %d\n", count);
-
 	rb_revision_t **revs = malloc(count * sizeof(rb_revision_t *));
 	if (revs == NULL) {
 		return NULL;

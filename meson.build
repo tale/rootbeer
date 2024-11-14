@@ -15,9 +15,10 @@ sources = [
   'src/cli/commands/compose.c',
   'src/cli/commands/store.c',
 
+  'src/store/create.c',
+  'src/store/current.c',
   'src/store/manage.c',
   'src/store/read.c',
-  'src/store/current.c',
   'src/store/view.c',
 ]
 

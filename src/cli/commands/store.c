@@ -54,12 +54,14 @@ int rb_cli_store_list() {
 	rb_revision_t **revs = rb_store_get_all(count);
 	for (int i = 0; i < count; i++) {
 		rb_revision_t *rev = revs[i];
-		printf("Revision %d\n", rev->id);
-		printf("Name: %s\n", rev->name);
-		printf("Timestamp: %s", asctime(localtime(&rev->timestamp)));
-		printf("Config files count: %d\n", rev->cfg_filesc);
-		printf("Reference files count: %d\n", rev->ref_filesc);
-		printf("\n");
+		char time_buf[64];
+
+		strftime(
+			time_buf, sizeof(time_buf),
+			"%Y-%m-%d %H:%M:%S", localtime(&rev->timestamp)
+		);
+
+		printf("[%d] %s (%s)\n", rev->id, rev->name, time_buf);
 	}
 
 	return 0;
