@@ -8,7 +8,12 @@ sources = [
   'src/main.c',
   'src/config/load.c',
   'src/config/module.c',
-  'src/config/functions/debug_test.c'
+  'src/config/functions/debug_test.c',
+
+  'src/cli/parse.c',
+  'src/cli/commands.c',
+  'src/cli/commands/compose.c',
+  'src/cli/commands/store.c'
 ]
 
 executable('rootbeer', sources,
