@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.20)
 set(PROJECT rootbeer)
 project(${PROJECT})
 
+include(cmake/luajit.cmake)
+
 set(SOURCES
     "src/main.c"
     "src/config/load.c"
@@ -27,17 +29,18 @@ add_executable(${PROJECT}
 
 target_include_directories(${PROJECT} PUBLIC
     "include/"
-    "${CMAKE_BINARY_DIR}/luajit/src/luajit/src/"
+    "${LUAJIT_INSTALL_PATH}/src/"
 )
 
 target_link_directories(${PROJECT} PUBLIC
-    "${CMAKE_BINARY_DIR}/luajit/src/luajit/lib"
-    "${CMAKE_BINARY_DIR}/luajit/src/luajit/src"
+    "${CMAKE_BINARY_DIR}"
+    "${CMAKE_BINARY_DIR}/lib"
 )
 
 target_link_libraries(${PROJECT} PUBLIC
     luajit
+    m # required for LUAJIT_EMBEDDED
 )
 
-include(cmake/luajit.cmake)
+add_dependencies(${PROJECT} luajit-lib)
 
