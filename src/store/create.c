@@ -155,8 +155,9 @@ int rb_store_dump_revision(rb_lua_t *ctx) {
 	assert(rev->pwd != NULL);
 	assert(realpath(ctx->config_root, rev->pwd) != NULL);
 
-	rev->cfg_filesv = malloc(ctx->req_filesc * sizeof(char *));
-	rev->cfg_filesc = ctx->req_filesc;
+	int file_count = ctx->req_filesc + 1; // Include the entry point file
+	rev->cfg_filesv = malloc(sizeof(char *) * file_count);
+	rev->cfg_filesc = file_count;
 
 	// Resolve the entry point file and add it to the cfg files
 	char entry_point[PATH_MAX];
@@ -164,11 +165,10 @@ int rb_store_dump_revision(rb_lua_t *ctx) {
 
 	rev->cfg_filesv[0] = malloc(strlen(entry_point) - strlen(rev->pwd));
 	sprintf(rev->cfg_filesv[0], "%s", entry_point + strlen(rev->pwd) + 1);
-	rev->cfg_filesc++;
 
 	// Resolve all the config file paths and trim off the PWD
 	// since we are storing the hierarchy as-is on disk
-	for (int i = 1; i < ctx->req_filesc; i++) {
+	for (int i = 1; i < file_count; i++) {
 		char cfg_file[PATH_MAX];
 		realpath(ctx->req_filesv[i - 1], cfg_file);
 
