@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <libgen.h>
 #include <sys/stat.h>
+#include "lua_module.h"
 
 #define STORE_ROOT "/opt/rootbeer"
 
@@ -22,6 +23,7 @@ typedef struct {
 	int id; // Revisions count up from 0
 	char *name; // Name of the revision (optional)
 	time_t timestamp; // Unix timestamp
+	char *pwd; // PWD for the config and reference files
 	
 	char **cfg_filesv; // Array of config file paths
 	int cfg_filesc; // Number of config files
@@ -40,16 +42,28 @@ typedef struct {
 // - STORE_ROOT/_current: contains the number of the current revision
 // - STORE_ROOT/_gen: generated files from the current revision
 
-int rb_store_get_revision_count();
+// Operations that our store needs to support:
+// - Get the current revision
+// - Set the current revision
+// - Get a revision through ID
+// - Get all revisions as an array
+// - Get the ID for a new revision
+//
+// - Initialize the store and create necessary structure
+// - Destroy the store and remove all data (who knows)
+// - Given a revision, save it to the store
+
+rb_revision_t *rb_store_get_current_revision();
+rb_revision_t *rb_store_get_revision_by_id(const int id);
 rb_revision_t **rb_store_get_all(int count);
+
+int rb_store_set_current_revision(const int id);
+int rb_store_get_revision_count();
+int rb_store_next_id();
 
 void rb_store_init_or_die();
 void rb_store_destroy();
 
-int rb_dump_revision(rb_revision_t *revision);
-
-rb_revision_t *rb_store_get_current_revision();
-rb_revision_t *rb_store_get_revision_by_id(const int id);
-int rb_store_set_current_revision(const int id);
+int rb_store_dump_revision(rb_lua_t *ctx);
 
 #endif // STORE_MODULE_H

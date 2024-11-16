@@ -35,3 +35,13 @@ int rb_store_set_current_revision(const int id) {
 	fclose(file);
 	return 0;
 }
+
+// Returns the ID for the next revision.
+int rb_store_next_id() {
+	rb_revision_t *rev = rb_store_get_current_revision();
+	if (rev == NULL) {
+		return 0;
+	}
+
+	return rev->id + 1;
+}
