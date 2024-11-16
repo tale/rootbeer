@@ -14,7 +14,7 @@ int lua_mod_entrypoint(lua_State *L) {
 	return 1;
 }
 
-void rb_lua_create_module(lua_State *L) {
+void rb_lua_register_module(lua_State *L) {
 	lua_pushcfunction(L, lua_mod_entrypoint);
 	lua_setfield(L, LUA_REGISTRYINDEX, "rootbeer");
 

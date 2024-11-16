@@ -6,8 +6,8 @@ project('rootbeer', 'c',
 
 sources = [
   'src/main.c',
-  'src/config/load.c',
-  'src/config/module.c',
+  'src/config/lua_init.c',
+  'src/config/lua_module.c',
   'src/config/functions/debug_test.c',
 
   'src/cli/parse.c',
@@ -20,6 +20,9 @@ sources = [
   'src/store/manage.c',
   'src/store/read.c',
   'src/store/view.c',
+
+  'src/util/fs.c',
+  'src/util/log.c'
 ]
 
 executable('rootbeer', sources,
