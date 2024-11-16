@@ -16,7 +16,7 @@ void rb_cli_print_help();
 
 // Individual commands
 int rb_cli_store(const int argc, const char *argv[]);
-int rb_cli_compose(const int argc, const char *argv[]);
+int rb_cli_apply(const int argc, const char *argv[]);
 
 #endif // CLI_MODULE_H
 

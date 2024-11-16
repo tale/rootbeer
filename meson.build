@@ -12,7 +12,7 @@ sources = [
 
   'src/cli/parse.c',
   'src/cli/commands.c',
-  'src/cli/commands/compose.c',
+  'src/cli/commands/apply.c',
   'src/cli/commands/store.c',
 
   'src/store/create.c',
