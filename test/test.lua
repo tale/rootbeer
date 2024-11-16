@@ -17,3 +17,6 @@ local table = {
 for key, value in pairs(table) do
 	print('Key: ' .. key .. ', Value: ' .. value)
 end
+
+require('tale.test2')
+require('test3')
