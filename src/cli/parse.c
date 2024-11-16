@@ -7,11 +7,11 @@ int rb_cli_main(const int argc, const char *argv[]) {
 	}
 
 	if (strcmp(argv[1], "store") == 0) {
-		return rb_cli_store(argc - 1, argv + 1);
+		return rb_cli_store(argc, argv);
 	}
 
-	if (strcmp(argv[1], "compose") == 0) {
-		return rb_cli_compose(argc - 1, argv + 1);
+	if (strcmp(argv[1], "apply") == 0) {
+		return rb_cli_apply(argc, argv);
 	}
 
 	rb_cli_print_help();

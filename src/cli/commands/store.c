@@ -71,26 +71,26 @@ int rb_cli_store_list() {
 // This includes initializing the store, creating new revisions, switching
 // to a specific revision, and listing all revisions.
 int rb_cli_store(const int argc, const char *argv[]) {
-	if (strcmp(argv[1], "init") == 0) {
+	if (strcmp(argv[2], "init") == 0) {
 		return rb_cli_store_init();
 	}
 
-	if (strcmp(argv[1], "destroy") == 0) {
+	if (strcmp(argv[2], "destroy") == 0) {
 		return rb_cli_store_destroy();
 	}
 
-	if (strcmp(argv[1], "list") == 0) {
+	if (strcmp(argv[2], "list") == 0) {
 		return rb_cli_store_list();
 	}
 
-	if (strcmp(argv[1], "read") == 0) {
-		if (argc < 3) {
+	if (strcmp(argv[2], "read") == 0) {
+		if (argc < 4) {
 			// Return the current revision if no id is provided.
 			return rb_cli_store_read(-1);
 		}
 
 		int id;
-		int res = sscanf(argv[2], "%d", &id);
+		int res = sscanf(argv[3], "%d", &id);
 		if (res != 1) {
 			printf("Invalid revision id.\n");
 			return 1;
