@@ -29,18 +29,18 @@ add_executable(${PROJECT}
 
 target_include_directories(${PROJECT} PUBLIC
     "include/"
-    "${LUAJIT_INSTALL_PATH}/src/"
+    "${LUAJIT_INCLUDE_DIRS}"
 )
 
+# required for linking with built externals
 target_link_directories(${PROJECT} PUBLIC
-    "${CMAKE_BINARY_DIR}"
-    "${CMAKE_BINARY_DIR}/lib"
+     "${CMAKE_BINARY_DIR}"
+     "${CMAKE_BINARY_DIR}/lib"
 )
 
 target_link_libraries(${PROJECT} PUBLIC
-    luajit
-    m # required for LUAJIT_EMBEDDED
+    "${LUAJIT_LIBRARIES}"
 )
 
-add_dependencies(${PROJECT} luajit-lib)
+add_dependencies(${PROJECT} luajit-external)
 
