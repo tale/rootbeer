@@ -10,9 +10,12 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <stdarg.h>
+#include <errno.h>
+#include <limits.h>
 
 // Utility functions (which are assert friendly)
-int rb_create_dir(const char *path);
+int rb_create_dir(char *path);
+int rb_copy_file(const char *src, const char *dst);
 char **rb_recurse_files(const char *path, int *count);
 
 void rb_fatal(const char *format, ...);

@@ -1,144 +1,100 @@
 #include "store_module.h"
+#include "rootbeer.h"
 
-// General purpose function used to dump the cfg and ref files of a revision
-int rb_dump_revision_files(rb_revision_t *revision, char *dir, char type) {
-	// Make the directory
-	char *files_path = malloc(
-		strlen(STORE_ROOT) + strlen("/store") + 10 + strlen(dir) + 1
-	);
+// Generic function used to copy context files to the store path
+int rb_store_copy_files(rb_revision_t *rev) {
+	char store_path[PATH_MAX];
+	sprintf(store_path, "%s/store/%d", STORE_ROOT, rev->id);
 
-	sprintf(files_path, "%s/store/%d/%s", STORE_ROOT, revision->id, dir);
+	// Assert because this is entirely a developer error
+	assert(access(store_path, F_OK) == 0);
 
-	if (access(files_path, F_OK) == 0) {
-		printf("error: directory already exists\n");
-		free(files_path);
-		return 1;
-	}
+	char cfg_dir[PATH_MAX];
+	char ref_dir[PATH_MAX];
 
-	if (mkdir(files_path, 0755) != 0) {
-		printf("error: could not create directory\n");
-		free(files_path);
-		return 1;
-	}
+	sprintf(cfg_dir, "%s/%s", store_path, "cfg");
+	sprintf(ref_dir, "%s/%s", store_path, "ref");
 
-	// Copy over the files
-	char **files;
-	int count;
+	// Copy the config files
+	for (int i = 0; i < rev->cfg_filesc; i++) {
+		char src[PATH_MAX];
+		char dst[PATH_MAX];
 
-	switch (type) {
-		case 'c':
-			files = revision->cfg_filesv;
-			count = revision->cfg_filesc;
-			break;
-		case 'r':
-			files = revision->ref_filesv;
-			count = revision->ref_filesc;
-			break;
-		default:
-			printf("error: invalid type\n");
-			free(files_path);
+		sprintf(src, "%s/%s", rev->pwd, rev->cfg_filesv[i]);
+		sprintf(dst, "%s/%s", cfg_dir, rev->cfg_filesv[i]);
+
+		if (rb_copy_file(src, dst) != 0) {
 			return 1;
+		}
 	}
 
-	for (int i = 0; i < count; i++) {
-		char *file_path = malloc(strlen(files_path) + strlen(files[i]) + 1);
-		sprintf(file_path, "%s/%s", files_path, files[i]);
+	// Copy the reference files
+	for (int i = 0; i < rev->ref_filesc; i++) {
+		char src[PATH_MAX];
+		char dst[PATH_MAX];
 
-		if (access(file_path, F_OK) == 0) {
-			printf("error: file already exists\n");
-			free(file_path);
-			continue;
+		sprintf(src, "%s/%s", rev->pwd, rev->ref_filesv[i]);
+		sprintf(dst, "%s/%s", ref_dir, rev->ref_filesv[i]);
+
+		if (rb_copy_file(src, dst) != 0) {
+			return 1;
 		}
-
-		printf("copying %s to %s\n", files[i], file_path);
-		FILE *file = fopen(file_path, "w");
-		if (file == NULL) {
-			printf("error: could not open file\n");
-			free(file_path);
-			continue;
-		}
-
-		fclose(file);
-		free(file_path);
 	}
 
-	free(files_path);
 	return 0;
 }
 
-// Dumps a revision to the store
-int rb_dump_revision(rb_revision_t *revision) {
-	assert(revision != NULL);
-	assert(getuid() == 0);
+// Exports our rb_revision_t to the actual store on disk
+int rb_store_revision_to_disk(rb_revision_t *rev) {
+	char store_path[PATH_MAX];
+	sprintf(store_path, "%s/store/%d", STORE_ROOT, rev->id);
 
-	char *store_path = malloc(strlen(STORE_ROOT) + strlen("/store") + 10 + 1);
-	sprintf(store_path, "%s/store/%d", STORE_ROOT, revision->id);
-	printf("store path: %s\n", store_path);
+	// Assert because this is entirely a developer error
+	assert(access(store_path, F_OK) != 0);
 
-	if (access(store_path, F_OK) == 0) {
-		printf("error: revision already exists\n");
-		free(store_path);
-		return 1;
-	}
-
+	// Create the directory for the revision
 	if (mkdir(store_path, 0755) != 0) {
-		printf("error: could not create revision directory\n");
-		free(store_path);
 		return 1;
 	}
 
-	char *meta_path = malloc(strlen(store_path) + strlen("/_meta") + 1);
+	// Write the meta file
+	char meta_path[PATH_MAX];
 	sprintf(meta_path, "%s/_meta", store_path);
+	FILE *m_file = fopen(meta_path, "w");
 
-	FILE *meta_file = fopen(meta_path, "w");
-	if (meta_file == NULL) {
-		printf("error: could not open meta file\n");
-		free(store_path);
-		free(meta_path);
+	// TODO: Debug log all these returns
+	if (m_file == NULL) {
 		return 1;
 	}
 
-	fprintf(meta_file, "name: %s\n", revision->name);
-	fprintf(meta_file, "timestamp: %ld\n", revision->timestamp);
+	fprintf(m_file, "name=%s\n", rev->name);
+	fprintf(m_file, "timestamp=%ld\n", rev->timestamp);
+	fprintf(m_file, "cfg_files=");
 
-	fprintf(meta_file, "cfg_files: ");
-	for (int i = 0; i < revision->cfg_filesc; i++) {
-		fprintf(meta_file, "%s", basename(revision->cfg_filesv[i]));
-		if (i != revision->cfg_filesc - 1) {
-			fprintf(meta_file, ",");
-		} else {
-			fprintf(meta_file, "\n");
+	for (int i = 0; i < rev->cfg_filesc; i++) {
+		fprintf(m_file, "%s", rev->cfg_filesv[i]);
+		if (i != rev->cfg_filesc - 1) {
+			fprintf(m_file, ",");
 		}
 	}
 
-	fprintf(meta_file, "ref_files: ");
-	for (int i = 0; i < revision->ref_filesc; i++) {
-		fprintf(meta_file, "%s", basename(revision->ref_filesv[i]));
-		if (i != revision->ref_filesc - 1) {
-			fprintf(meta_file, ",");
-		} else {
-			fprintf(meta_file, "\n");
+	fprintf(m_file, "\nref_files=");
+	for (int i = 0; i < rev->ref_filesc; i++) {
+		fprintf(m_file, "%s", rev->ref_filesv[i]);
+		if (i != rev->ref_filesc - 1) {
+			fprintf(m_file, ",");
 		}
 	}
 
-	fprintf(meta_file, "\n");
-	fclose(meta_file);
-	free(meta_path);
+	fprintf(m_file, "\n");
+	fclose(m_file);
 
-	// Copy over the files into the cfg and ref directories
-	if (rb_dump_revision_files(revision, "cfg", 'c') != 0) {
-		free(store_path);
-		return 1;
-	}
-
-	if (rb_dump_revision_files(revision, "ref", 'r') != 0) {
-		free(store_path);
-		return 1;
-	}
-
-	return 0;
+	return rb_store_copy_files(rev);
 }
 
+
+// Given a context from our lua execution, convert it into an rb_revision_t
+// and then dump it into the store with the next available ID.
 int rb_store_dump_revision(rb_lua_t *ctx) {
 	assert(getuid() == 0); // We need to be root to dump a revision
 
@@ -179,18 +135,12 @@ int rb_store_dump_revision(rb_lua_t *ctx) {
 		sprintf(rev->cfg_filesv[i], "%s", cfg_file + strlen(rev->pwd) + 1);
 	}
 
-	// Print all revision data
-	printf("revision id: %d\n", rev->id);
-	printf("revision name: %s\n", rev->name);
-	printf("revision timestamp: %s", ctime(&rev->timestamp));
-	printf("revision pwd: %s\n", rev->pwd);
-	printf("revision cfg files:\n");
-	for (int i = 0; i < rev->cfg_filesc; i++) {
-		printf("  %s\n", rev->cfg_filesv[i]);
+	if (rb_store_revision_to_disk(rev) != 0) {
+		fprintf(stderr, "error: failed to store revision\n");
+		return 1;
 	}
 
-	/*rb_store_set_current_revision(rev->id);*/
+	rb_store_set_current_revision(rev->id);
 	return 0;
-	/*return rb_dump_revision(rev);*/
 }
 
