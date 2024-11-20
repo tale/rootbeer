@@ -31,16 +31,9 @@ jobs:
 
       - name: Cache Dependencies
         uses: actions/cache@v4
-        id: cache-deps
         with:
-          path: |
-            subprojects/**
-            !subprojects/*.wrap
-          key: deps-${{ runner.os }}-${{ hashFiles('subprojects/*.wrap') }}
-
-      - name: Setup Dependencies
-        if: steps.cache-deps.outputs.cache-hit != 'true'
-        run: mise run setup
+          path: build
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
       - name: Build
         run: mise run build
