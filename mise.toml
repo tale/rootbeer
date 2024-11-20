@@ -2,6 +2,7 @@
 PATH = "./build:{{env.PATH}}"
 
 [tools]
+cmake = "3"
 lua = "5.4"
 meson = "1"
 ninja = "1"
