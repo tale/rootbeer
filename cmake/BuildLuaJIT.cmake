@@ -21,7 +21,7 @@ ExternalProject_Add(luajit-extern
 
 ExternalProject_Get_Property(luajit-extern SOURCE_DIR)
 set(LUAJIT_INCLUDE_DIR ${SOURCE_DIR}/src)
-set(LUAJIT_LIBRARIES ${SOURCE_DIR}/src/libluajit.a)
+set(LUAJIT_LIBRARIES ${SOURCE_DIR}/src/libluajit.so)
 mark_as_advanced(LUAJIT_INCLUDE_DIR LUAJIT_LIBRARIES)
 
 add_library(LuaJIT STATIC IMPORTED)
