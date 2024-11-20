@@ -1,6 +1,10 @@
 # Minimum version is 3.19 to support Apple Silicon
 cmake_minimum_required(VERSION 3.19...3.31)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(PROJECT rootbeer)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+include(LuaJIT)
 
 project(
 	${PROJECT}
@@ -9,11 +13,6 @@ project(
 	HOMEPAGE_URL "https://github.com/tale/rootbeer"
 	LANGUAGES C
 )
-
-# Support for clangd if you want autocomplete
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-include(cmake/luajit.cmake)
 
 add_executable(${PROJECT}
     src/main.c
@@ -43,19 +42,10 @@ set_property(TARGET ${PROJECT} PROPERTY C_EXTENSIONS OFF)
 
 # Nothing should be linking to the rootbeer executable
 target_include_directories(${PROJECT} PUBLIC
-	"${CMAKE_CURRENT_SOURCE_DIR}/include"
-	"${LUAJIT_INCLUDE_DIRS}"
-)
-
-# required for linking with built externals
-target_link_directories(${PROJECT} PUBLIC
-     "${CMAKE_BINARY_DIR}"
-     "${CMAKE_BINARY_DIR}/lib"
+	"${CMAKE_SOURCE_DIR}/include"
+	"${LUAJIT_INCLUDE_DIR}"
 )
 
 target_link_libraries(${PROJECT} PUBLIC
-    "${LUAJIT_LIBRARIES}"
+	${LUAJIT_LIBRARIES}
 )
-
-add_dependencies(${PROJECT} luajit-external)
-
