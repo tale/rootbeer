@@ -35,10 +35,10 @@ add_executable(${PROJECT}
 	src/util/log.c
 )
 
-# Enforce C99 without extensions and with the standard library
+# Enforce C99 with extensions and with the standard library
 set_property(TARGET ${PROJECT} PROPERTY C_STANDARD 99)
 set_property(TARGET ${PROJECT} PROPERTY C_STANDARD_REQUIRED ON)
-set_property(TARGET ${PROJECT} PROPERTY C_EXTENSIONS OFF)
+set_property(TARGET ${PROJECT} PROPERTY C_EXTENSIONS ON)
 
 # Nothing should be linking to the rootbeer executable
 target_include_directories(${PROJECT} PUBLIC
