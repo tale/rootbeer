@@ -3,23 +3,20 @@ PATH = "./build:{{env.PATH}}"
 
 [tools]
 cmake = "3"
-lua = "5.4"
-meson = "1"
-ninja = "1"
+lua = "5.1"
 
 [tasks.setup]
 description = "Setup the project"
-run = "test -d build/build.ninja || meson setup build"
+run = "test -d build || cmake -S . -B build"
 alias = "s"
 
 [tasks.build]
 description = "Build the project"
+run = "cmake --build build"
 depends = ["setup"]
-run = "meson compile"
-dir = "build"
 alias = "b"
 
 [tasks.clean]
 description = "Clean the project"
-run = "rm -rf build"
+run = "cmake --build build --target clean"
 alias = "c"
