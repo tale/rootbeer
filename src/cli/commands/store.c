@@ -71,6 +71,10 @@ int rb_cli_store_list() {
 // This includes initializing the store, creating new revisions, switching
 // to a specific revision, and listing all revisions.
 int rb_cli_store(const int argc, const char *argv[]) {
+	if (argc < 3) {
+		puts("Not enough arguments");
+	}	
+
 	if (strcmp(argv[2], "init") == 0) {
 		return rb_cli_store_init();
 	}
