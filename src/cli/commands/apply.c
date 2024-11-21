@@ -1,6 +1,7 @@
 #include "cli_module.h"
 #include "lua_module.h"
 #include "store_module.h"
+#include "rootbeer.h"
 
 // The apply command is where we tell rootbeer to interpret the lua
 // configuration and create a new system configuration revision.
@@ -29,15 +30,21 @@ int rb_cli_apply(const int argc, const char *argv[]) {
 		return 1;
 	}
 
-	rb_lua_t ctx;
-	ctx.config_file = (char *)argv[2];
-	rb_lua_setup_context(&ctx);
+	rb_lua_t *ctx = malloc(sizeof(rb_lua_t));
+	if (ctx == NULL) {
+		// Error out here explicitly because we exit on this failure
+		rb_fatal("Could not allocate memory for lua context");
+		return 1;
+	}
 
-	int status = luaL_dofile(ctx.L, ctx.config_file);
+	ctx->config_file = (char *)argv[2];
+	rb_lua_setup_context(ctx);
+
+	int status = luaL_dofile(ctx->L, ctx->config_file);
 	if (status != LUA_OK) {
 		fprintf(stderr, "Failed to execute lua configuration:\n");
-		fprintf(stderr, "%s\n", lua_tostring(ctx.L, -1));
-		lua_pop(ctx.L, 1);
+		fprintf(stderr, "%s\n", lua_tostring(ctx->L, -1));
+		lua_pop(ctx->L, 1);
 		return 1;
 	}
 
@@ -47,8 +54,12 @@ int rb_cli_apply(const int argc, const char *argv[]) {
 		return 1;
 	}
 
-	rb_store_dump_revision(&ctx);
-	lua_close(ctx.L);
+	rb_store_dump_revision(ctx);
+	lua_close(ctx->L);
+
+	// TODO: Context teardown function
+	free(ctx->config_root);
+	free(ctx);
 
 	printf("Revision created successfully\n");
 	return 0;

@@ -15,21 +15,22 @@ project(
 )
 
 add_executable(${PROJECT}
-    src/main.c
-    src/config/lua_init.c
-    src/config/lua_module.c
-    src/config/functions/debug_test.c
+	src/main.c
+	src/config/lua_init.c
+	src/config/lua_module.c
+	src/config/functions/debug_test.c
+	src/config/functions/ref_file.c
 
-    src/cli/parse.c
-    src/cli/commands.c
-    src/cli/commands/apply.c
-    src/cli/commands/store.c
+	src/cli/parse.c
+	src/cli/commands.c
+	src/cli/commands/apply.c
+	src/cli/commands/store.c
 
-    src/store/create.c
-    src/store/current.c
-    src/store/manage.c
-    src/store/read.c
-    src/store/view.c
+	src/store/create.c
+	src/store/current.c
+	src/store/manage.c
+	src/store/read.c
+	src/store/view.c
 
 	src/util/fs.c
 	src/util/log.c

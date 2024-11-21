@@ -17,6 +17,7 @@
 // passed into lua context using luaL_newlib.
 
 int rb_lua_debug_test(lua_State *L);
+int rb_lua_ref_file(lua_State *L);
 
 // These functions are all used to help load the module into lua
 // Additionally, we need a context struct to keep track of information
@@ -29,10 +30,14 @@ typedef struct {
 
 	char **req_filesv;
 	int req_filesc;
+
+	char **ref_filesv;
+	int ref_filesc;
 } rb_lua_t;
 
 void rb_lua_setup_context(rb_lua_t *ctx);
 void rb_lua_register_module(lua_State *L);
+rb_lua_t *rb_lua_get_ctx(lua_State *L);
 
 int rb_lua_create_vm_sandbox(lua_State *L, const char *filename);
 

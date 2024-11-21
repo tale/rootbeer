@@ -4,7 +4,7 @@
 // This is the require hook that we use to gather a list of required
 // files so that we can store these in the revision later.
 int rb_lua_require_hook(lua_State *L) {
-	rb_lua_t *ctx = lua_touserdata(L, lua_upvalueindex(1));
+	rb_lua_t *ctx = rb_lua_get_ctx(L);
 	const char *modname = luaL_checkstring(L, 1);
 
 	// Call the old require function to actually load the module
@@ -96,7 +96,14 @@ void rb_lua_setup_context(rb_lua_t *ctx) {
 	ctx->req_filesv = malloc(100 * sizeof(char *));
 	ctx->req_filesc = 0;
 
-	lua_pushlightuserdata(ctx->L, ctx);
+	ctx->ref_filesv = malloc(100 * sizeof(char *));
+	ctx->ref_filesc = 0;
+
+	// Use the retrieval function as the ID for the context
+	lua_pushlightuserdata(ctx->L, (void *)rb_lua_get_ctx);
+	lua_pushlightuserdata(ctx->L, (void *)ctx);
+	lua_settable(ctx->L, LUA_REGISTRYINDEX);
+
 	lua_pushcclosure(ctx->L, rb_lua_require_hook, 1);
 	lua_setglobal(ctx->L, "require");
 }

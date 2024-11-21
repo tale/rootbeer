@@ -20,3 +20,6 @@ end
 
 require('tale.test2')
 require('test3')
+
+rb.ref_file('./test.bash')
+-- rb.ref_file('./noexist.bash')
