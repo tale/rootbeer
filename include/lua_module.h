@@ -16,6 +16,9 @@
 // All the functions are packed together into a single struct that is
 // passed into lua context using luaL_newlib.
 
+#define LUAFILES_MAX 100
+#define REFFILES_MAX 100
+
 int rb_lua_debug_test(lua_State *L);
 int rb_lua_ref_file(lua_State *L);
 

@@ -4,8 +4,10 @@ int rb_lua_ref_file(lua_State *L) {
 	rb_lua_t *ctx = rb_lua_get_ctx(L);
 	const char *str = luaL_checkstring(L, 1);
 
-	if (ctx->ref_filesc == 100) { // TODO: Define these as constants
-		return luaL_error(L, "Maximum file reference limit was reached");
+	if (ctx->ref_filesc == REFFILES_MAX) {
+		char error_buf[2048];
+		sprintf(error_buf, "Maximum file references reached: %d", REFFILES_MAX);
+		return luaL_error(L, error_buf);
 	}
 
 	// See if we can even resolve the file or not

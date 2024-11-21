@@ -92,11 +92,10 @@ void rb_lua_setup_context(rb_lua_t *ctx) {
 	lua_getglobal(ctx->L, "require");
 	lua_setglobal(ctx->L, "old_require");
 
-	// Is 100 enough? I don't know, but it's a good start.
-	ctx->req_filesv = malloc(100 * sizeof(char *));
+	ctx->req_filesv = malloc(LUAFILES_MAX * sizeof(char *));
 	ctx->req_filesc = 0;
 
-	ctx->ref_filesv = malloc(100 * sizeof(char *));
+	ctx->ref_filesv = malloc(REFFILES_MAX * sizeof(char *));
 	ctx->ref_filesc = 0;
 
 	// Use the retrieval function as the ID for the context
