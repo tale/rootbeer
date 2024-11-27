@@ -5,6 +5,7 @@ set(PROJECT rootbeer)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(LuaJIT)
+include(TapeCLI)
 
 project(
 	${PROJECT}
@@ -49,4 +50,8 @@ target_include_directories(${PROJECT} PUBLIC
 
 target_link_libraries(${PROJECT} PUBLIC
 	${LUAJIT_LIBRARIES}
+)
+
+target_link_libraries(${PROJECT} PRIVATE
+	${PROJECT}_cli
 )

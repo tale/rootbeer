@@ -1,6 +1,20 @@
 #include "cli_module.h"
 #include "store_module.h"
 
+// The store command is used to manage the revision store for the system.
+// This includes initializing the store, creating new revisions, switching
+// to a specific revision, and listing all revisions.
+
+// TODO: Recursive subcommands struct
+void rb_cli_store_print_usage() {
+	printf("Usage: rootbeer store <command>\n");
+	printf("Commands:\n");
+	printf("  init: Initialize the revision store\n");
+	printf("  destroy: Destroy the revision store\n");
+	printf("  list: List all revisions\n");
+	printf("  read: Read a specific revision\n");
+}
+
 int rb_cli_store_init() {
 	rb_store_init_or_die();
 	return 0;
@@ -67,10 +81,7 @@ int rb_cli_store_list() {
 	return 0;
 }
 
-// The store command is used to manage the revision store for the system.
-// This includes initializing the store, creating new revisions, switching
-// to a specific revision, and listing all revisions.
-int rb_cli_store(const int argc, const char *argv[]) {
+int rb_cli_store_func(const int argc, const char *argv[]) {
 	if (strcmp(argv[2], "init") == 0) {
 		return rb_cli_store_init();
 	}
@@ -101,3 +112,10 @@ int rb_cli_store(const int argc, const char *argv[]) {
 
 	return 0;
 }
+
+rb_cli_cmd store = {
+	"store",
+	"Command to view, manipulate, and go through your revision store",
+	rb_cli_store_print_usage,
+	rb_cli_store_func
+};

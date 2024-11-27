@@ -5,7 +5,12 @@
 
 // The apply command is where we tell rootbeer to interpret the lua
 // configuration and create a new system configuration revision.
-int rb_cli_apply(const int argc, const char *argv[]) {
+
+void rb_cli_apply_print_usage() {
+	printf("Usage: rootbeer apply <config file>\n");
+}
+
+int rb_cli_apply_func(const int argc, const char *argv[]) {
 	// Check for sudo permissions
 	if (geteuid() != 0) {
 		fprintf(stderr, "error: rootbeer apply must be run as root\n");
@@ -64,3 +69,10 @@ int rb_cli_apply(const int argc, const char *argv[]) {
 	printf("Revision created successfully\n");
 	return 0;
 }
+
+rb_cli_cmd apply = {
+	"apply",
+	"Apply a lua configuration and generate a new revision for your system",
+	rb_cli_apply_print_usage,
+	rb_cli_apply_func
+};
