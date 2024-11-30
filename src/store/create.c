@@ -92,6 +92,38 @@ int rb_store_revision_to_disk(rb_revision_t *rev) {
 	return rb_store_copy_files(rev);
 }
 
+int rb_store_copy_and_resolve_files(rb_lua_t *ctx, rb_revision_t *rev) {
+	// Resolve the entry point file and add it to the cfg files
+	char entry_point[PATH_MAX];
+	realpath(ctx->config_file, entry_point);
+
+	rev->cfg_filesv[0] = malloc(strlen(entry_point) - strlen(rev->pwd));
+	sprintf(rev->cfg_filesv[0], "%s", entry_point + strlen(rev->pwd) + 1);
+
+	// Resolve all the config file paths and trim off the PWD
+	// since we are storing the hierarchy as-is on disk
+	for (int i = 1; i < ctx->req_filesc + 1; i++) {
+		char cfg_file[PATH_MAX];
+		realpath(ctx->req_filesv[i - 1], cfg_file);
+
+		// Trim off the PWD (which is easy since we just skip strlen(rev->pwd))
+		// The paths that are relative to the config path will always start
+		// with the PWD anyways, so we just advance the array by the length
+		rev->cfg_filesv[i] = malloc(strlen(cfg_file) - strlen(rev->pwd));
+		sprintf(rev->cfg_filesv[i], "%s", cfg_file + strlen(rev->pwd) + 1);
+	}
+
+	// Do the exact same logic for the reference files
+	for (int i = 0; i < ctx->ref_filesc; i++) {
+		char ref_file[PATH_MAX];
+		realpath(ctx->ref_filesv[i], ref_file);
+
+		rev->ref_filesv[i] = malloc(strlen(ref_file) - strlen(rev->pwd));
+		sprintf(rev->ref_filesv[i], "%s", ref_file + strlen(rev->pwd) + 1);
+	}
+
+	return 0;
+}
 
 // Given a context from our lua execution, convert it into an rb_revision_t
 // and then dump it into the store with the next available ID.
@@ -115,24 +147,13 @@ int rb_store_dump_revision(rb_lua_t *ctx) {
 	rev->cfg_filesv = malloc(sizeof(char *) * file_count);
 	rev->cfg_filesc = file_count;
 
-	// Resolve the entry point file and add it to the cfg files
-	char entry_point[PATH_MAX];
-	realpath(ctx->config_file, entry_point);
+	int ref_count = ctx->ref_filesc;
+	rev->ref_filesv = malloc(sizeof(char *) * ref_count);
+	rev->ref_filesc = ref_count;
 
-	rev->cfg_filesv[0] = malloc(strlen(entry_point) - strlen(rev->pwd));
-	sprintf(rev->cfg_filesv[0], "%s", entry_point + strlen(rev->pwd) + 1);
-
-	// Resolve all the config file paths and trim off the PWD
-	// since we are storing the hierarchy as-is on disk
-	for (int i = 1; i < file_count; i++) {
-		char cfg_file[PATH_MAX];
-		realpath(ctx->req_filesv[i - 1], cfg_file);
-
-		// Trim off the PWD (which is easy since we just skip strlen(rev->pwd))
-		// The paths that are relative to the config path will always start
-		// with the PWD anyways, so we just advance the array by the length
-		rev->cfg_filesv[i] = malloc(strlen(cfg_file) - strlen(rev->pwd));
-		sprintf(rev->cfg_filesv[i], "%s", cfg_file + strlen(rev->pwd) + 1);
+	if (rb_store_copy_and_resolve_files(ctx, rev) != 0) {
+		fprintf(stderr, "error: failed to copy and resolve files\n");
+		return 1;
 	}
 
 	if (rb_store_revision_to_disk(rev) != 0) {
