@@ -33,6 +33,9 @@ typedef struct {
 
 	char **ref_filesv;
 	int ref_filesc;
+
+	char **gen_filesv; ///< Generated/output files in the revision
+	int gen_filesc; ///< Count of generated files
 } rb_lua_t;
 
 void rb_lua_setup_context(rb_lua_t *ctx);

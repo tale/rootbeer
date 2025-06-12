@@ -9,6 +9,7 @@ project(
 		'warning_level=2',
 	],
 )
+root_include = include_directories('include')
 
 subdir('src/librootbeer')
 subdir('src/plugins')

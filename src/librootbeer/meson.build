@@ -4,18 +4,12 @@ librootbeer = static_library(
 	'rootbeer',
 	librootbeer_sources,
 	dependencies: [dependency('luajit')],
-	include_directories: [
-		include_directories('include'),
-		include_directories('../../include'),
-	],
+	include_directories: [root_include],
 )
 
 librootbeer_dep = declare_dependency(
 	link_with: librootbeer,
-	include_directories: [
-		include_directories('include'),
-		include_directories('../../include'),
-	],
+	include_directories: [root_include],
 )
 
 # rootbeer_sources += [librootbeer]

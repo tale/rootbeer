@@ -1,13 +1,11 @@
-#include "lua.h"
-#include "rb_plugin.h"
-#include "rb_rootbeer.h"
+#include "rootbeer_core.h"
 
 int hello_world(lua_State *L) {
 	lua_pushstring(L, "Hello, World!");
 	return 1;
 }
 
-int ref_file(lua_State *L) {
+int rb_core_ref_file(lua_State *L) {
 	const char *filename = luaL_checkstring(L, 1);
 	rb_lua_t *ctx = rb_lua_get_ctx(L);
 
@@ -21,7 +19,10 @@ int ref_file(lua_State *L) {
 
 const luaL_Reg functions[] = {
 	{"hello_world", hello_world},
-	{"ref_file", ref_file},
+	{"ref_file", rb_core_ref_file},
+	{"link_file", rb_core_link_file},
+	{"to_json", rb_core_to_json},
+	{"write_file", rb_core_write_file},
 	{NULL, NULL}
 };
 

@@ -29,6 +29,7 @@ executable(
 	'rb',
 	src_files,
 	dependencies: [dependency('luajit'), librootbeer_dep],
+	link_with: plugin_libs,
 	include_directories: [
 		include_directories('include'),
 		include_directories('../../include'),
