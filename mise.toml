@@ -2,9 +2,9 @@
 _.path = ["./build/src/rootbeer_cli"]
 
 [tools]
-meson = "1"
-ninja = "1"
-python = "3"
+meson = "1.8"
+ninja = "1.12"
+python = "3.12"
 
 [tasks.setup]
 description = "Setup the project"
@@ -19,5 +19,5 @@ alias = "b"
 
 [tasks.clean]
 description = "Clean the project"
-run = "meson clean -C build"
+run = "meson setup build --wipe"
 alias = "c"

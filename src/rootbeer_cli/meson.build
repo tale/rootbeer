@@ -25,7 +25,6 @@ src_files = cli_taped_sources + files(
 	'src/util/log.c',
 )
 
-add_project_arguments('-D_GNU_SOURCE', language: 'c')
 executable(
 	'rb',
 	src_files,
