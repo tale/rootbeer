@@ -1,5 +1,5 @@
 local rb = require('rootbeer')
-rb.debug_test('Hello') -- YIPPEE!
+-- rb.debug_test('Hello') -- YIPPEE!
 
 -- Loop through and print the numbers 1 to 10
 for i = 1, 10 do
@@ -20,6 +20,10 @@ end
 
 require('tale.test2')
 require('test3')
+
+for k, v in pairs(package.preload) do
+	print("preload entry:", k, type(v))
+end
 
 rb.ref_file('./test.bash')
 -- rb.ref_file('./noexist.bash')

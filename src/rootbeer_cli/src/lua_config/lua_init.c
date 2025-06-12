@@ -1,5 +1,9 @@
 #include "lua_module.h"
 #include "rootbeer.h"
+#include "rb_plugin.h"
+
+// This is linked in by Meson when compiling the plugins.
+extern const rb_plugin_t *rb_plugins[];
 
 // This is the require hook that we use to gather a list of required
 // files so that we can store these in the revision later.
@@ -18,7 +22,7 @@ int rb_lua_require_hook(lua_State *L) {
 	// Lua 5.1 is slightly unintelligent about how it handles require
 	// so we need to check if the loaded module exists as a template in
 	// `lua/<module>.lua` from the ctx->config_root directory.
-	
+
 	// We also need to replace any dots in the module name with slashes
 	// since lua uses dots to separate modules.
 	char modname_copy[strlen(modname) + 1];
@@ -59,7 +63,7 @@ void rb_lua_setup_context(rb_lua_t *ctx) {
 	if (ctx->L == NULL) {
 		rb_fatal("Could not create lua state");
 	}
-	
+
 	// Allow all libraries since this is a *host* configuration tool.
 	// There aren't really any security implications here.
 	luaL_openlibs(ctx->L);
@@ -105,4 +109,29 @@ void rb_lua_setup_context(rb_lua_t *ctx) {
 
 	lua_pushcclosure(ctx->L, rb_lua_require_hook, 1);
 	lua_setglobal(ctx->L, "require");
+
+	for (const rb_plugin_t **p = rb_plugins; *p != NULL; p++) {
+		const rb_plugin_t *plugin = *p;
+		// Plugin names are done as rootbeer.<plugin_name>
+		// Which means we need to snprintf the name
+		char plugin_name[64];
+		snprintf(plugin_name, sizeof(plugin_name), "rootbeer.%s", plugin->plugin_name);
+
+		// Handle the special case the plugin is called "__rootbeer__"
+		// which is the rootbeer plugin itself and needs to be on the root.
+		if (strcmp(plugin->plugin_name, "__rootbeer__") == 0) {
+			snprintf(plugin_name, sizeof(plugin_name), "rootbeer");
+		}
+
+		printf("Loading plugin: %s\n", plugin_name);
+		lua_pushcfunction(ctx->L, plugin->entrypoint);
+		lua_setfield(ctx->L, LUA_REGISTRYINDEX, plugin_name);
+
+		// Add to package.preload
+		lua_getglobal(ctx->L, "package");
+		lua_getfield(ctx->L, -1, "preload");
+		lua_pushcfunction(ctx->L, plugin->entrypoint);
+		lua_setfield(ctx->L, -2, plugin_name);
+		lua_pop(ctx->L, 2);
+	}
 }

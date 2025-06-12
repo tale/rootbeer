@@ -4,7 +4,7 @@ cli_sources = files(
 )
 
 subdir('gen_cmd_array')
-src_files = cli_taped_sources + files(
+src_files = cli_taped_sources + plugin_taped_sources + files(
 	'src/cli_tool/command.c',
 	'src/cli_tool/parse.c',
 
@@ -28,6 +28,9 @@ src_files = cli_taped_sources + files(
 executable(
 	'rb',
 	src_files,
-	dependencies: [dependency('luajit')],
-	include_directories: include_directories('include'),
+	dependencies: [dependency('luajit'), librootbeer_dep],
+	include_directories: [
+		include_directories('include'),
+		include_directories('../../include'),
+	],
 )

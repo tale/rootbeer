@@ -19,9 +19,6 @@
 #define LUAFILES_MAX 100
 #define REFFILES_MAX 100
 
-int rb_lua_debug_test(lua_State *L);
-int rb_lua_ref_file(lua_State *L);
-
 // These functions are all used to help load the module into lua
 // Additionally, we need a context struct to keep track of information
 // that is only available from the lua side of things.

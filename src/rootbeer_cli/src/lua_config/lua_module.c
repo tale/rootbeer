@@ -4,8 +4,8 @@
 // so that they can all be loaded in as a module and called in lua code
 
 static const struct luaL_Reg functions[] = {
-	{"debug_test", rb_lua_debug_test},
-	{"ref_file", rb_lua_ref_file},
+	// {"debug_test", rb_lua_debug_test},
+	// {"ref_file", rb_lua_ref_file},
 	{NULL, NULL}
 };
 
