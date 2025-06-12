@@ -5,7 +5,6 @@ _.path = ["./build/src/rootbeer_cli"]
 meson = "1"
 ninja = "1"
 python = "3"
-lua = "5.1"
 
 [tasks.setup]
 description = "Setup the project"
