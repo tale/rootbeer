@@ -1,1 +1,5 @@
 build/
+.cache/
+.ropeproject/
+subprojects/*
+!subprojects/*.wrap

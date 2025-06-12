@@ -1,22 +1,24 @@
 [env]
-PATH = "./build:{{env.PATH}}"
+_.path = ["./build/src/rootbeer_cli"]
 
 [tools]
-cmake = "3"
+meson = "1"
+ninja = "1"
+python = "3"
 lua = "5.1"
 
 [tasks.setup]
 description = "Setup the project"
-run = "test -d build || cmake -S . -B build"
+run = "test -d build || meson setup build"
 alias = "s"
 
 [tasks.build]
 description = "Build the project"
-run = "cmake --build build"
+run = "meson compile -C build"
 depends = ["setup"]
 alias = "b"
 
 [tasks.clean]
 description = "Clean the project"
-run = "cmake --build build --target clean"
+run = "meson clean -C build"
 alias = "c"

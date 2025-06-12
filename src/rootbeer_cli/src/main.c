@@ -1,4 +1,3 @@
-#include "rootbeer.h"
 #include "cli_module.h"
 
 int main(const int argc, const char *argv[]) {
