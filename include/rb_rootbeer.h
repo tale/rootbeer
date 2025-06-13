@@ -10,9 +10,18 @@
 //
 // The builtin link_file() function in the rootbeer module uses this
 // to track any files that is symlinks into place for the user.
-int rb_track_file(rb_lua_t *ctx, char *path);
+int rb_track_ref_file(rb_lua_t *ctx, char *path);
 
+/// Register the provided file path as a generated file.
+/// The revision keeps track of these files so that it can
+/// remove them when the revision is reverted.
+/// @param ctx The Lua context to track the file in.
+/// @param path The ABSOLUTE path to the file to track.
+int rb_track_gen_file(rb_lua_t *ctx, const char *path);
+
+#define RB_OK 0
 #define RB_ULIMIT_REFFILES -1001
+#define RB_ULIMIT_GENFILES -1002
 #define RB_ENOENT -2
 #define RB_EACCES -13
 

@@ -86,6 +86,14 @@ int rb_store_revision_to_disk(rb_revision_t *rev) {
 		}
 	}
 
+	fprintf(m_file, "\ngen_files=");
+	for (int i = 0; i < rev->gen_filesc; i++) {
+		fprintf(m_file, "%s", rev->gen_filesv[i]);
+		if (i != rev->gen_filesc - 1) {
+			fprintf(m_file, ",");
+		}
+	}
+
 	fprintf(m_file, "\n");
 	fclose(m_file);
 
@@ -122,6 +130,11 @@ int rb_store_copy_and_resolve_files(rb_lua_t *ctx, rb_revision_t *rev) {
 		sprintf(rev->ref_filesv[i], "%s", ref_file + strlen(rev->pwd) + 1);
 	}
 
+	// And the generated files
+	for (int i = 0; i < ctx->gen_filesc; i++) {
+		rev->gen_filesv[i] = strdup(ctx->gen_filesv[i]);
+	}
+
 	return 0;
 }
 
@@ -151,6 +164,10 @@ int rb_store_dump_revision(rb_lua_t *ctx) {
 	rev->ref_filesv = malloc(sizeof(char *) * ref_count);
 	rev->ref_filesc = ref_count;
 
+	int gen_count = ctx->gen_filesc;
+	rev->gen_filesv = malloc(sizeof(char *) * gen_count);
+	rev->gen_filesc = gen_count;
+
 	if (rb_store_copy_and_resolve_files(ctx, rev) != 0) {
 		fprintf(stderr, "error: failed to copy and resolve files\n");
 		return 1;
@@ -164,4 +181,3 @@ int rb_store_dump_revision(rb_lua_t *ctx) {
 	rb_store_set_current_revision(rev->id);
 	return 0;
 }
-

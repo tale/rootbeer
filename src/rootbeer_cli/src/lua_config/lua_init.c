@@ -102,6 +102,9 @@ void rb_lua_setup_context(rb_lua_t *ctx) {
 	ctx->ref_filesv = malloc(REFFILES_MAX * sizeof(char *));
 	ctx->ref_filesc = 0;
 
+	ctx->gen_filesv = malloc(GENFILES_MAX * sizeof(char *));
+	ctx->gen_filesc = 0;
+
 	// Use the retrieval function as the ID for the context
 	lua_pushlightuserdata(ctx->L, (void *)rb_lua_get_ctx);
 	lua_pushlightuserdata(ctx->L, (void *)ctx);

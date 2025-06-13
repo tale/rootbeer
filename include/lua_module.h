@@ -16,8 +16,9 @@
 // All the functions are packed together into a single struct that is
 // passed into lua context using luaL_newlib.
 
-#define LUAFILES_MAX 100
-#define REFFILES_MAX 100
+#define LUAFILES_MAX 1000
+#define REFFILES_MAX 1000
+#define GENFILES_MAX 1000
 
 // These functions are all used to help load the module into lua
 // Additionally, we need a context struct to keep track of information

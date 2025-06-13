@@ -38,7 +38,7 @@ int rb_core_link_file(lua_State *L) {
 
 
 	// If we can resolve the files, symlink softlink them
-	int status = rb_track_file(ctx, from);
+	int status = rb_track_ref_file(ctx, from);
 	if (status != 0) {
 		// TODO: rb_strerror needs to exist
 		return luaL_error(L, "Failed to track file '%s': %d", from, status);

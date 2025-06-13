@@ -1,7 +1,7 @@
 #include "rb_rootbeer.h"
 #include "lua_module.h"
 
-int rb_track_file(rb_lua_t *ctx, char *path) {
+int rb_track_ref_file(rb_lua_t *ctx, char *path) {
 	if (ctx->ref_filesc >= REFFILES_MAX) {
 		return RB_ULIMIT_REFFILES;
 	}

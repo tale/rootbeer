@@ -1,4 +1,7 @@
-librootbeer_sources = files('src/api/track_file.c')
+librootbeer_sources = files(
+	'src/api/track_gen_file.c',
+	'src/api/track_ref_file.c',
+)
 
 librootbeer = static_library(
 	'rootbeer',

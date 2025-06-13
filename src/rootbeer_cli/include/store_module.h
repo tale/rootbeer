@@ -24,12 +24,15 @@ typedef struct {
 	char *name; // Name of the revision (optional)
 	time_t timestamp; // Unix timestamp
 	char *pwd; // PWD for the config and reference files
-	
+
 	char **cfg_filesv; // Array of config file paths
 	int cfg_filesc; // Number of config files
-	
+
 	char **ref_filesv; // Array of reference file paths
 	int ref_filesc; // Number of reference files
+
+	char **gen_filesv;
+	int gen_filesc;
 } rb_revision_t;
 
 // The way we actually store revision data is like so:
