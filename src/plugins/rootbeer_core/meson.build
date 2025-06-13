@@ -2,6 +2,7 @@ rootbeer_lib = static_library(
 	'rootbeer_plugin',
 	sources: files(
 		'src/core.c',
+		'src/interpolate_table.c',
 		'src/link_file.c',
 		'src/to_json.c',
 		'src/write_file.c',

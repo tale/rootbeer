@@ -23,6 +23,7 @@ const luaL_Reg functions[] = {
 	{"link_file", rb_core_link_file},
 	{"to_json", rb_core_to_json},
 	{"write_file", rb_core_write_file},
+	{"interpolate_table", rb_core_interpolate_table},
 	{NULL, NULL}
 };
 
