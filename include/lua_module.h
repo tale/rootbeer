@@ -11,6 +11,8 @@
 #include <string.h>
 #include <assert.h>
 
+#define LUA_LIB "/opt/rootbeer/lua"
+
 // This file contains all of the functions that we can invoke from lua
 // The src/config/functions directory contains implementations for each.
 // All the functions are packed together into a single struct that is
@@ -40,7 +42,7 @@ typedef struct {
 } rb_lua_t;
 
 void rb_lua_setup_context(rb_lua_t *ctx);
-void rb_lua_register_module(lua_State *L);
+void rb_lua_load_lib(rb_lua_t *ctx);
 rb_lua_t *rb_lua_get_ctx(lua_State *L);
 
 int rb_lua_create_vm_sandbox(lua_State *L, const char *filename);

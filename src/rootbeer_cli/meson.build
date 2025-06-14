@@ -8,10 +8,8 @@ src_files = cli_taped_sources + plugin_taped_sources + files(
 	'src/cli_tool/command.c',
 	'src/cli_tool/parse.c',
 
-	'src/lua_config/functions/debug_test.c',
-	'src/lua_config/functions/ref_file.c',
 	'src/lua_config/lua_init.c',
-	'src/lua_config/lua_module.c',
+	'src/lua_config/lua_libs.c',
 
 	'src/main.c',
 

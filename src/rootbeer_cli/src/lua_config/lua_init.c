@@ -67,29 +67,7 @@ void rb_lua_setup_context(rb_lua_t *ctx) {
 	// Allow all libraries since this is a *host* configuration tool.
 	// There aren't really any security implications here.
 	luaL_openlibs(ctx->L);
-	rb_lua_register_module(ctx->L);
-
-	// Add the root/lua folder to the package path for custom requires
-	lua_getglobal(ctx->L, "package");
-	lua_getfield(ctx->L, -1, "path");
-	const char *lua_path = lua_tostring(ctx->L, -1);
-	char *new_path = malloc(
-		strlen(lua_path) +
-		strlen(";") +
-		strlen(ctx->config_root) +
-		strlen("/lua/?.lua") + 1
-	);
-
-	if (new_path == NULL) {
-		rb_fatal("Failed to allocate space for modified lua path");
-	}
-
-	sprintf(new_path, "%s;%s/lua/?.lua", lua_path, ctx->config_root);
-	lua_pop(ctx->L, 1); // Remove the old path
-	lua_pushstring(ctx->L, new_path);
-	lua_setfield(ctx->L, -2, "path");
-	lua_pop(ctx->L, 1); // Remove the package table
-	free(new_path);
+	rb_lua_load_lib(ctx);
 
 	// Hook the require function to gather a list of required files
 	// so that we can store these in the revision later.
@@ -137,4 +115,17 @@ void rb_lua_setup_context(rb_lua_t *ctx) {
 		lua_setfield(ctx->L, -2, plugin_name);
 		lua_pop(ctx->L, 2);
 	}
+}
+
+rb_lua_t *rb_lua_get_ctx(lua_State *L) {
+	lua_pushlightuserdata(L, (void *)rb_lua_get_ctx);
+    lua_gettable(L, LUA_REGISTRYINDEX);
+	rb_lua_t *ctx = lua_touserdata(L, -1);
+
+	if (ctx == NULL) {
+		luaL_error(L, "context is null");
+		return NULL;
+	}
+
+	return ctx;
 }

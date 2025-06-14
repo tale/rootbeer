@@ -10,6 +10,9 @@ project(
 	],
 )
 root_include = include_directories('include')
+if get_option('buildtype').startswith('debug')
+	add_project_arguments('-DDEBUG', language: 'c')
+endif
 
 subdir('src/librootbeer')
 subdir('src/plugins')

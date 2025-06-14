@@ -4,6 +4,7 @@ rootbeer_lib = static_library(
 		'src/core.c',
 		'src/interpolate_table.c',
 		'src/link_file.c',
+		'src/register_module.c',
 		'src/to_json.c',
 		'src/write_file.c',
 	),
