@@ -41,3 +41,35 @@ or revised.
 - A pluggable module system that serves as the basis of all functionality
 offered by Rootbeer. The idea is that different integrations with the OSes
 can be written as modules and compiled in-tree to ship in the final binary.
+
+## Building
+The project is still in its early stages, stuff might break!
+The only prerequisite is that you have `meson` and `ninja` installed.
+
+You'll need to setup and run the build like so:
+```bash
+meson setup build
+meson compile -C build
+```
+
+This will create the `./build/rb` binary which you can run to
+interact with the tool.
+
+I highly recommend using [mise](https://mise.jdx.dev/) for anything else
+as I have automatically implemented almost all the commands you need and
+dependencies. With mise you can just run `mise run build`.
+
+### Building documentation
+The documentation is hard to build mostly because Doxygen is not available
+in a portable way. You'll need to preinstall Doxygen and ensure it is
+in your `PATH`. You'll also need to activate a python virtualenv (automatically
+handled if you are using mise) and install the `docs/requirements.txt`.
+
+Once done, you can build the documentation with:
+```bash
+cd docs/
+doxygen
+sphinx-build -b html source _build/html
+
+# Or with mise: mise build docs
+```
