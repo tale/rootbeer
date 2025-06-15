@@ -1,5 +1,8 @@
 build/
 .cache/
 .ropeproject/
+.venv/
+docs/.doxygen/
+docs/_build
 subprojects/*
 !subprojects/*.wrap

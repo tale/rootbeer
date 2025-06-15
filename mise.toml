@@ -1,5 +1,6 @@
 [env]
 _.path = ["./build/src/rootbeer_cli"]
+_.python.venv = { path = ".venv", create = true }
 
 [tools]
 meson = "1.8"
@@ -21,3 +22,14 @@ alias = "b"
 description = "Clean the project"
 run = "meson setup build --wipe"
 alias = "c"
+
+[tasks.install-venv-deps]
+description = "Install Python dependencies in the virtual environment"
+run = "pip install -r docs/requirements.txt"
+
+[tasks.docs]
+description = "Generate documentation"
+dir = "docs"
+run = "doxygen && sphinx-build -b html source _build/html"
+depends = ["install-venv-deps"]
+alias = "d"
