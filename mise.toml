@@ -5,7 +5,7 @@ _.python.venv = { path = ".venv", create = true }
 [tools]
 meson = "1.8"
 ninja = "1.12"
-python = "3.12"
+python = "latest"
 
 [tasks.setup]
 description = "Setup the project"
@@ -27,10 +27,15 @@ alias = "c"
 description = "Install Python dependencies in the virtual environment"
 run = "pip install -r docs/requirements.txt"
 
+[tasks.docs-ci]
+description = "Generate documentation (for CI)"
+dir = "docs"
+run = "sphinx-build -b html source _build/html"
+depends = ["install-venv-deps"]
 
 [tasks.docs]
 description = "Generate documentation"
 dir = "docs"
-run = "sphinx-build -b html source _build/html"
+run = "doxygen && sphinx-build -b html source _build/html"
 depends = ["install-venv-deps"]
 alias = "d"

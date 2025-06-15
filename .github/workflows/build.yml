@@ -75,8 +75,16 @@ jobs:
           working-directory: docs/
           doxyfile-path: Doxyfile
 
+      - name: Cache Python Dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: python-deps-${{ runner.os }}-${{ hashFiles('docs/requirements.txt') }}
+          restore-keys: |
+            python-deps-${{ runner.os }}-
+
       - name: Run Sphinx
-        run: mise run docs
+        run: mise run docs-ci
 
       - name: Upload Documentation
         id: upload-docs

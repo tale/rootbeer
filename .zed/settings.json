@@ -1,7 +1,8 @@
 {
 	"languages": {
 		"YAML": {
-			"tab_size": 2
+			"tab_size": 2,
+			"hard_tabs": false
 		}
 	}
 }
