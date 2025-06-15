@@ -27,9 +27,10 @@ alias = "c"
 description = "Install Python dependencies in the virtual environment"
 run = "pip install -r docs/requirements.txt"
 
+
 [tasks.docs]
 description = "Generate documentation"
 dir = "docs"
-run = "doxygen && sphinx-build -b html source _build/html"
+run = "sphinx-build -b html source _build/html"
 depends = ["install-venv-deps"]
 alias = "d"

@@ -39,3 +39,50 @@ jobs:
 
       - name: Build
         run: mise run build
+  build-docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.upload-docs.outputs.page_url }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Mise
+        run: |
+          curl https://mise.run | sh
+          echo "$HOME/.local/share/mise/bin" >> $GITHUB_PATH
+          echo "$HOME/.local/share/mise/shims" >> $GITHUB_PATH
+
+      - name: Cache Tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/mise
+          key: mise-${{ runner.os }}-${{ hashFiles('mise.toml') }}
+
+      - name: Install Tools
+        run: |
+          mise install --yes
+
+      - name: Run doxygen
+        uses: mattnotmitt/doxygen-action@v1
+        with:
+          working-directory: docs/
+          doxyfile-path: Doxyfile
+
+      - name: Run Sphinx
+        run: mise run docs
+
+      - name: Upload Documentation
+        id: upload-docs
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html
+
+      - name: Deploy Documentation
+        uses: actions/deploy-pages@v4
