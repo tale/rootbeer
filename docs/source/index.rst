@@ -17,3 +17,4 @@ is to provide API references for the C runtime and the Lua modules.
    :caption: Contents
 
    c_api/index
+   internal/index

@@ -27,6 +27,23 @@ lua_ls_project_root = "../../"
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
+myst_enable_extensions = [
+	# "amsmath",
+	"colon_fence",
+	# "deflist",
+	# "fieldlist",
+	# "html_admonition",
+	# "html_image",
+	# "linkify",
+	# "replacements",
+	# "smartquotes",
+	"substitution"
+]
+
+myst_substitutions = {
+	"ghdir": "https://github.com/tale/rootbeer/tree/main",
+}
+
 
 
 # -- Options for HTML output -------------------------------------------------
