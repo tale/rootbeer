@@ -6,3 +6,4 @@ docs/.doxygen/
 docs/_build
 subprojects/*
 !subprojects/*.wrap
+result
