@@ -50,6 +50,7 @@ int rb_copy_file(const char *src, const char *dst) {
 	}
 
 	FILE *dst_file = fopen(dst, "w");
+	printf("copying %s to %s\n", src, dst);
 	if (dst_file == NULL) {
 		printf("error: could not open destination file\n");
 		fclose(src_file);

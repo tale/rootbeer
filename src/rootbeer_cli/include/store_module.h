@@ -1,6 +1,7 @@
 #ifndef STORE_MODULE_H
 #define STORE_MODULE_H
 
+#include "rb_ctx.h"
 #include <assert.h>
 #include <time.h>
 #include <unistd.h>
@@ -10,7 +11,6 @@
 #include <stdio.h>
 #include <libgen.h>
 #include <sys/stat.h>
-#include "lua_module.h"
 
 #define STORE_ROOT "/opt/rootbeer"
 
@@ -67,6 +67,6 @@ int rb_store_next_id();
 void rb_store_init_or_die();
 void rb_store_destroy();
 
-int rb_store_dump_revision(rb_lua_t *ctx);
+int rb_store_dump_revision(rb_ctx_t *ctx);
 
 #endif // STORE_MODULE_H

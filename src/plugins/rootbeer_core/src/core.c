@@ -7,7 +7,7 @@ int hello_world(lua_State *L) {
 
 int rb_core_ref_file(lua_State *L) {
 	const char *filename = luaL_checkstring(L, 1);
-	rb_lua_t *ctx = rb_lua_get_ctx(L);
+	rb_ctx_t *ctx = rb_ctx_from_lua(L);
 
 	int status = rb_track_ref_file(ctx, (char *)filename);
 	if (status != 0) {

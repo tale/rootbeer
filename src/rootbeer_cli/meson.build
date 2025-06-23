@@ -9,7 +9,7 @@ src_files = cli_taped_sources + plugin_taped_sources + files(
 	'src/cli_tool/parse.c',
 
 	'src/lua_config/lua_init.c',
-	'src/lua_config/lua_libs.c',
+	'src/lua_config/rb_ctx_state.c',
 
 	'src/main.c',
 
@@ -30,6 +30,7 @@ executable(
 	link_with: plugin_libs,
 	include_directories: [
 		include_directories('include'),
-		include_directories('../../include'),
+		root_include,
+		internal_include,
 	],
 )

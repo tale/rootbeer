@@ -10,6 +10,8 @@ project(
 	],
 )
 root_include = include_directories('include')
+internal_include = include_directories('src/internal_include')
+
 if get_option('buildtype').startswith('debug')
 	add_project_arguments('-DDEBUG', language: 'c')
 endif

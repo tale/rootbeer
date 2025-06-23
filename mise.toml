@@ -3,7 +3,7 @@ _.path = ["./build/src/rootbeer_cli"]
 _.python.venv = { path = ".venv", create = true }
 
 [tools]
-meson = "1.8"
+meson = "latest"
 ninja = "1.12"
 python = "latest"
 

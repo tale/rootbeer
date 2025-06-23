@@ -1,8 +1,10 @@
-#include "lua_module.h"
 #include "rb_rootbeer.h"
 #include "rootbeer_core.h"
 #include <fcntl.h>
 #include <errno.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdlib.h>
 
 char *rb_resolve_full_path(lua_State *L, const char *path) {
 	// This function should resolve the full path based on the current working directory
@@ -45,7 +47,7 @@ int rb_core_write_file(lua_State *L) {
 	// Create parent directories if necessary (optional: not included here)
 	// TODO: Move the fs.c from cli to librootbeer so it can be shared
 
-	rb_lua_t *ctx = rb_lua_get_ctx(L);
+	rb_ctx_t *ctx = rb_ctx_from_lua(L);
 	filepath = rb_resolve_full_path(L, filepath);
 	if (!filepath) {
 		return luaL_error(L, "Failed to resolve full path for '%s'", lua_tostring(L, 1));

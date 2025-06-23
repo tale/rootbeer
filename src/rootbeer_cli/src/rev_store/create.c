@@ -48,6 +48,7 @@ int rb_store_copy_files(rb_revision_t *rev) {
 int rb_store_revision_to_disk(rb_revision_t *rev) {
 	char store_path[PATH_MAX];
 	sprintf(store_path, "%s/store/%d", STORE_ROOT, rev->id);
+	printf("Storing revision %d at %s\n", rev->id, store_path);
 
 	// Assert because this is entirely a developer error
 	assert(access(store_path, F_OK) != 0);
@@ -100,19 +101,19 @@ int rb_store_revision_to_disk(rb_revision_t *rev) {
 	return rb_store_copy_files(rev);
 }
 
-int rb_store_copy_and_resolve_files(rb_lua_t *ctx, rb_revision_t *rev) {
+int rb_store_copy_and_resolve_files(rb_ctx_t *ctx, rb_revision_t *rev) {
 	// Resolve the entry point file and add it to the cfg files
 	char entry_point[PATH_MAX];
-	realpath(ctx->config_file, entry_point);
+	realpath(ctx->script_path, entry_point);
 
 	rev->cfg_filesv[0] = malloc(strlen(entry_point) - strlen(rev->pwd));
 	sprintf(rev->cfg_filesv[0], "%s", entry_point + strlen(rev->pwd) + 1);
 
 	// Resolve all the config file paths and trim off the PWD
 	// since we are storing the hierarchy as-is on disk
-	for (int i = 1; i < ctx->req_filesc + 1; i++) {
+	for (size_t i = 1; i < ctx->lua_files_count + 1; i++) {
 		char cfg_file[PATH_MAX];
-		realpath(ctx->req_filesv[i - 1], cfg_file);
+		realpath(ctx->lua_files[i - 1], cfg_file);
 
 		// Trim off the PWD (which is easy since we just skip strlen(rev->pwd))
 		// The paths that are relative to the config path will always start
@@ -122,17 +123,17 @@ int rb_store_copy_and_resolve_files(rb_lua_t *ctx, rb_revision_t *rev) {
 	}
 
 	// Do the exact same logic for the reference files
-	for (int i = 0; i < ctx->ref_filesc; i++) {
+	for (size_t i = 0; i < ctx->ext_files_count; i++) {
 		char ref_file[PATH_MAX];
-		realpath(ctx->ref_filesv[i], ref_file);
+		realpath(ctx->ext_files[i], ref_file);
 
 		rev->ref_filesv[i] = malloc(strlen(ref_file) - strlen(rev->pwd));
 		sprintf(rev->ref_filesv[i], "%s", ref_file + strlen(rev->pwd) + 1);
 	}
 
 	// And the generated files
-	for (int i = 0; i < ctx->gen_filesc; i++) {
-		rev->gen_filesv[i] = strdup(ctx->gen_filesv[i]);
+	for (size_t i = 0; i < ctx->plugin_transforms_count; i++) {
+		rev->gen_filesv[i] = strdup(ctx->plugin_transforms[i]);
 	}
 
 	return 0;
@@ -140,7 +141,7 @@ int rb_store_copy_and_resolve_files(rb_lua_t *ctx, rb_revision_t *rev) {
 
 // Given a context from our lua execution, convert it into an rb_revision_t
 // and then dump it into the store with the next available ID.
-int rb_store_dump_revision(rb_lua_t *ctx) {
+int rb_store_dump_revision(rb_ctx_t *ctx) {
 	assert(getuid() == 0); // We need to be root to dump a revision
 
 	rb_revision_t *rev = malloc(sizeof(rb_revision_t));
@@ -154,17 +155,17 @@ int rb_store_dump_revision(rb_lua_t *ctx) {
 	// Revisions need full paths to the files, requiring we resolve the PWD
 	rev->pwd = malloc(PATH_MAX);
 	assert(rev->pwd != NULL);
-	assert(realpath(ctx->config_root, rev->pwd) != NULL);
+	assert(realpath(ctx->script_dir, rev->pwd) != NULL);
 
-	int file_count = ctx->req_filesc + 1; // Include the entry point file
+	int file_count = ctx->lua_files_count + 1; // Include the entry point file
 	rev->cfg_filesv = malloc(sizeof(char *) * file_count);
 	rev->cfg_filesc = file_count;
 
-	int ref_count = ctx->ref_filesc;
+	int ref_count = ctx->ext_files_count;
 	rev->ref_filesv = malloc(sizeof(char *) * ref_count);
 	rev->ref_filesc = ref_count;
 
-	int gen_count = ctx->gen_filesc;
+	int gen_count = ctx->plugin_transforms_count;
 	rev->gen_filesv = malloc(sizeof(char *) * gen_count);
 	rev->gen_filesc = gen_count;
 

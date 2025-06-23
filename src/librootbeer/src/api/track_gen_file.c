@@ -1,9 +1,14 @@
+#include "rb_ctx.h"
 #include "rb_rootbeer.h"
 #include <errno.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
-int rb_track_gen_file(rb_lua_t *ctx, const char *path) {
-	if (ctx->ref_filesc >= GENFILES_MAX) {
-		return RB_ULIMIT_GENFILES;
+int rb_track_gen_file(rb_ctx_t *ctx, const char *path) {
+	if (ctx->plugin_transforms_count >= RB_CTX_TRANSFORMS_MAX) {
+		return RB_ULIMIT_TRANSFORMS;
 	}
 
 	if (access(path, R_OK | W_OK) != 0) {
@@ -13,10 +18,8 @@ int rb_track_gen_file(rb_lua_t *ctx, const char *path) {
 		}
 	}
 
-	// We need to copy the filename into the context
-	ctx->gen_filesv[ctx->gen_filesc] = malloc(strlen(path) + 1);
-	strcpy(ctx->gen_filesv[ctx->gen_filesc], path);
-	ctx->gen_filesc++;
-
+	ctx->plugin_transforms[ctx->plugin_transforms_count] = malloc(strlen(path) + 1);
+	strncpy(ctx->plugin_transforms[ctx->plugin_transforms_count], path, strlen(path) + 1);
+	ctx->plugin_transforms_count++;
 	return RB_OK;
 }

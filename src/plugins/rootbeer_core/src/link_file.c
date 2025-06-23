@@ -1,6 +1,11 @@
 #include "rb_rootbeer.h"
 #include "rootbeer_core.h"
 #include <errno.h>
+#include <limits.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <libgen.h>
 
 // TODO: Make this a real header :skull:
 int rb_create_dir(char *path);
@@ -13,14 +18,14 @@ int rb_core_link_file(lua_State *L) {
 		return luaL_error(L, "Invalid arguments: 'from' and 'to' must be non-null strings.");
 	}
 
-	rb_lua_t *ctx = rb_lua_get_ctx(L);
+	rb_ctx_t *ctx = rb_ctx_from_lua(L);
 
 	// Need to resolve the realpath of the 'from' and 'to' paths.
-	char filename_from[strlen(ctx->config_root) + strlen(from) + 2];
-	snprintf(filename_from, sizeof(filename_from), "%s/%s", ctx->config_root, from);
+	char filename_from[strlen(ctx->script_dir) + strlen(from) + 2];
+	snprintf(filename_from, sizeof(filename_from), "%s/%s", ctx->script_dir, from);
 
-	char filename_to[strlen(ctx->config_root) + strlen(to) + 2];
-	snprintf(filename_to, sizeof(filename_to), "%s/%s", ctx->config_root, to);
+	char filename_to[strlen(ctx->script_dir) + strlen(to) + 2];
+	snprintf(filename_to, sizeof(filename_to), "%s/%s", ctx->script_dir, to);
 
 	char resolved_from[PATH_MAX];
 	if (realpath(filename_from, resolved_from) == NULL) {

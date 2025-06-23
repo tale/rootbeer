@@ -9,7 +9,7 @@
 #ifndef RB_ROOTBEER_H
 #define RB_ROOTBEER_H
 
-#include "lua_module.h"
+#include "rb_ctx.h"
 
 /**
  * Registers the provided filepath as a reference file.
@@ -21,7 +21,7 @@
  * @return 0 on success, or a negative error code on failure.
  * TODO: Make this use absolute paths instead of relative paths.
  */
-int rb_track_ref_file(rb_lua_t *ctx, char *path);
+int rb_track_ref_file(rb_ctx_t *ctx, const char *path);
 
 /**
  * Registers the provided filepath as a generated file.
@@ -32,7 +32,7 @@ int rb_track_ref_file(rb_lua_t *ctx, char *path);
  * @param path The ABSOLUTE path to the file to track.
  * @return 0 on success, or a negative error code on failure.
  */
-int rb_track_gen_file(rb_lua_t *ctx, const char *path);
+int rb_track_gen_file(rb_ctx_t *ctx, const char *path);
 
 /**
  * @def RB_OK
@@ -41,16 +41,16 @@ int rb_track_gen_file(rb_lua_t *ctx, const char *path);
 #define RB_OK 0
 
 /**
- * @def RB_ULIMIT_REFFILES
- * @brief The return code when the maximum reference files limit is reached.
+ * @def RB_ULIMIT_EXTFILES
+ * @brief The return code when the maximum external files limit is reached.
  */
-#define RB_ULIMIT_REFFILES -1001
+#define RB_ULIMIT_EXTFILES -1001
 
 /**
- * @def RB_ULIMIT_GENFILES
- * @brief The return code when the maximum generated files limit is reached.
+ * @def RB_ULIMIT_TRANSFORMS
+ * @brief The return code when the maximum plugin transforms limit is reached.
  */
-#define RB_ULIMIT_GENFILES -1002
+#define RB_ULIMIT_TRANSFORMS -1002
 
 /**
  * @def RB_ENOENT
