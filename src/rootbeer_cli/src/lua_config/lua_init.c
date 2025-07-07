@@ -9,11 +9,15 @@
 extern const rb_plugin_t *rb_plugins[];
 
 int lua_runtime_require_hook(lua_State *L) {
+	rb_ctx_t *ctx = rb_ctx_from_lua(L);
 	const char *modname = luaL_checkstring(L, 1);
 	if (modname == NULL) {
 		return luaL_error(L, "recieved an invalid module name");
 	}
 
+	// MARK: It is VERY important that nothing else manipulates the Lua stack
+	// here as the require function is expected to return a single value and
+	// we need to pass on the orig via the lua_pcall.
 	lua_getglobal(L, "require_orig");
 	lua_pushstring(L, modname);
 	if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
@@ -34,10 +38,6 @@ int lua_runtime_require_hook(lua_State *L) {
 	size_t modname_len = strlen(modpath) + strlen("/lua/") + strlen(".lua") + 1;
 	char filepath[modname_len];
 	snprintf(filepath, modname_len, "/lua/%s.lua", modpath);
-
-	// We also used to previously check access() here, but we know we don't
-	// have to do that because the lua_pcall() would've failed earlier.
-	rb_ctx_t *ctx = rb_ctx_from_lua(L);
 	ctx->lua_files[ctx->lua_files_count++] = strdup(filepath);
 	return 1;
 }
@@ -109,27 +109,18 @@ int lua_runtime_init(lua_State *L, const char *entry_file) {
 	// Load our plugins into the Lua environment.
 	for (const rb_plugin_t **p = rb_plugins; *p != NULL; p++) {
 		const rb_plugin_t *plugin = *p;
-		// Plugin names are done as rootbeer.<plugin_name>
-		// Which means we need to snprintf the name
 		char plugin_name[64];
-		snprintf(plugin_name, sizeof(plugin_name), "rootbeer.%s", plugin->plugin_name);
 
 		// Handle the special case the plugin is called "__rootbeer__"
 		// which is the rootbeer plugin itself and needs to be on the root.
 		if (strcmp(plugin->plugin_name, "__rootbeer__") == 0) {
 			snprintf(plugin_name, sizeof(plugin_name), "rootbeer");
+		} else {
+			snprintf(plugin_name, sizeof(plugin_name), "rootbeer.%s", plugin->plugin_name);
 		}
 
 		printf("Loading plugin: %s\n", plugin_name);
-		lua_pushcfunction(L, plugin->entrypoint);
-		lua_setfield(L, LUA_REGISTRYINDEX, plugin_name);
-
-		// Add to package.preload
-		lua_getglobal(L, "package");
-		lua_getfield(L, -1, "preload");
-		lua_pushcfunction(L, plugin->entrypoint);
-		lua_setfield(L, -2, plugin_name);
-		lua_pop(L, 2);
+		luaL_register(L, plugin_name, plugin->functions);
 	}
 
 	return 0;
