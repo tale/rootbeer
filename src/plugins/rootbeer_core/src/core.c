@@ -1,4 +1,5 @@
 #include "rootbeer_core.h"
+#include "rb_ctx.h"
 
 int hello_world(lua_State *L) {
 	lua_pushstring(L, "Hello, World!");

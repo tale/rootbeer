@@ -9,7 +9,12 @@
 #ifndef RB_ROOTBEER_H
 #define RB_ROOTBEER_H
 
-#include "rb_ctx.h"
+/**
+ * @brief Rootbeer context structure.
+ * This is an opaque pointer to the internal Rootbeer context.
+ * See @ref rb_ctx_t for more details.
+ */
+typedef struct rb_ctx_t rb_ctx_t;
 
 /**
  * Registers the provided filepath as a reference file.

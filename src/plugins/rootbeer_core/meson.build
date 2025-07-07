@@ -8,7 +8,9 @@ rootbeer_lib = static_library(
 		'src/to_json.c',
 		'src/write_file.c',
 	),
-	include_directories: [include_directories('src'), root_include],
+	c_args: ['-DRB_PLUGIN_OVERRIDES_INTERNAL'],
+	# This is the core rootbeer plugin, it has access to the real rb_ctx_t
+	include_directories: [include_directories('src'), root_include, internal_include],
 	dependencies: [dependency('libcjson'), dependency('luajit')],
 )
 

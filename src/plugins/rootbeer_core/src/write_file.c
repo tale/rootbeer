@@ -1,5 +1,6 @@
 #include "rb_rootbeer.h"
 #include "rootbeer_core.h"
+#include "rb_ctx.h"
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>

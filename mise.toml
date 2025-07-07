@@ -6,6 +6,7 @@ _.python.venv = { path = ".venv", create = true }
 meson = "latest"
 ninja = "1.12"
 python = "latest"
+lua-language-server = "latest"
 
 [tasks.setup]
 description = "Setup the project"

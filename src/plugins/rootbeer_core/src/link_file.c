@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <libgen.h>
+#include "rb_ctx.h"
 
 // TODO: Make this a real header :skull:
 int rb_create_dir(char *path);
