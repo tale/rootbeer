@@ -1,6 +1,10 @@
 librootbeer_sources = files(
+	'src/api/intermediate.c',
 	'src/api/track_gen_file.c',
 	'src/api/track_ref_file.c',
+	'src/helpers/canon.c',
+	'src/helpers/idlist.c',
+	'src/helpers/strlist.c',
 )
 
 librootbeer = static_library(

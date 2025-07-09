@@ -1,5 +1,6 @@
 #include "lua_init.h"
 #include "rb_ctx.h"
+#include "rb_strlist.h"
 #include "rootbeer.h"
 #include "rb_plugin.h"
 #include <lauxlib.h>
@@ -38,7 +39,8 @@ int lua_runtime_require_hook(lua_State *L) {
 	size_t modname_len = strlen(modpath) + strlen("/lua/") + strlen(".lua") + 1;
 	char filepath[modname_len];
 	snprintf(filepath, modname_len, "/lua/%s.lua", modpath);
-	ctx->lua_files[ctx->lua_files_count++] = strdup(filepath);
+
+	rb_strlist_add(&ctx->lua_modules, modname);
 	return 1;
 }
 

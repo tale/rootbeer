@@ -1,6 +1,7 @@
 #include "rb_ctx_state.h"
 #include "lua.h"
 #include "rb_ctx.h"
+#include "rb_strlist.h"
 #include <stdlib.h>
 #include <assert.h>
 
@@ -23,6 +24,12 @@ rb_ctx_t *rb_ctx_init(void) {
 	// those will only be available once the CLI is invoked.
 	ctx->script_path = NULL;
 	ctx->script_dir = NULL;
+
+	// TODO: Cleanup whatever is going on here & handle allocation failure
+	rb_strlist_init(&ctx->lua_modules, RB_INIT_LUAMODULES_CAP);
+	rb_strlist_init(&ctx->static_inputs, RB_INIT_STATICINPUTS_CAP);
+	rb_idlist_init(&ctx->intermediates, RB_INIT_INTERMEDIATES_CAP);
+	rb_strlist_init(&ctx->generated, RB_INIT_GENERATED_CAP);
 
 	ctx->lua_files = malloc(RB_CTX_LUAFILES_MAX * sizeof(char *));
 	if (ctx->lua_files == NULL) {

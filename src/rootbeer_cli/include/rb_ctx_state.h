@@ -10,7 +10,27 @@
 #ifndef RB_CTX_STATE_H
 #define RB_CTX_STATE_H
 
-#include "rb_ctx.h"
+#include <rb_ctx.h>
+
+/**
+ * @brief Initial capacity for tracked imported Lua modules.
+ */
+#define RB_INIT_LUAMODULES_CAP 8
+
+/**
+ * @brief Initial capacity for tracked static inputs.
+ */
+#define RB_INIT_STATICINPUTS_CAP 16
+
+/**
+ * @brief Initial capacity for intermediate plugin outputs.
+ */
+#define RB_INIT_INTERMEDIATES_CAP 8
+
+/**
+ * @brief Initial capacity for tracked generated outputs.
+ */
+#define RB_INIT_GENERATED_CAP 16
 
 /**
  * Initializes the Rootbeer context.
