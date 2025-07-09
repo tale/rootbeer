@@ -9,3 +9,6 @@ documented features.
 :maxdepth: 1
 :caption: Contents
 rb_ctx
+rb_idlist
+rb_strlist
+rb_helpers
