@@ -40,7 +40,6 @@
   (build-system meson-build-system)
   (arguments
    (list
-    #:validate-runpath? #f
     #:phases
     #~(modify-phases %standard-phases
         (replace 'install
