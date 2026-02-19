@@ -31,6 +31,7 @@ rb_ctx_t *rb_ctx_init(void) {
 	rb_idlist_init(&ctx->intermediates, RB_INIT_INTERMEDIATES_CAP);
 	rb_strlist_init(&ctx->generated, RB_INIT_GENERATED_CAP);
 
+	ctx->dry_run = 0;
 	ctx->output_buf = NULL;
 	ctx->output_len = 0;
 	ctx->output_cap = 0;

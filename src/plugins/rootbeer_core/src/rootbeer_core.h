@@ -5,6 +5,7 @@
 #include <rb_plugin.h>
 #include <rb_rootbeer.h>
 
+char *rb_resolve_full_path(lua_State *L, const char *path);
 int rb_core_ref_file(lua_State *L);
 int rb_core_link_file(lua_State *L);
 int rb_core_to_json(lua_State *L);

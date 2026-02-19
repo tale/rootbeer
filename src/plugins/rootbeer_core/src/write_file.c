@@ -108,6 +108,13 @@ int rb_core_file(lua_State *L) {
 	}
 
 	rb_ctx_t *ctx = rb_ctx_from_lua(L);
+
+	if (ctx->dry_run) {
+		printf("  write %s (%zu bytes)\n", filepath, len);
+		free(filepath);
+		return 0;
+	}
+
 	int status = rb_track_gen_file(ctx, filepath);
 	if (status != RB_OK) {
 		free(filepath);
@@ -139,7 +146,7 @@ int rb_core_file(lua_State *L) {
 		return luaL_error(L, "Failed to write '%s': %s", raw_path, strerror(errno));
 	}
 
-	printf("  %s\n", filepath);
+	printf("  write %s\n", filepath);
 	free(filepath);
 	return 0;
 }
