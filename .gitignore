@@ -2,8 +2,7 @@ build/
 .cache/
 .ropeproject/
 .venv/
-docs/.doxygen/
-docs/_build
+docs/
 subprojects/*
 !subprojects/*.wrap
 result

@@ -1,75 +1,98 @@
 # Rootbeer
-> Deterministically manage your system configuration with lua!
+> Manage your dotfiles with Lua!
 
-This tool aims to make managing your system configuration easy.
-You can think of it as a tool that's very similar in function to
-[home-manager](https://github.com/nix-community/home-manager).
-The idea is that you can define exactly how you want your system (or userland)
-to be configured within a lua script and then run the tool to apply those
-changes to your system.
+Rootbeer is a dotfile manager that lets you define your system configuration
+in Lua scripts. Think [chezmoi](https://www.chezmoi.io/), but with the full
+power of a real scripting language. Write declarative config tables, use
+conditionals based on your OS/hostname, and generate shell configs — all
+without learning a templating DSL.
 
-Why not Nix? I have plenty of reasons why I don't like Nix which I go into on
-my [blog post](https://tale.me/blog/nix-might-be-overengineered/). However,
-I'm also not a fan of the `nix` language and wanted to see if I could make
-something similar with a language that is fully functional, scriptable, and
-has good error messages (lua). Also, this is a fun project to work on!
+## Quick Start
+```bash
+# Initialize with a new source directory
+rb init
 
-## Goals
-> At the moment this project will not work if you try to compile it.
-> Much of the functionality is just flat out missing and is TODO.
+# Or clone an existing dotfiles repo
+rb init tale/dotfiles
 
-- Be able to define system configurations in a lua script
-- Maintain a store of configurations, allowing rollbacks and revisions
-- Interface with OS-specific tools to apply configurations
-    - Package managers such as `brew` on macOS or `dnf` on Fedora
-    - Daemon services such as `launchd` on macOS or `systemd` on Linux
+# Apply your configuration
+rb apply
 
-## Technical Components
-I plan on extracting this out to separate documentation later, but here's a
-quick overview of the technical components of this project and how they all
-work together. The end result is `rootbeer`, a CLI tool to control everything.
+# Dry run (preview without writing files)
+rb apply -n
+```
 
-Here are the components:
-- An embedded LuaJIT interpreter to load and evaluate lua scripts. All of the
-functionality provided by Rootbeer will be exposed to the lua script via the
-`rootbeer` module.
+`rb init` creates a source directory at `~/.local/share/rootbeer/source/`
+with a starter `rootbeer.lua` manifest. When you run `rb apply`, it
+evaluates the manifest and writes/links your dotfiles into place.
 
-- A store system to manage configurations. This will be similar to Nix's store
-system, where configurations are stored in a directory and can be rolled back
-or revised.
+## Example Config
 
-- A pluggable module system that serves as the basis of all functionality
-offered by Rootbeer. The idea is that different integrations with the OSes
-can be written as modules and compiled in-tree to ship in the final binary.
+```lua
+local rb = require("rootbeer")
+local zsh = require("rootbeer.shells.zsh")
+local d = rb.data()
+
+-- Write a generated .zshrc
+rb.file("~/.zshrc", zsh.config {
+    env = {
+        EDITOR = "nvim",
+        LANG = "en_US.UTF-8",
+    },
+    aliases = {
+        g = "git",
+        v = "nvim",
+        ls = "ls -la",
+    },
+    sources = { "~/.config/zsh/local.zsh" },
+    extra = "autoload -Uz compinit && compinit",
+})
+
+-- Conditionals based on system data
+if d.os == "Darwin" then
+    rb.file("~/.config/homebrew/env", 'export HOMEBREW_PREFIX="/opt/homebrew"\n')
+end
+
+-- Symlink a file from your source directory
+rb.link_file("config/gitconfig", "~/.gitconfig")
+```
+
+## Lua API
+
+### Core (`require("rootbeer")`)
+
+| Function | Description |
+|---|---|
+| `rb.file(path, content)` | Write `content` to `path` (`~` expands to `$HOME`) |
+| `rb.link_file(src, dest)` | Symlink `src` (relative to source dir) to `dest` (`~` on target) |
+| `rb.data()` | Returns `{os, arch, hostname, home, username}` |
+| `rb.to_json(table)` | Serialize a Lua table to JSON |
+| `rb.interpolate_table(tbl, fn)` | Pass `tbl` through `fn` and return the result |
+| `rb.line(str)` | Append a line (with newline) to the output buffer |
+| `rb.emit(str)` | Append raw text to the output buffer |
+| `rb.register_module(name, tbl)` | Register a native module |
+
+### Shells (`require("rootbeer.shells.zsh")`)
+
+`zsh.config(table)` renders a declarative config table into a zshrc string.
+Supported keys: `env`, `aliases`, `evals`, `sources`, `extra`.
 
 ## Building
-The project is still in its early stages, stuff might break!
-The only prerequisite is that you have `meson` and `ninja` installed.
 
-You'll need to setup and run the build like so:
+Requires `meson` and `ninja`. LuaJIT and cJSON are vendored as subprojects.
+
 ```bash
 meson setup build
 meson compile -C build
 ```
 
-This will create the `./build/rb` binary which you can run to
-interact with the tool.
+The binary is built to `./build/src/rootbeer_cli/rb`.
 
-I highly recommend using [mise](https://mise.jdx.dev/) for anything else
-as I have automatically implemented almost all the commands you need and
-dependencies. With mise you can just run `mise run build`.
-
-### Building documentation
-The documentation is hard to build mostly because Doxygen is not available
-in a portable way. You'll need to preinstall Doxygen and ensure it is
-in your `PATH`. You'll also need to activate a python virtualenv (automatically
-handled if you are using mise) and install the `docs/requirements.txt`.
-
-Once done, you can build the documentation with:
+If you have [mise](https://mise.jdx.dev/) installed:
 ```bash
-cd docs/
-doxygen
-sphinx-build -b html source _build/html
-
-# Or with mise: mise build docs
+mise run build
 ```
+
+## License
+
+MIT

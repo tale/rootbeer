@@ -1,5 +1,0 @@
-breathe~=4.36
-furo~=2024.8
-myst-parser~=4.0
-sphinx~=8.2
-sphinx-lua-ls~=2.0

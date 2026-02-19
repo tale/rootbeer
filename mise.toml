@@ -1,11 +1,9 @@
 [env]
 _.path = ["./build/src/rootbeer_cli"]
-_.python.venv = { path = ".venv", create = true }
 
 [tools]
 meson = "latest"
 ninja = "1.12"
-python = "latest"
 lua-language-server = "latest"
 
 [tasks.setup]
@@ -24,19 +22,3 @@ description = "Clean the project"
 run = "meson setup build --wipe"
 alias = "c"
 
-[tasks.install-venv-deps]
-description = "Install Python dependencies in the virtual environment"
-run = "pip install -r docs/requirements.txt"
-
-[tasks.docs-ci]
-description = "Generate documentation (for CI)"
-dir = "docs"
-run = "sphinx-build -b html source _build/html"
-depends = ["install-venv-deps"]
-
-[tasks.docs]
-description = "Generate documentation"
-dir = "docs"
-run = "doxygen && sphinx-build -b html source _build/html"
-depends = ["install-venv-deps"]
-alias = "d"
