@@ -82,6 +82,11 @@ int rb_cli_store_list() {
 }
 
 int rb_cli_store_func(const int argc, const char *argv[]) {
+	if (argc < 3) {
+		rb_cli_store_print_usage();
+		return 1;
+	}
+
 	if (strcmp(argv[2], "init") == 0) {
 		return rb_cli_store_init();
 	}
