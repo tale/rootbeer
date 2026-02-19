@@ -27,6 +27,7 @@ jobs:
 
       - name: Install Tools
         run: |
+          mise settings experimental=true
           mise install --yes
 
       - name: Cache Dependencies

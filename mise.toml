@@ -1,5 +1,5 @@
 [env]
-_.path = ["./build/src/rootbeer_cli"]
+_.path = ["./build/src/cli"]
 
 [tools]
 meson = "1.10.1"
