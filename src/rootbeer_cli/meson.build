@@ -1,5 +1,6 @@
 cli_sources = files(
 	'src/cli_cmds/apply.c',
+	'src/cli_cmds/init.c',
 	'src/cli_cmds/store.c',
 )
 

@@ -7,7 +7,10 @@
 #include <limits.h>
 
 void rb_cli_apply_print_usage() {
-	printf("Usage: rootbeer apply [--dry-run|-n] <config file>\n");
+	printf("Usage: rootbeer apply [--dry-run|-n] [config file]\n");
+	printf("\n");
+	printf("If no config file is given, uses the default manifest at:\n");
+	printf("  ~/.local/share/rootbeer/source/rootbeer.lua\n");
 }
 
 int rb_cli_apply_func(const int argc, const char *argv[]) {
@@ -23,9 +26,17 @@ int rb_cli_apply_func(const int argc, const char *argv[]) {
 		}
 	}
 
+	// If no config file given, use the default manifest
+	char default_manifest[PATH_MAX];
 	if (config_file == NULL) {
-		rb_cli_apply_print_usage();
-		return 1;
+		const char *home = getenv("HOME");
+		if (home == NULL) {
+			fprintf(stderr, "error: $HOME is not set\n");
+			return 1;
+		}
+		snprintf(default_manifest, sizeof(default_manifest),
+			"%s%s/source/rootbeer.lua", home, RB_DATA_DIR_SUFFIX);
+		config_file = default_manifest;
 	}
 
 	if (access(config_file, F_OK | R_OK) != 0) {
