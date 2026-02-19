@@ -1,8 +1,14 @@
 local M = {}
 
+--- @class zsh.Config
+--- @field env? table<string, string> Environment variables exported via `export KEY="value"`.
+--- @field aliases? table<string, string> Shell aliases defined via `alias name="command"`.
+--- @field evals? string[] Commands wrapped in `eval "$(cmd)"`.
+--- @field sources? string[] File paths to source via `source path`.
+--- @field extra? string|string[] Raw lines appended as-is to the output.
+
 --- Renders a declarative zsh config table into a string.
---- Supports: env, aliases, sources, evals, plugins, extra
---- @param cfg table The configuration table.
+--- @param cfg zsh.Config The configuration table.
 --- @return string The rendered zshrc content.
 function M.config(cfg)
 	local lines = {}

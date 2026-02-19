@@ -2,7 +2,10 @@ build/
 .cache/
 .ropeproject/
 .venv/
-docs/
+docs/_generated/
 subprojects/*
 !subprojects/*.wrap
 result
+node_modules/
+.vitepress/cache/
+.vitepress/dist/

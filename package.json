@@ -1,0 +1,24 @@
+{
+  "name": "rootbeer",
+  "type": "module",
+  "scripts": {
+    "lua2md": "tsx scripts/lua2md.ts lua/rootbeer -o docs/_generated",
+    "predev": "pnpm lua2md",
+    "dev": "vitepress dev",
+    "prebuild": "pnpm lua2md",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "author": "Aarnav Tale <aarnav@tale.me>",
+  "license": "MIT",
+  "packageManager": "pnpm@10.30.0",
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "vitepress": "2.0.0-alpha.16"
+  },
+  "pnpm": {
+    "overrides": {
+      "vite": "npm:rolldown-vite@latest"
+    }
+  }
+}
