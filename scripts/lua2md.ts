@@ -59,8 +59,12 @@ interface Module {
 
 // ── Parsing ────────────────────────────────────────────────────────
 
-/** Match a type that may contain generics and union pipes: table<string, string>, string|string[] */
-const TYPE_RE = /(?:\S+<[^>]+>|\S+(?:\|(?:\S+<[^>]+>|\S+))*)/
+/** Match a LuaLS type annotation:
+ *  - fun(tbl: table): table     — function signatures with parens/spaces
+ *  - table<string, string>      — generics with angle brackets
+ *  - string|string[]            — union types
+ */
+const TYPE_RE = /(?:fun\([^)]*\)(?:\s*:\s*\S+)?|\S+<[^>]+>|\S+(?:\|(?:\S+<[^>]+>|\S+))*)/
 
 function parseFile(filepath: string, root: string): Module | null {
 	const rel = relative(root, filepath)
@@ -205,29 +209,42 @@ function renderBlock(block: DocBlock, mod: Module): string {
 	}
 
 	if (block.params.length) {
-		for (const p of block.params) {
-			const classDef = mod.classes.get(p.type)
-			if (classDef) {
-				out.push(`**\`${p.name}\`** \`${escapeCell(p.type)}\` — ${escapeCell(p.desc)}`)
-				out.push("")
-				renderFields(out, classDef.fields)
-				out.push("")
-			} else {
-				out.push("**Parameters:**")
-				out.push("")
-				out.push("| Name | Type | Description |")
-				out.push("|------|------|-------------|")
+		// Split params into class-typed (expanded inline) and plain
+		const classParams = block.params.filter((p) => mod.classes.has(p.type))
+		const plainParams = block.params.filter((p) => !mod.classes.has(p.type))
+
+		if (plainParams.length) {
+			out.push("**Parameters:**")
+			out.push("")
+			out.push("| Name | Type | Description |")
+			out.push("|------|------|-------------|")
+			for (const p of plainParams) {
 				out.push(`| \`${p.name}\` | \`${escapeCell(p.type)}\` | ${escapeCell(p.desc)} |`)
-				out.push("")
 			}
+			out.push("")
+		}
+
+		for (const p of classParams) {
+			const classDef = mod.classes.get(p.type)!
+			out.push(`**\`${p.name}\`** \`${escapeCell(p.type)}\` — ${escapeCell(p.desc)}`)
+			out.push("")
+			renderFields(out, classDef.fields)
+			out.push("")
 		}
 	}
 
 	if (block.returns.length) {
-		out.push("**Returns:** ", "")
+		out.push("**Returns:**", "")
 		for (const r of block.returns) {
-			const desc = r.desc ? ` — ${r.desc}` : ""
-			out.push(`- \`${escapeCell(r.type)}\`${desc}`)
+			const classDef = mod.classes.get(r.type)
+			if (classDef) {
+				out.push(`- \`${escapeCell(r.type)}\`${r.desc ? ` — ${r.desc}` : ""}`)
+				out.push("")
+				renderFields(out, classDef.fields)
+			} else {
+				const desc = r.desc ? ` — ${r.desc}` : ""
+				out.push(`- \`${escapeCell(r.type)}\`${desc}`)
+			}
 		}
 		out.push("")
 	}

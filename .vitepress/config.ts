@@ -7,16 +7,23 @@ export default defineConfig({
   title: "Rootbeer",
   description: "Deterministically manage your dotfiles",
   themeConfig: {
-    // https://vitepress.dev/reference/default-theme-config
     nav: [
-      { text: 'Home', link: '/' },
+      { text: 'Guide', link: '/guide/getting-started' },
+      { text: 'Modules', link: '/modules/zsh' },
     ],
 
     sidebar: [
       {
+        text: 'Guide',
+        items: [
+          { text: 'Getting Started', link: '/guide/getting-started' },
+          { text: 'Core API', link: '/guide/core-api' },
+        ]
+      },
+      {
         text: 'Modules',
         items: [
-          { text: 'Zsh', link: '/modules/zsh' }
+          { text: 'Zsh', link: '/modules/zsh' },
         ]
       }
     ],
