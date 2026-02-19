@@ -9,3 +9,7 @@ result
 node_modules/
 .vitepress/cache/
 .vitepress/dist/
+.zig-cache/
+zig-out/
+zig-pkg/
+*.o

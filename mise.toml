@@ -9,6 +9,7 @@ node = "24.13.1"
 lua-language-server = "latest"
 "conda:clang-format" = "latest"
 lefthook = "latest"
+zig = "master"
 
 [tasks.setup]
 description = "Setup the project"
