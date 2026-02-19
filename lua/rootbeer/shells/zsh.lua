@@ -1,54 +1,56 @@
-local rb = require("rootbeer")
 local M = {}
 
-function M.env(key, value)
-	rb.line("export " .. key .. '="' .. value .. '"')
-end
+--- Renders a declarative zsh config table into a string.
+--- Supports: env, aliases, sources, evals, plugins, extra
+--- @param cfg table The configuration table.
+--- @return string The rendered zshrc content.
+function M.config(cfg)
+	local lines = {}
 
-function M.alias(name, command)
-	rb.line("alias " .. name .. '="' .. command .. '"')
-end
+	local function add(line)
+		lines[#lines + 1] = line
+	end
 
-function M.source(path)
-	rb.line("source " .. path)
-end
-
-function M.eval(command)
-	rb.line('eval "$(' .. command .. ')"')
-end
-
-function M.raw(text)
-	rb.emit(text)
-end
-
-function M.comment(text)
-	rb.line("# " .. text)
-end
-
-function M.create_config(config)
-	if config.env then
-		for key, value in pairs(config.env) do
-			M.env(key, value)
+	if cfg.env then
+		for key, value in pairs(cfg.env) do
+			add('export ' .. key .. '="' .. value .. '"')
 		end
 	end
 
-	if config.aliases then
-		for name, command in pairs(config.aliases) do
-			M.alias(name, command)
+	if cfg.aliases then
+		if #lines > 0 then add("") end
+		for name, command in pairs(cfg.aliases) do
+			add('alias ' .. name .. '="' .. command .. '"')
 		end
 	end
 
-	if config.sources then
-		for _, path in ipairs(config.sources) do
-			M.source(path)
+	if cfg.evals then
+		if #lines > 0 then add("") end
+		for _, cmd in ipairs(cfg.evals) do
+			add('eval "$(' .. cmd .. ')"')
 		end
 	end
 
-	if config.evals then
-		for _, cmd in ipairs(config.evals) do
-			M.eval(cmd)
+	if cfg.sources then
+		if #lines > 0 then add("") end
+		for _, path in ipairs(cfg.sources) do
+			add("source " .. path)
 		end
 	end
+
+	-- extra: string or table of strings, appended as-is
+	if cfg.extra then
+		if #lines > 0 then add("") end
+		if type(cfg.extra) == "string" then
+			add(cfg.extra)
+		elseif type(cfg.extra) == "table" then
+			for _, block in ipairs(cfg.extra) do
+				add(block)
+			end
+		end
+	end
+
+	return table.concat(lines, "\n") .. "\n"
 end
 
 return M

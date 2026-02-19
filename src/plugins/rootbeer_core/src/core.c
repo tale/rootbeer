@@ -29,6 +29,7 @@ const luaL_Reg functions[] = {
 	{"emit", rb_core_emit},
 	{"line", rb_core_line},
 	{"data", rb_core_data},
+	{"file", rb_core_file},
 	{NULL, NULL}
 };
 
