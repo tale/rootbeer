@@ -1,4 +1,4 @@
-plugin_dirs = ['rootbeer_core', 'rpm_pkg']
+plugin_dirs = ['rootbeer_core']
 
 plugin_sources = []
 plugin_names = []
