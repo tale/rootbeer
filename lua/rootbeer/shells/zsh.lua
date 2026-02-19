@@ -1,28 +1,54 @@
 local rb = require("rootbeer")
 local M = {}
 
+function M.env(key, value)
+	rb.line("export " .. key .. '="' .. value .. '"')
+end
+
+function M.alias(name, command)
+	rb.line("alias " .. name .. '="' .. command .. '"')
+end
+
+function M.source(path)
+	rb.line("source " .. path)
+end
+
+function M.eval(command)
+	rb.line('eval "$(' .. command .. ')"')
+end
+
+function M.raw(text)
+	rb.emit(text)
+end
+
+function M.comment(text)
+	rb.line("# " .. text)
+end
+
 function M.create_config(config)
-	local zsh_conf = rb.interpolate_table(config, function(cfg)
-		local zshrc = ""
-
-		-- Add environment variables
-		if cfg.env then
-			for key, value in pairs(cfg.env) do
-				zshrc = zshrc .. "export " .. key .. "=\"" .. value .. "\"\n"
-			end
+	if config.env then
+		for key, value in pairs(config.env) do
+			M.env(key, value)
 		end
+	end
 
-		-- Add aliases
-		if cfg.aliases then
-			for alias, command in pairs(cfg.aliases) do
-				zshrc = zshrc .. "alias " .. alias .. "=\"" .. command .. "\"\n"
-			end
+	if config.aliases then
+		for name, command in pairs(config.aliases) do
+			M.alias(name, command)
 		end
+	end
 
-		return zshrc
-	end)
+	if config.sources then
+		for _, path in ipairs(config.sources) do
+			M.source(path)
+		end
+	end
 
-	return rb.write_file("./test/.zshrc", zsh_conf)
+	if config.evals then
+		for _, cmd in ipairs(config.evals) do
+			M.eval(cmd)
+		end
+	end
 end
 
 return M

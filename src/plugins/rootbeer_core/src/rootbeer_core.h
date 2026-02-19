@@ -11,5 +11,8 @@ int rb_core_to_json(lua_State *L);
 int rb_core_write_file(lua_State *L);
 int rb_core_interpolate_table(lua_State *L);
 int rb_core_register_module(lua_State *L);
+int rb_core_emit(lua_State *L);
+int rb_core_line(lua_State *L);
+int rb_core_data(lua_State *L);
 
 #endif

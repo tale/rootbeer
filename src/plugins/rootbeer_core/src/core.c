@@ -26,6 +26,9 @@ const luaL_Reg functions[] = {
 	{"write_file", rb_core_write_file},
 	{"interpolate_table", rb_core_interpolate_table},
 	{"register_module", rb_core_register_module},
+	{"emit", rb_core_emit},
+	{"line", rb_core_line},
+	{"data", rb_core_data},
 	{NULL, NULL}
 };
 

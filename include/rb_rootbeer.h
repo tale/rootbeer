@@ -110,6 +110,17 @@ const char *rb_get_intermediate(rb_ctx_t *ctx, const char *id);
  */
 rb_ctx_t *rb_ctx_from_lua(lua_State *L);
 
+/**
+ * Appends a string to the context's output buffer, growing it as needed.
+ * Used by rb.line() and rb.emit() primitives.
+ *
+ * @param ctx The Rootbeer context.
+ * @param str The string to append.
+ * @param len Length of the string to append.
+ * @return 0 on success, -1 on allocation failure.
+ */
+int rb_ctx_output_append(rb_ctx_t *ctx, const char *str, size_t len);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

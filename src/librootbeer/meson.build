@@ -1,5 +1,6 @@
 librootbeer_sources = files(
 	'src/api/intermediate.c',
+	'src/api/output_buffer.c',
 	'src/api/track_gen_file.c',
 	'src/api/track_ref_file.c',
 	'src/helpers/canon.c',

@@ -2,6 +2,8 @@ rootbeer_lib = static_library(
 	'rootbeer_plugin',
 	sources: files(
 		'src/core.c',
+		'src/data.c',
+		'src/emit.c',
 		'src/interpolate_table.c',
 		'src/link_file.c',
 		'src/register_module.c',

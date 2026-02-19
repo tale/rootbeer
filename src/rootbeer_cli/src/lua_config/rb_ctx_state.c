@@ -31,6 +31,10 @@ rb_ctx_t *rb_ctx_init(void) {
 	rb_idlist_init(&ctx->intermediates, RB_INIT_INTERMEDIATES_CAP);
 	rb_strlist_init(&ctx->generated, RB_INIT_GENERATED_CAP);
 
+	ctx->output_buf = NULL;
+	ctx->output_len = 0;
+	ctx->output_cap = 0;
+
 	ctx->lua_files = malloc(RB_CTX_LUAFILES_MAX * sizeof(char *));
 	if (ctx->lua_files == NULL) {
 		free(ctx);
@@ -91,6 +95,7 @@ void rb_ctx_free(rb_ctx_t *rb_ctx) {
 	free(rb_ctx->lua_files);
 	free(rb_ctx->ext_files);
 	free(rb_ctx->plugin_transforms);
+	free(rb_ctx->output_buf);
 
 	free(rb_ctx);
 	return;
