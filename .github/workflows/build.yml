@@ -40,3 +40,16 @@ jobs:
 
       - name: Build
         run: mise run build
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run clang-format
+        uses: jidicula/clang-format-action@v4
+        continue-on-error: true
+        with:
+          clang-format-version: "13"
+          check-path: src
+          fallback-style: LLVM
