@@ -12,6 +12,7 @@
 #include <libgen.h>
 #include <sys/stat.h>
 
+// TODO: Resolve at runtime from $HOME when the store is re-enabled
 #define STORE_ROOT "/opt/rootbeer"
 
 // This struct is basically what an entire revision looks like

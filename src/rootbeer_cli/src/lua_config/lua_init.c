@@ -55,14 +55,21 @@ int lua_runtime_init(lua_State *L, const char *entry_file) {
 	const char *lpath = lua_tostring(L, -1);
 	lua_pop(L, 1);
 
-	// In non-debug builds, we use the extracted rootbeer Lua libraries.
-	// In debug, we just use the lua/ directory in the git source-tree.
-	// In this case, we make the assumption that the CWD is the source root.
+	// Resolve the data directory at runtime from $HOME.
+	// In debug builds, also add the source tree's lua/ directory.
+	const char *home = getenv("HOME");
+	if (home == NULL) {
+		rb_fatal("$HOME is not set");
+	}
+
+	char data_dir[PATH_MAX];
+	snprintf(data_dir, sizeof(data_dir), "%s%s", home, RB_DATA_DIR_SUFFIX);
+
 	char system_path[PATH_MAX];
 #ifndef DEBUG
 	snprintf(
 		system_path, sizeof(system_path),
-		"%s/?.lua;%s/?/init.lua", LUA_LIB, LUA_LIB
+		"%s/lua/?.lua;%s/lua/?/init.lua", data_dir, data_dir
 	);
 #else
 	char *pwd = getcwd(NULL, 0);
@@ -73,25 +80,20 @@ int lua_runtime_init(lua_State *L, const char *entry_file) {
 	printf("DEBUG: Using %s/lua/ for Lua libraries\n", pwd);
 	snprintf(
 		system_path, sizeof(system_path),
-		"%s/lua/?.lua;%s/lua/?/init.lua", pwd, pwd
+		"%s/lua/?.lua;%s/lua/?/init.lua;%s/lua/?.lua;%s/lua/?/init.lua",
+		data_dir, data_dir, pwd, pwd
 	);
 
 	free(pwd);
 #endif
 
-	size_t new_lpath_len = strlen(lpath)
-		+ strlen(system_path)
-		+ strlen("/lua/?.lua")
-		+ strlen("/lua/?/init.lua")
-		+ 3; // 2 semicolons and null terminator
-
+	size_t new_lpath_len = strlen(lpath) + strlen(system_path) + 2;
 	char *new_lpath = malloc(new_lpath_len);
 	if (new_lpath == NULL) {
 		rb_fatal("Failed to allocate space for modified lua path");
 	}
 
-	snprintf(new_lpath, new_lpath_len, "%s;%s/lua/?.lua;%s/lua/?/init.lua",
-		lpath, LUA_LIB, LUA_LIB);
+	snprintf(new_lpath, new_lpath_len, "%s;%s", lpath, system_path);
 	lua_pushstring(L, new_lpath);
 	lua_setfield(L, -2, "path");
 	lua_pop(L, 1);
