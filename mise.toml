@@ -1,34 +1,5 @@
-[env]
-_.path = ["./build/src/cli"]
-
 [tools]
-meson = "1.10.1"
-ninja = "1.13.2"
 pnpm = "10.30.0"
 node = "24.13.1"
 lua-language-server = "latest"
-"conda:clang-format" = "latest"
-lefthook = "latest"
 zig = "master"
-
-[tasks.setup]
-description = "Setup the project"
-run = "test -d build || meson setup build"
-alias = "s"
-
-[tasks.build]
-description = "Build the project"
-run = "meson compile -C build"
-depends = ["setup"]
-alias = "b"
-
-[tasks.clean]
-description = "Clean the project"
-run = "meson setup build --wipe"
-alias = "c"
-
-[tasks.docs]
-description = "Generate Lua API docs as Markdown"
-run = "pnpm lua2md"
-alias = "d"
-
