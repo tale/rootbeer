@@ -6,7 +6,6 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
-// This is linked in by Meson when compiling the plugins.
 extern const rb_plugin_t *rb_plugins[];
 
 int lua_runtime_require_hook(lua_State *L) {

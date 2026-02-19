@@ -29,6 +29,14 @@ typedef struct {
 
 
 /**
+ * X-macro list of all registered plugins.
+ * To add a new plugin, add a X(name) entry here where `name` matches
+ * the identifier used in the RB_PLUGIN() macro in the plugin source.
+ */
+#define RB_PLUGINS(X) \
+	X(__rootbeer__)
+
+/**
  * @def RB_PLUGIN
  * Macro to define a Rootbeer plugin.
  * It will automatically generate the necessary entrypoint function

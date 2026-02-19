@@ -23,12 +23,14 @@ typedef struct {
 	int (*func)(const int argc, const char *argv[]);
 } rb_cli_cmd;
 
-// Individual commands are taped together using CMake's build system
-// so that all a command needs to do is globally define the struct
-// and it will be added to the rb_cli_commands array at build time
-//
-// IMPORTANT: The struct name MUST be the same as the file name
-// for the build system to properly add it to the array.
+// X-macro list of all CLI commands.
+// To add a new command, add a X(name) entry here where `name` matches
+// the global rb_cli_cmd struct defined in the corresponding source file.
+#define RB_CLI_COMMANDS(X) \
+	X(apply) \
+	X(init) \
+	X(store)
+
 extern rb_cli_cmd *rb_cli_cmds[];
 
 #endif // CLI_MODULE_H

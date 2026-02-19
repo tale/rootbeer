@@ -17,4 +17,3 @@ rootbeer_lib = static_library(
 )
 
 register_plugin_lib = rootbeer_lib
-register_plugin_name = '__rootbeer__'

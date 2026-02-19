@@ -1,11 +1,9 @@
-cli_sources = files(
+src_files = plugin_taped_sources + files(
 	'src/cli_cmds/apply.c',
 	'src/cli_cmds/init.c',
 	'src/cli_cmds/store.c',
-)
+	'src/cli_cmds/cmd_registry.c',
 
-subdir('gen_cmd_array')
-src_files = cli_taped_sources + plugin_taped_sources + files(
 	'src/cli_tool/command.c',
 	'src/cli_tool/parse.c',
 

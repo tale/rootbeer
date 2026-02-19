@@ -2,9 +2,11 @@
 _.path = ["./build/src/rootbeer_cli"]
 
 [tools]
-meson = "latest"
-ninja = "1.12"
+meson = "1.10.1"
+ninja = "1.13.2"
 lua-language-server = "latest"
+"conda:clang-format" = "latest"
+lefthook = "latest"
 
 [tasks.setup]
 description = "Setup the project"

@@ -1,0 +1,5 @@
+pre-commit:
+  commands:
+    clang-format:
+      glob: "*.{c,h}"
+      run: clang-format --dry-run -Werror {staged_files}
