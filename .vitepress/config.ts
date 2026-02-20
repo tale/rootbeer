@@ -9,7 +9,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
-      { text: 'Modules', link: '/modules/zsh' },
+      { text: 'API', link: '/api/core' },
     ],
 
     sidebar: [
@@ -17,13 +17,13 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Getting Started', link: '/guide/getting-started' },
-          { text: 'Core API', link: '/guide/core-api' },
         ]
       },
       {
-        text: 'Modules',
+        text: 'API Reference',
         items: [
-          { text: 'Zsh', link: '/modules/zsh' },
+          { text: 'Core', link: '/api/core' },
+          { text: 'zsh', link: '/api/zsh' },
         ]
       }
     ],

@@ -2,7 +2,7 @@
   "name": "rootbeer",
   "type": "module",
   "scripts": {
-    "lua2md": "tsx scripts/lua2md.ts lua/rootbeer -o docs/_generated",
+    "lua2md": "tsx scripts/lua2md.ts lua/rootbeer -o docs/api",
     "predev": "pnpm lua2md",
     "dev": "vitepress dev",
     "prebuild": "pnpm lua2md",

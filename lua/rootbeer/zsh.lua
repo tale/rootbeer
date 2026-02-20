@@ -1,3 +1,4 @@
+--- @class zsh
 local M = {}
 
 --- @class zsh.Config

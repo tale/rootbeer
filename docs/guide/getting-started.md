@@ -6,15 +6,11 @@ power of a real scripting language instead of Go templates.
 
 ## Installation
 
-Rootbeer is built from source using Meson and Ninja. LuaJIT and cJSON are
-vendored as subprojects — no extra dependencies required.
+Rootbeer is built from source using Cargo.
 
 ```bash
-meson setup build
-meson compile -C build
+cargo build --release
 ```
-
-The binary is built to `./build/src/cli/rb`.
 
 If you have [mise](https://mise.jdx.dev/) installed:
 
@@ -43,8 +39,8 @@ another machine.
 Open `~/.local/share/rootbeer/source/rootbeer.lua`:
 
 ```lua
-local rb = require("rootbeer")
-local zsh = require("rootbeer.shells.zsh")
+local rb = require("@rootbeer")
+local zsh = require("@rootbeer/zsh")
 
 rb.file("~/.zshrc", zsh.config({
     env = {
@@ -81,7 +77,7 @@ Use `rb.data()` to branch on the current machine:
 ```lua
 local d = rb.data()
 
-if d.os == "Darwin" then
+if d.os == "macos" then
     rb.file("~/.config/homebrew/env", 'export HOMEBREW_PREFIX="/opt/homebrew"\n')
 end
 
@@ -94,8 +90,8 @@ end
 
 | Field | Description |
 |-------|-------------|
-| `os` | Operating system name (e.g. `Linux`, `Darwin`) |
-| `arch` | CPU architecture (e.g. `x86_64`, `arm64`) |
+| `os` | Operating system name (e.g. `"macos"`, `"linux"`) |
+| `arch` | CPU architecture (e.g. `"aarch64"`, `"x86_64"`) |
 | `hostname` | Machine hostname |
 | `home` | Home directory path |
 | `username` | Current username |
@@ -117,5 +113,5 @@ nothing happens. Stale links are replaced.
 
 ## Next Steps
 
-- [Modules](/modules/zsh) — Declarative config generators for shells and tools
-- [Core API](/guide/core-api) — Full reference for `rb.*` functions
+- [Core API](/api/core) — Full reference for `rb.*` functions
+- [zsh](/api/zsh) — Declarative zsh configuration generator
