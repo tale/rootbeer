@@ -7,7 +7,6 @@ pub use plan::Op;
 
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::{error, fs, io};
 
 #[derive(Debug)]
@@ -81,18 +80,18 @@ impl From<mlua::Error> for Error {
 }
 
 pub fn execute(script: &Path, mode: Mode) -> Result<ExecutionReport, Error> {
-    let runtime = Runtime::from_script(&script)?;
-    let run = Arc::new(Mutex::new(lua::Run::default()));
-
-    let source = fs::read_to_string(&script)?;
+    let runtime = Runtime::from_script(script)?;
+    let source = fs::read_to_string(script)?;
     let script_name = runtime.script_name.clone();
 
-    lua::create_vm(runtime)?
-        .load(&source)
-        .set_name(&script_name)
-        .exec()?;
+    let lua = lua::create_vm(runtime)?;
+    lua.load(&source).set_name(&script_name).exec()?;
 
-    let ops = std::mem::take(&mut run.lock().unwrap().ops);
+    let ops = lua
+        .remove_app_data::<lua::Run>()
+        .unwrap_or_default()
+        .into_ops();
+
     let report = match mode {
         Mode::Apply => executor::apply(&ops)?,
         Mode::DryRun => executor::dry_run(&ops),

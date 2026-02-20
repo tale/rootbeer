@@ -6,8 +6,10 @@ use crate::{
 };
 
 pub fn apply(ops: &[Op]) -> io::Result<ExecutionReport> {
-    let mut report = ExecutionReport::default();
-    report.mode = Mode::Apply;
+    let mut report = ExecutionReport {
+        mode: Mode::Apply,
+        ..Default::default()
+    };
 
     for op in ops {
         match op {

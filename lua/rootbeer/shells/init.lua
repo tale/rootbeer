@@ -1,5 +1,5 @@
 local M = {}
 
-M.zsh = require("rootbeer.shells.zsh")
+M.zsh = require("@rootbeer.shells.zsh")
 
 return M

@@ -2,6 +2,7 @@
 pnpm = "10.30.0"
 node = "24.13.1"
 lua-language-server = "latest"
+lefthook = "latest"
 rust = {
 	version = "1.93.0",
 	components = "rustc,rust-std,rust-docs,rustfmt,rust-analyzer,clippy"

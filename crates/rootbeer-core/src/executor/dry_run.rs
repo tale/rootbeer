@@ -4,8 +4,10 @@ use crate::{
 };
 
 pub fn dry_run(ops: &[Op]) -> ExecutionReport {
-    let mut report = ExecutionReport::default();
-    report.mode = Mode::DryRun;
+    let mut report = ExecutionReport {
+        mode: Mode::DryRun,
+        ..Default::default()
+    };
 
     for op in ops {
         match op {

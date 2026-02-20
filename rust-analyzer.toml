@@ -1,0 +1,4 @@
+[check]
+command = "clippy"
+allTargets = true
+extraArgs = ["--workspace"]
