@@ -13,6 +13,7 @@ use std::{error, fs, io};
 pub struct Runtime {
     pub script_dir: PathBuf,
     pub script_name: String,
+    pub lua_dir: PathBuf,
 }
 
 impl Runtime {
@@ -35,6 +36,7 @@ impl Runtime {
             .to_string();
 
         Ok(Self {
+            lua_dir: PathBuf::from(env!("ROOTBEER_LUA_DIR")),
             script_dir,
             script_name,
         })
@@ -81,11 +83,16 @@ impl From<mlua::Error> for Error {
 
 pub fn execute(script: &Path, mode: Mode) -> Result<ExecutionReport, Error> {
     let runtime = Runtime::from_script(script)?;
-    let source = fs::read_to_string(script)?;
-    let script_name = runtime.script_name.clone();
+    execute_with(runtime, mode)
+}
+
+pub fn execute_with(runtime: Runtime, mode: Mode) -> Result<ExecutionReport, Error> {
+    let script_path = runtime.script_dir.join(&runtime.script_name);
+    let source = fs::read_to_string(&script_path)?;
+    let chunk_name = format!("@{}", script_path.with_extension("").display());
 
     let lua = lua::create_vm(runtime)?;
-    lua.load(&source).set_name(&script_name).exec()?;
+    lua.load(&source).set_name(&chunk_name).exec()?;
 
     let ops = lua
         .remove_app_data::<lua::Run>()

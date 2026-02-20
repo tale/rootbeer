@@ -1,5 +1,5 @@
 local rb = require("@rootbeer")
-local zsh = require("@rootbeer.shells.zsh")
+local zsh = require("@rootbeer/zsh")
 local d = rb.data()
 
 print("rootbeer test run")

@@ -1,4 +1,5 @@
 mod fs;
+mod require;
 mod sys;
 mod vm;
 

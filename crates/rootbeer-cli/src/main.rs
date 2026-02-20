@@ -12,6 +12,10 @@ struct Cli {
     /// Enable debug output
     #[arg(short, long, default_value_t = false)]
     verbose: bool,
+
+    /// Path to the lua/ standard library directory
+    #[arg(long)]
+    lua_dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -48,7 +52,16 @@ fn main() {
                 std::process::exit(1);
             }
 
-            match rootbeer_core::execute(&script, mode) {
+            let mut runtime = rootbeer_core::Runtime::from_script(&script).unwrap_or_else(|e| {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            });
+
+            if let Some(lua_dir) = &cli.lua_dir {
+                runtime.lua_dir = lua_dir.clone();
+            }
+
+            match rootbeer_core::execute_with(runtime, mode) {
                 Ok(report) => {
                     println!("ran in {} mode:", report.mode);
                     for result in &report.results {
