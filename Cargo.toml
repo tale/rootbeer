@@ -1,0 +1,10 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.metadata]
+# rootbeer only supports unix-like systems (macOS, Linux)
+# Windows is not supported
+
+[workspace.package]
+rust-version = "1.79"

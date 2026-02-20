@@ -8,48 +8,36 @@ on:
       - main
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Mise
-        run: |
-          curl https://mise.run | sh
-          echo "$HOME/.local/share/mise/bin" >> $GITHUB_PATH
-          echo "$HOME/.local/share/mise/shims" >> $GITHUB_PATH
-
-      - name: Cache Tools
-        uses: actions/cache@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          path: ~/.local/share/mise
-          key: mise-${{ runner.os }}-${{ hashFiles('mise.toml') }}
+          components: clippy, rustfmt
 
-      - name: Install Tools
-        run: |
-          mise settings experimental=true
-          mise install --yes
-
-      - name: Cache Dependencies
+      - name: Cache Cargo
         uses: actions/cache@v4
         with:
           path: |
-            subprojects/**
-            !subprojects/*.wrap
-          key: deps-${{ runner.os }}-${{ hashFiles('subprojects/*.wrap') }}
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Build
-        run: mise run build
-  format:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+        run: cargo build
 
-      - name: Run clang-format
-        uses: jidicula/clang-format-action@v4.16.0
-        continue-on-error: true
-        with:
-          clang-format-version: "13"
-          check-path: src
-          fallback-style: LLVM
+      - name: Test
+        run: cargo test

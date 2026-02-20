@@ -1,0 +1,7 @@
+[package]
+name = "rootbeer-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mlua = { version = "0.11.5", features = ["luau-jit"] }

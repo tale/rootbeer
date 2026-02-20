@@ -1,15 +1,5 @@
-build/
-.cache/
-.ropeproject/
-.venv/
-docs/_generated/
-subprojects/*
-!subprojects/*.wrap
-result
+target/
 node_modules/
 .vitepress/cache/
 .vitepress/dist/
-.zig-cache/
-zig-out/
-zig-pkg/
-*.o
+docs/_generated/

@@ -2,4 +2,10 @@
 pnpm = "10.30.0"
 node = "24.13.1"
 lua-language-server = "latest"
-zig = "master"
+rust = {
+	version = "1.93.0",
+	components = "rustc,rust-std,rust-docs,rustfmt,rust-analyzer,clippy"
+}
+
+[env]
+_.path = ["./target/debug"]
