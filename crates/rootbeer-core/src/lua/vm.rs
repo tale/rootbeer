@@ -31,7 +31,7 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     let rb = lua.create_table()?;
     fs::register(&lua, &rb)?;
     serializer::register(&lua, &rb)?;
-    sys::register(&lua, &rb)?;
+    sys::register(&rb)?;
 
     lua.globals().set("rootbeer", &rb)?;
     lua.register_module("@rootbeer", rb)?;

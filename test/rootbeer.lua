@@ -1,13 +1,10 @@
 local rb = require("@rootbeer")
 local zsh = require("@rootbeer/zsh")
-local d = rb.data()
 
 print("rootbeer test run")
-print("  os:       " .. d.os)
-print("  arch:     " .. d.arch)
-print("  hostname: " .. d.hostname)
-print("  user:     " .. d.username)
-print("")
+for k, v in pairs(rb.host) do
+	print("rb.host." .. k .. " = " .. tostring(v))
+end
 
 -- Write a generated zshrc using the shell module
 zsh.config({
@@ -32,9 +29,9 @@ zsh.config({
 })
 
 -- Conditional based on OS
-if d.os == "macos" then
+if rb.host.os == "macos" then
 	rb.file("/tmp/rb-test/darwin.txt", "this is a mac\n")
-elseif d.os == "linux" then
+elseif rb.host.os == "linux" then
 	rb.file("/tmp/rb-test/linux.txt", "this is linux\n")
 end
 
