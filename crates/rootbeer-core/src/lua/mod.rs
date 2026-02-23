@@ -1,5 +1,6 @@
 mod fs;
 mod require;
+mod serializer;
 mod sys;
 mod vm;
 

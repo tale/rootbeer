@@ -2,7 +2,7 @@
   "name": "rootbeer",
   "type": "module",
   "scripts": {
-    "lua2md": "tsx scripts/lua2md.ts lua/rootbeer -o docs/api",
+    "lua2md": "tsx scripts/lua2md.ts lua/rootbeer -o docs/api/_generated",
     "predev": "pnpm lua2md",
     "dev": "vitepress dev",
     "prebuild": "pnpm lua2md",
@@ -14,6 +14,7 @@
   "packageManager": "pnpm@10.30.0",
   "devDependencies": {
     "oxc-minify": "^0.114.0",
+    "oxfmt": "^0.34.0",
     "tsx": "^4.21.0",
     "vitepress": "2.0.0-alpha.16"
   },

@@ -113,5 +113,7 @@ nothing happens. Stale links are replaced.
 
 ## Next Steps
 
+- [Conditional Config](/guide/conditional-config) — Per-machine branching with `rb.data()`
 - [Core API](/api/core) — Full reference for `rb.*` functions
-- [zsh](/api/zsh) — Declarative zsh configuration generator
+- [zsh](/api/zsh) — Declarative zsh configuration
+- [git](/api/git) — Declarative git configuration

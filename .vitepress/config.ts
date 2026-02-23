@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitepress'
+import { defineConfig } from "vitepress";
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
@@ -8,28 +8,35 @@ export default defineConfig({
   description: "Deterministically manage your dotfiles",
   themeConfig: {
     nav: [
-      { text: 'Guide', link: '/guide/getting-started' },
-      { text: 'API', link: '/api/core' },
+      { text: "Guide", link: "/guide/getting-started" },
+      { text: "API", link: "/api/core" },
     ],
 
     sidebar: [
       {
-        text: 'Guide',
+        text: "Guide",
         items: [
-          { text: 'Getting Started', link: '/guide/getting-started' },
-        ]
+          { text: "Getting Started", link: "/guide/getting-started" },
+          { text: "Conditional Config", link: "/guide/conditional-config" },
+        ],
       },
       {
-        text: 'API Reference',
+        text: "API Reference",
         items: [
-          { text: 'Core', link: '/api/core' },
-          { text: 'zsh', link: '/api/zsh' },
-        ]
-      }
+          { text: "Core", link: "/api/core" },
+          { text: "zsh", link: "/api/zsh" },
+          { text: "git", link: "/api/git" },
+        ],
+      },
+      {
+        text: "Contributing",
+        items: [
+          { text: "Dev Setup", link: "/contributing/setup" },
+          { text: "Architecture", link: "/contributing/architecture" },
+        ],
+      },
     ],
 
-    socialLinks: [
-      { icon: 'github', link: 'https://github.com/tale/rootbeer' }
-    ]
-  }
-})
+    socialLinks: [{ icon: "github", link: "https://github.com/tale/rootbeer" }],
+  },
+});

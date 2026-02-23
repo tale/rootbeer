@@ -2,4 +2,4 @@ target/
 node_modules/
 .vitepress/cache/
 .vitepress/dist/
-docs/api/
+docs/api/_generated

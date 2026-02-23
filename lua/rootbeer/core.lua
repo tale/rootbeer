@@ -26,3 +26,15 @@ function rootbeer.link_file(src, dst) end
 --- Returns a table of information about the current system.
 --- @return rootbeer.SystemData The system data table.
 function rootbeer.data() end
+
+--- @class rootbeer.Encode
+rootbeer.encode = {}
+
+--- Serializes a two-level table to an INI/gitconfig-formatted string.
+--- Top-level keys must be tables and become `[section]` headers.
+--- Scalar values within a section are emitted as `key = value`.
+--- Nested table values become subsections (`[section "subsection"]`).
+--- Nesting beyond two levels is ignored.
+--- @param table table<string, table<string, string|number|boolean|table>> The table to serialize.
+--- @return string The INI-encoded string.
+function rootbeer.encode.ini(table) end

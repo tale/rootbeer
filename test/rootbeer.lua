@@ -10,7 +10,10 @@ print("  user:     " .. d.username)
 print("")
 
 -- Write a generated zshrc using the shell module
-rb.file("/tmp/rb-test/zshrc", zsh.config({
+zsh.config({
+	path = "/tmp/rb-test/zshrc",
+	keybind_mode = "emacs",
+	options = { "CORRECT", "EXTENDED_GLOB" },
 	env = {
 		EDITOR = "nvim",
 		LANG = "en_US.UTF-8",
@@ -19,14 +22,14 @@ rb.file("/tmp/rb-test/zshrc", zsh.config({
 		g = "git",
 		ls = "ls -la",
 	},
+	history = {},
 	evals = {
 		"mise activate zsh",
 	},
 	sources = {
 		"~/.config/zsh/local.zsh",
 	},
-	extra = "autoload -Uz compinit && compinit",
-}))
+})
 
 -- Conditional based on OS
 if d.os == "macos" then
