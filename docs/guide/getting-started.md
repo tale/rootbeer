@@ -72,29 +72,21 @@ rb apply
 
 ## Conditionals
 
-Use `rb.data()` to branch on the current machine:
+Use `rb.host` to branch on the current machine:
 
 ```lua
-local d = rb.data()
+local rb = require("@rootbeer")
 
-if d.os == "macos" then
+if rb.host.os == "macos" then
     rb.file("~/.config/homebrew/env", 'export HOMEBREW_PREFIX="/opt/homebrew"\n')
 end
 
-if d.hostname == "workstation" then
+if rb.host.hostname == "workstation" then
     -- work-specific config
 end
 ```
 
-`rb.data()` returns a table with:
-
-| Field | Description |
-|-------|-------------|
-| `os` | Operating system name (e.g. `"macos"`, `"linux"`) |
-| `arch` | CPU architecture (e.g. `"aarch64"`, `"x86_64"`) |
-| `hostname` | Machine hostname |
-| `home` | Home directory path |
-| `username` | Current username |
+See the full [`rb.host` reference](/api/host) for all available fields.
 
 ## Symlinking
 
@@ -113,7 +105,7 @@ nothing happens. Stale links are replaced.
 
 ## Next Steps
 
-- [Conditional Config](/guide/conditional-config) — Per-machine branching with `rb.data()`
+- [Conditional Config](/guide/conditional-config) — Per-machine branching with `rb.host`
 - [Core API](/api/core) — Full reference for `rb.*` functions
 - [zsh](/api/zsh) — Declarative zsh configuration
 - [git](/api/git) — Declarative git configuration

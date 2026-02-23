@@ -24,6 +24,7 @@ export default defineConfig({
         text: "API Reference",
         items: [
           { text: "Core", link: "/api/core" },
+          { text: "Host", link: "/api/host" },
           { text: "zsh", link: "/api/zsh" },
           { text: "git", link: "/api/git" },
         ],

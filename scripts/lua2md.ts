@@ -264,6 +264,30 @@ function renderSnippet(mod: ModulePage): string {
     }
   }
 
+  // Render standalone classes (not referenced by any function arg or return)
+  const referencedClasses = new Set<string>();
+  for (const func of mod.functions) {
+    for (const a of func.args) {
+      if (mod.classes.some((c) => c.name === a.view)) referencedClasses.add(a.view);
+    }
+    for (const r of func.returns) {
+      if (mod.classes.some((c) => c.name === r.view)) referencedClasses.add(r.view);
+    }
+  }
+
+  for (const cls of mod.classes) {
+    if (referencedClasses.has(cls.name)) continue;
+    out.push(`### \`${cls.name}\``);
+    out.push("");
+    out.push("| Name | Type | Description |");
+    out.push("|------|------|-------------|");
+    for (const f of cls.fields) {
+      const badge = f.optional ? " *(optional)*" : "";
+      out.push(`| \`${f.name}\`${badge} | \`${escapeCell(f.view)}\` | ${escapeCell(f.desc)} |`);
+    }
+    out.push("");
+  }
+
   return out.join("\n") + "\n";
 }
 

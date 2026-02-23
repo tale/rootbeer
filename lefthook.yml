@@ -5,6 +5,9 @@ pre-commit:
       run: cargo fmt --all -- --check
     clippy:
       run: cargo clippy --workspace -- -D warnings
+    oxfmt:
+      glob: "*.{js,ts}"
+      run: pnpm oxfmt --write {staged_files}
 
 pre-push:
   commands:

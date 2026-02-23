@@ -26,5 +26,11 @@ different tools built around these assumptions defined below:
   operations that need to be executed on the apply stage.
 - The lua language server is used to automatically generate markdown docs for
   the documentation site defined in the `docs` directory (built with Vitepress).
+  The `docs/api/_generated/` directory is auto-generated from `lua/rootbeer/*.lua`
+  meta files via `scripts/lua2md.ts`. NEVER hand-edit files in `_generated/` and
+  NEVER manually write API field tables in doc pages. Instead, update or create
+  the corresponding `lua/rootbeer/*.lua` meta file with `@class`/`@field`
+  annotations, and use `<!--@include: ./_generated/<name>.md-->` in the doc page.
 - When updating native API functions, the `core.lua` meta file should contain
-  the correct type-signatures for the language server to pick up on.
+  the correct type-signatures for the language server to pick up on. Each module
+  (core, host, git, zsh, etc.) has its own meta file in `lua/rootbeer/`.
