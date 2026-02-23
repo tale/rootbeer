@@ -26,4 +26,5 @@ different tools built around these assumptions defined below:
   operations that need to be executed on the apply stage.
 - The lua language server is used to automatically generate markdown docs for
   the documentation site defined in the `docs` directory (built with Vitepress).
-
+- When updating native API functions, the `core.lua` meta file should contain
+  the correct type-signatures for the language server to pick up on.
