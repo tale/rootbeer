@@ -3,7 +3,7 @@ import { defineConfig } from "vitepress";
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
   srcDir: "docs",
-
+  cleanUrls: true,
   title: "Rootbeer",
   description: "Deterministically manage your dotfiles",
   themeConfig: {
@@ -38,6 +38,9 @@ export default defineConfig({
       },
     ],
 
-    socialLinks: [{ icon: "github", link: "https://github.com/tale/rootbeer" }],
+    socialLinks: [
+      { icon: "github", link: "https://github.com/tale/rootbeer" },
+      { icon: "githubsponsors", link: "https://github.com/sponsors/tale" },
+    ],
   },
 });
