@@ -1,0 +1,34 @@
+name: "Update flake.lock"
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * 0" # weekly on Sunday at 00:00
+
+jobs:
+  update-flake-lock:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Update flake inputs
+        run: nix flake update
+
+      - name: Check flake
+        run: nix flake check
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          title: "chore(nix): update `flake.lock`"
+          commit-message: "chore(nix): update `flake.lock`"
+          branch: update-flake-lock
+          labels: |
+            dependencies
+            automated

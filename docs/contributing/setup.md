@@ -16,7 +16,19 @@ This installs the pinned versions of:
 - **lua-language-server** (for Lua type checking and doc generation)
 - **lefthook** (git hooks)
 
+Alternatively, if you have [Nix](https://nixos.org/) installed, you can use the
+provided flake to get a development shell with all dependencies:
+
+```bash
+nix develop
+```
+
+Or with [direnv](https://direnv.net/), the `.envrc` will automatically load
+the shell when you enter the project directory.
+
 ## Building
+
+### With Cargo
 
 ```bash
 # Debug build (binary lands in target/debug/rb)
@@ -28,6 +40,18 @@ cargo build --release
 
 The debug binary is automatically on your `PATH` via the `mise.toml` env
 config, so you can run `rb` directly after building.
+
+### With Nix
+
+```bash
+# Build the package
+nix build
+
+# Run checks (clippy + fmt)
+nix flake check
+```
+
+The binary is built to `./result/bin/rb`.
 
 ## Running Tests
 

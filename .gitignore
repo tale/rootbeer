@@ -3,3 +3,8 @@ node_modules/
 .vitepress/cache/
 .vitepress/dist/
 docs/api/_generated
+
+# Nix
+/result
+/result-*
+/.direnv

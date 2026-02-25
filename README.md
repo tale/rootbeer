@@ -83,11 +83,21 @@ dry-run mode, just printed.
 
 Requires Rust 1.79+.
 
+### With Cargo
+
 ```bash
 cargo build
 ```
 
-The binary is built to `./target/debug/rb`.
+Builds the binary to `./target/debug/rb`.
+
+### With Nix
+
+```bash
+nix build
+```
+
+Builds the binary to `./result/bin/rb`.
 
 ## License
 
