@@ -1,4 +1,4 @@
-use std::{fs, io, os::unix::fs as unix_fs};
+use std::{fs, io, os::unix::fs as unix_fs, process};
 
 use crate::{
     executor::{ExecutionReport, OpResult},
@@ -51,6 +51,25 @@ pub fn apply(ops: &[Op]) -> io::Result<ExecutionReport> {
                 report.results.push(OpResult::SymlinkCreated {
                     src: src.clone(),
                     dst: dst.clone(),
+                });
+            }
+
+            Op::Exec { cmd, args } => {
+                let status = process::Command::new(cmd)
+                    .args(args)
+                    .stdin(process::Stdio::inherit())
+                    .stdout(process::Stdio::inherit())
+                    .stderr(process::Stdio::inherit())
+                    .status()?;
+
+                let display = std::iter::once(cmd.as_str())
+                    .chain(args.iter().map(|s| s.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                report.results.push(OpResult::CommandRan {
+                    cmd: display,
+                    status: status.code().unwrap_or(1),
                 });
             }
         }

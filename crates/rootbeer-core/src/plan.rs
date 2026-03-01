@@ -4,4 +4,5 @@ use std::path::PathBuf;
 pub enum Op {
     WriteFile { path: PathBuf, content: String },
     Symlink { src: PathBuf, dst: PathBuf },
+    Exec { cmd: String, args: Vec<String> },
 }

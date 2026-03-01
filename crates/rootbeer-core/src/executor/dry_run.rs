@@ -24,6 +24,18 @@ pub fn dry_run(ops: &[Op]) -> ExecutionReport {
                     dst: dst.clone(),
                 });
             }
+
+            Op::Exec { cmd, args } => {
+                let display = std::iter::once(cmd.as_str())
+                    .chain(args.iter().map(|s| s.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                report.results.push(OpResult::CommandRan {
+                    cmd: display,
+                    status: 0,
+                });
+            }
         }
     }
 

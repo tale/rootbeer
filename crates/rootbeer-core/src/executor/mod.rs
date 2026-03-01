@@ -27,6 +27,7 @@ pub enum OpResult {
     FileWritten { path: PathBuf, bytes: usize },
     SymlinkCreated { src: PathBuf, dst: PathBuf },
     SymlinkUnchanged { dst: PathBuf },
+    CommandRan { cmd: String, status: i32 },
 }
 
 #[derive(Debug, Default)]

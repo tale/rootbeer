@@ -63,5 +63,17 @@ pub(crate) fn register(lua: &Lua, table: &Table) -> LuaResult<()> {
         })?,
     )?;
 
+    table.set(
+        "exec",
+        lua.create_function(|lua, (cmd, args): (String, Option<Vec<String>>)| {
+            let (_, run) = super::ctx(lua);
+            run.lock().push(Op::Exec {
+                cmd,
+                args: args.unwrap_or_default(),
+            });
+            Ok(())
+        })?,
+    )?;
+
     Ok(())
 }
