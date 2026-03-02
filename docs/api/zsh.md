@@ -4,10 +4,11 @@ outline: deep
 
 # zsh
 
-Declarative zsh configuration. Describe your shell setup — options, aliases,
-prompt, history, completions — as a Lua table and let rootbeer render the
-zshrc for you. Since the config is just Lua, you can branch on OS, hostname,
-or anything else without a templating language.
+Declarative zsh configuration. Describe your entire shell setup — environment
+variables, login profile, options, aliases, prompt, history, completions — as
+a single Lua table and rootbeer generates all the zsh files for you:
+`~/.zshenv` (bootstrap), `<dir>/.zshenv`, `<dir>/.zprofile`, and
+`<dir>/.zshrc`.
 
 ```lua
 local zsh = require("@rootbeer/zsh")
@@ -19,38 +20,41 @@ local zsh = require("@rootbeer/zsh")
 
 ```lua
 zsh.config({
-    path = "~/.zshrc",
     keybind_mode = "emacs",
     options = { "CORRECT", "EXTENDED_GLOB" },
     env = {
         EDITOR = "nvim",
-        LANG = "en_US.UTF-8",
+        VISUAL = "$EDITOR",
     },
     aliases = {
         g = "git",
         ls = "lsd -l --group-directories-first",
-        la = "lsd -la --group-directories-first",
         vim = "nvim",
     },
     history = {},
-    evals = {
-        "mise activate zsh",
-    },
+    evals = { "mise activate zsh" },
 })
 ```
 
 ### Full featured
 
 ```lua
+local rb = require("@rootbeer")
+
 zsh.config({
-    path = "~/.zshrc",
-    keybind_mode = "emacs",
-    options = { "CORRECT", "EXTENDED_GLOB" },
     env = {
         EDITOR = "nvim",
-        VISUAL = "nvim",
+        VISUAL = "$EDITOR",
+        OS = "$(uname -s)",
+        SSH_AUTH_SOCK = rb.host.home .. "/.config/1Password/agent.sock",
     },
-    path_prepend = { "$HOME/.amp/bin" },
+    profile = {
+        evals = { "/opt/homebrew/bin/brew shellenv" },
+        sources = { "~/.orbstack/shell/init.zsh" },
+        path_prepend = { "$HOME/.amp/bin" },
+    },
+    keybind_mode = "emacs",
+    options = { "CORRECT", "EXTENDED_GLOB" },
     prompt = "%F{cyan}%~%f%F{red}${vcs_info_msg_0_}%f %F{white}>%f ",
     aliases = {
         g = "git",
@@ -61,7 +65,7 @@ zsh.config({
         ls = "lsd -l --group-directories-first",
     },
     history = {
-        size = 50000,
+        size = 10000,
         ignore = "ls*",
     },
     completions = {
@@ -74,14 +78,10 @@ zsh.config({
         },
     },
     functions = {
-        plsdns = 'sudo dscacheutil -flushcache\nsudo killall -HUP mDNSResponder',
+        plsdns = "sudo dscacheutil -flushcache\nsudo killall -HUP mDNSResponder",
     },
-    evals = {
-        "mise activate zsh",
-    },
-    sources = {
-        "$ZDOTDIR/completions.zsh",
-    },
+    evals = { "mise activate zsh" },
+    sources = { "$ZDOTDIR/completions.zsh" },
 })
 ```
 

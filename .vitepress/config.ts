@@ -27,6 +27,8 @@ export default defineConfig({
           { text: "Host", link: "/api/host" },
           { text: "zsh", link: "/api/zsh" },
           { text: "git", link: "/api/git" },
+          { text: "ssh", link: "/api/ssh" },
+          { text: "brew", link: "/api/brew" },
         ],
       },
       {

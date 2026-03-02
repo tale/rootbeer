@@ -4,7 +4,7 @@ local M = {}
 local rb = require("@rootbeer")
 
 --- @class git.Config
---- @field path string Where to write the gitconfig file.
+--- @field path? string Where to write the gitconfig file. Defaults to `"~/.gitconfig"`.
 --- @field user git.UserConfig User identity.
 --- @field editor? string Default editor for commits (e.g. `"nvim"`).
 --- @field pager? string Default pager for output (e.g. `"delta"`).
@@ -46,6 +46,7 @@ end
 --- and optionally a gitignore file next to it.
 --- @param cfg git.Config
 function M.config(cfg)
+	local path = cfg.path or "~/.gitconfig"
 	local ini = {}
 
 	-- [user]
@@ -69,7 +70,7 @@ function M.config(cfg)
 
 	-- ignores
 	if cfg.ignores then
-		local ignores_path = cfg.ignores_path or (dirname(cfg.path) .. "/.gitignore")
+		local ignores_path = cfg.ignores_path or (dirname(path) .. "/.gitignore")
 		core.excludesfile = ignores_path
 		rb.file(ignores_path, table.concat(cfg.ignores, "\n") .. "\n")
 	end
@@ -127,7 +128,7 @@ function M.config(cfg)
 		end
 	end
 
-	rb.file(cfg.path, rb.encode.ini(quoted))
+	rb.file(path, rb.encode.ini(quoted))
 end
 
 return M

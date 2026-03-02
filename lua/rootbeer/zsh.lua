@@ -4,12 +4,11 @@ local M = {}
 local rb = require("@rootbeer")
 
 --- @class zsh.Config
---- @field path string Where to write the zshrc file.
+--- @field dir? string ZDOTDIR path. Defaults to `"~/.config/zsh"`. All zsh files are written here and a bootstrap `~/.zshenv` is created to set `ZDOTDIR`.
+--- @field env? table<string, string> Environment variables written to `.zshenv` (available in all shells).
+--- @field profile? zsh.ProfileConfig Login shell configuration written to `.zprofile`.
 --- @field options? string[] `setopt` options (e.g. `"CORRECT"`, `"EXTENDED_GLOB"`).
 --- @field keybind_mode? "emacs"|"vi" Input mode (`set -o emacs` or `set -o vi`).
---- @field env? table<string, string> Environment variables exported via `export KEY="value"`.
---- @field path_prepend? string[] Directories prepended to `$PATH`.
---- @field path_append? string[] Directories appended to `$PATH`.
 --- @field aliases? table<string, string> Shell aliases defined via `alias name="command"`.
 --- @field prompt? string Raw `PS1` prompt string.
 --- @field history? zsh.HistoryConfig History settings.
@@ -18,7 +17,14 @@ local rb = require("@rootbeer")
 --- @field keybindings? table<string, string> `bindkey` mappings (e.g. `{ ["^R"] = "my-widget" }`).
 --- @field evals? string[] Commands wrapped in `eval "$(cmd)"`.
 --- @field sources? string[] File paths to source.
---- @field extra? string|string[] Raw lines appended as-is to the output.
+--- @field extra? string|string[] Raw lines appended as-is to the zshrc.
+
+--- @class zsh.ProfileConfig
+--- @field evals? string[] Commands wrapped in `eval "$(cmd)"`.
+--- @field sources? string[] File paths to source.
+--- @field path_prepend? string[] Directories prepended to `$PATH`.
+--- @field path_append? string[] Directories appended to `$PATH`.
+--- @field extra? string|string[] Raw lines appended as-is.
 
 --- @class zsh.HistoryConfig
 --- @field file? string `HISTFILE` path. Defaults to `$ZDOTDIR/.zsh_history`.
@@ -61,68 +67,117 @@ local function add_block(lines, new)
 	end
 end
 
---- Applies `zsh.Config` to the system. Writes a zshrc file at `cfg.path`.
---- @param cfg zsh.Config
-function M.config(cfg)
+--- Appends extra content (string or string[]) to the output buffer.
+--- @param lines string[]
+--- @param extra string|string[]|nil
+local function add_extra(lines, extra)
+	if not extra then return end
+	if type(extra) == "string" then
+		add(lines, extra, true)
+	elseif type(extra) == "table" then
+		add_block(lines, extra)
+	end
+end
+
+--- Writes lines to a file, joining with newlines.
+--- @param path string
+--- @param lines string[]
+local function write(path, lines)
+	rb.file(path, table.concat(lines, "\n") .. "\n")
+end
+
+--- Builds the bootstrap ~/.zshenv that sets ZDOTDIR.
+--- @param dir string
+local function build_zshenv_bootstrap(dir)
+	local lines = {}
+	add(lines, "ZDOTDIR=" .. dir)
+	add(lines, ". $ZDOTDIR/.zshenv")
+	write("~/.zshenv", lines)
+end
+
+--- Builds <dir>/.zshenv from the env table.
+--- @param dir string
+--- @param env table<string, string>
+local function build_zshenv(dir, env)
+	local lines = {}
+	for key, value in pairs(env) do
+		lines[#lines + 1] = 'export ' .. key .. '="' .. value .. '"'
+	end
+	write(dir .. "/.zshenv", lines)
+end
+
+--- Builds <dir>/.zprofile from profile config.
+--- @param dir string
+--- @param profile zsh.ProfileConfig
+local function build_zprofile(dir, profile)
 	local lines = {}
 
-	-- keybind mode
+	if profile.evals then
+		for _, cmd in ipairs(profile.evals) do
+			lines[#lines + 1] = 'eval "$(' .. cmd .. ')"'
+		end
+	end
+
+	if profile.sources then
+		local block = {}
+		for _, path in ipairs(profile.sources) do
+			block[#block + 1] = ". " .. path
+		end
+		add_block(lines, block)
+	end
+
+	if profile.path_prepend then
+		local block = {}
+		for _, d in ipairs(profile.path_prepend) do
+			block[#block + 1] = 'export PATH="' .. d .. ':$PATH"'
+		end
+		add_block(lines, block)
+	end
+
+	if profile.path_append then
+		local block = {}
+		for _, d in ipairs(profile.path_append) do
+			block[#block + 1] = 'export PATH="$PATH:' .. d .. '"'
+		end
+		add_block(lines, block)
+	end
+
+	add_extra(lines, profile.extra)
+	write(dir .. "/.zprofile", lines)
+end
+
+--- Builds <dir>/.zshrc from the main config fields.
+--- @param dir string
+--- @param cfg zsh.Config
+local function build_zshrc(dir, cfg)
+	local lines = {}
+
 	if cfg.keybind_mode then
 		add(lines, "set -o " .. cfg.keybind_mode)
 	end
 
-	-- setopt
 	if cfg.options then
 		for _, opt in ipairs(cfg.options) do
 			add(lines, "setopt " .. opt)
 		end
 	end
 
-	-- env
-	if cfg.env then
-		local block = {}
-		for key, value in pairs(cfg.env) do
-			block[#block + 1] = 'export ' .. key .. '="' .. value .. '"'
-		end
-		add_block(lines, block)
-	end
-
-	-- PATH
-	if cfg.path_prepend then
-		local block = {}
-		for _, dir in ipairs(cfg.path_prepend) do
-			block[#block + 1] = 'export PATH="' .. dir .. ':$PATH"'
-		end
-		add_block(lines, block)
-	end
-	if cfg.path_append then
-		local block = {}
-		for _, dir in ipairs(cfg.path_append) do
-			block[#block + 1] = 'export PATH="$PATH:' .. dir .. '"'
-		end
-		add_block(lines, block)
-	end
-
-	-- prompt
 	if cfg.prompt then
 		add(lines, "PS1='" .. cfg.prompt .. "'", true)
 	end
 
-	-- aliases
 	if cfg.aliases then
 		local block = {}
 		for name, command in pairs(cfg.aliases) do
-			block[#block + 1] = 'alias ' .. name .. '="' .. command .. '"'
+			block[#block + 1] = "alias " .. name .. "='" .. command .. "'"
 		end
 		add_block(lines, block)
 	end
 
-	-- history
 	if cfg.history then
 		local h = cfg.history
 		local block = {}
 
-		-- history options
 		if h.append ~= false then
 			block[#block + 1] = "setopt APPEND_HISTORY"
 			block[#block + 1] = "setopt INC_APPEND_HISTORY"
@@ -138,7 +193,6 @@ function M.config(cfg)
 		end
 		block[#block + 1] = "setopt HIST_IGNORE_SPACE"
 
-		-- history variables
 		block[#block + 1] = ""
 		local size = h.size or 10000
 		block[#block + 1] = "HISTFILE=" .. (h.file or "$ZDOTDIR/.zsh_history")
@@ -151,7 +205,6 @@ function M.config(cfg)
 		add_block(lines, block)
 	end
 
-	-- completions
 	if cfg.completions then
 		local c = cfg.completions
 		local block = {}
@@ -177,7 +230,7 @@ function M.config(cfg)
 
 		if c.cache then
 			block[#block + 1] = "zstyle ':completion:*' use-cache on"
-			block[#block + 1] = "zstyle ':completion:*' cache-path \"" .. c.cache .. "\""
+			block[#block + 1] = 'zstyle \':completion:*\' cache-path "' .. c.cache .. '"'
 		end
 
 		if c.styles then
@@ -189,7 +242,6 @@ function M.config(cfg)
 		add_block(lines, block)
 	end
 
-	-- functions
 	if cfg.functions then
 		for name, body in pairs(cfg.functions) do
 			local block = {}
@@ -202,7 +254,6 @@ function M.config(cfg)
 		end
 	end
 
-	-- keybindings
 	if cfg.keybindings then
 		local block = {}
 		for key, widget in pairs(cfg.keybindings) do
@@ -211,7 +262,6 @@ function M.config(cfg)
 		add_block(lines, block)
 	end
 
-	-- evals
 	if cfg.evals then
 		local block = {}
 		for _, cmd in ipairs(cfg.evals) do
@@ -220,7 +270,6 @@ function M.config(cfg)
 		add_block(lines, block)
 	end
 
-	-- sources
 	if cfg.sources then
 		local block = {}
 		for _, path in ipairs(cfg.sources) do
@@ -229,16 +278,27 @@ function M.config(cfg)
 		add_block(lines, block)
 	end
 
-	-- extra: string or table of strings, appended as-is
-	if cfg.extra then
-		if type(cfg.extra) == "string" then
-			add(lines, cfg.extra, true)
-		elseif type(cfg.extra) == "table" then
-			add_block(lines, cfg.extra)
-		end
+	add_extra(lines, cfg.extra)
+	write(dir .. "/.zshrc", lines)
+end
+
+--- Applies the full zsh configuration. Generates `~/.zshenv` (bootstrap),
+--- `<dir>/.zshenv`, `<dir>/.zprofile`, and `<dir>/.zshrc` from a single
+--- config table.
+--- @param cfg zsh.Config
+function M.config(cfg)
+	local dir = cfg.dir or "~/.config/zsh"
+	build_zshenv_bootstrap(dir)
+
+	if cfg.env then
+		build_zshenv(dir, cfg.env)
 	end
 
-	rb.file(cfg.path, table.concat(lines, "\n") .. "\n")
+	if cfg.profile then
+		build_zprofile(dir, cfg.profile)
+	end
+
+	build_zshrc(dir, cfg)
 end
 
 return M

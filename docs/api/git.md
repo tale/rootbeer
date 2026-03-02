@@ -19,7 +19,6 @@ local git = require("@rootbeer/git")
 
 ```lua
 git.config({
-    path = "~/.gitconfig",
     user = {
         name = "Aarnav Tale",
         email = "aarnav@tale.me",
@@ -39,7 +38,6 @@ your gitconfig and points `core.excludesfile` at it.
 
 ```lua
 git.config({
-    path = "~/.gitconfig",
     user = {
         name = "Aarnav Tale",
         email = "aarnav@tale.me",

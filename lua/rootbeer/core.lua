@@ -44,6 +44,12 @@ function rootbeer.is_file(path) end
 --- @return boolean
 function rootbeer.is_dir(path) end
 
+--- Returns a new list containing all elements from both input lists.
+--- @param a any[] The first list.
+--- @param b any[] The second list.
+--- @return any[] The combined list.
+function rootbeer.extend(a, b) end
+
 --- @class rootbeer.Secret
 rootbeer.secret = {}
 
