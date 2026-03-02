@@ -25,6 +25,25 @@ function rootbeer.link_file(src, dst) end
 --- @param cmd string The command to run (e.g. `"brew"`).
 --- @param args? string[] Optional arguments passed to the command.
 function rootbeer.exec(cmd, args) end
+
+--- Checks whether a path exists (file, directory, or symlink).
+--- Supports `~` expansion and relative paths.
+--- @param path string The path to check.
+--- @return boolean
+function rootbeer.path_exists(path) end
+
+--- Checks whether a path is a regular file.
+--- Supports `~` expansion and relative paths.
+--- @param path string The path to check.
+--- @return boolean
+function rootbeer.is_file(path) end
+
+--- Checks whether a path is a directory.
+--- Supports `~` expansion and relative paths.
+--- @param path string The path to check.
+--- @return boolean
+function rootbeer.is_dir(path) end
+
 --- @class rootbeer.Encode
 rootbeer.encode = {}
 

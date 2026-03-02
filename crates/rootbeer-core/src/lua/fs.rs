@@ -64,6 +64,33 @@ pub(crate) fn register(lua: &Lua, table: &Table) -> LuaResult<()> {
     )?;
 
     table.set(
+        "path_exists",
+        lua.create_function(|lua, path: String| {
+            let (runtime, _) = super::ctx(lua);
+            let resolved = resolve_path(&runtime.script_dir, &path);
+            Ok(resolved.exists())
+        })?,
+    )?;
+
+    table.set(
+        "is_file",
+        lua.create_function(|lua, path: String| {
+            let (runtime, _) = super::ctx(lua);
+            let resolved = resolve_path(&runtime.script_dir, &path);
+            Ok(resolved.is_file())
+        })?,
+    )?;
+
+    table.set(
+        "is_dir",
+        lua.create_function(|lua, path: String| {
+            let (runtime, _) = super::ctx(lua);
+            let resolved = resolve_path(&runtime.script_dir, &path);
+            Ok(resolved.is_dir())
+        })?,
+    )?;
+
+    table.set(
         "exec",
         lua.create_function(|lua, (cmd, args): (String, Option<Vec<String>>)| {
             let (_, run) = super::ctx(lua);
