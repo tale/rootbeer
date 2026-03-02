@@ -21,6 +21,10 @@ function rootbeer.file(path, content) end
 --- @param dst string Destination path (supports `~` expansion).
 function rootbeer.link_file(src, dst) end
 
+--- Executes a shell command. The command is deferred until the apply stage.
+--- @param cmd string The command to run (e.g. `"brew"`).
+--- @param args? string[] Optional arguments passed to the command.
+function rootbeer.exec(cmd, args) end
 --- @class rootbeer.Encode
 rootbeer.encode = {}
 
@@ -32,3 +36,18 @@ rootbeer.encode = {}
 --- @param table table<string, table<string, string|number|boolean|table>> The table to serialize.
 --- @return string The INI-encoded string.
 function rootbeer.encode.ini(table) end
+
+--- Serializes a Lua table to a JSON string with 2-space indentation.
+--- Tables with consecutive integer keys starting at 1 are encoded as arrays.
+--- All other tables are encoded as objects.
+--- @param table table The table to serialize.
+--- @return string The JSON-encoded string.
+function rootbeer.encode.json(table) end
+
+--- Serializes a Lua table to a TOML string.
+--- Top-level scalar keys become key-value pairs. Nested tables become
+--- `[section]` headers. Arrays of scalars use inline syntax; arrays of
+--- tables use `[[array]]` syntax.
+--- @param table table The table to serialize.
+--- @return string The TOML-encoded string.
+function rootbeer.encode.toml(table) end
