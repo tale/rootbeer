@@ -44,6 +44,14 @@ function rootbeer.is_file(path) end
 --- @return boolean
 function rootbeer.is_dir(path) end
 
+--- @class rootbeer.Secret
+rootbeer.secret = {}
+
+--- Reads a secret from 1Password via the `op` CLI.
+--- @param reference string The `op://` reference (e.g. `"op://vault/item/field"`).
+--- @return string The secret value.
+function rootbeer.secret.op(reference) end
+
 --- @class rootbeer.Encode
 rootbeer.encode = {}
 

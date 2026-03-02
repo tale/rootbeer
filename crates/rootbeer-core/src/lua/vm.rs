@@ -3,7 +3,7 @@ use std::sync::{Mutex, MutexGuard};
 use mlua::{Lua, Result};
 
 use crate::lua::require::RootbeerRequirer;
-use crate::lua::{fs, serializer, sys};
+use crate::lua::{fs, secret, serializer, sys};
 use crate::plan::Op;
 use crate::Runtime;
 
@@ -32,6 +32,7 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     fs::register(&lua, &rb)?;
     serializer::register(&lua, &rb)?;
     sys::register(&rb)?;
+    secret::register(&lua, &rb)?;
 
     lua.globals().set("rootbeer", &rb)?;
     lua.register_module("@rootbeer", rb)?;
