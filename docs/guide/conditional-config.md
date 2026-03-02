@@ -6,25 +6,27 @@ module functions when you're ready.
 
 ## System detection
 
-`rb.data()` returns information about the current machine:
+`rb.host` is a table with information about the current machine and user:
 
 ```lua
 local rb = require("@rootbeer")
-local sys = rb.data()
 
-sys.os        -- "macos", "linux", etc.
-sys.arch      -- "aarch64", "x86_64", etc.
-sys.hostname  -- machine hostname
-sys.home      -- home directory path
-sys.username  -- current user
+rb.host.os       -- "macos", "linux"
+rb.host.arch     -- "aarch64", "x86_64"
+rb.host.hostname -- machine hostname (or nil)
+rb.host.distro   -- "ubuntu", "arch" (nil on macOS)
+rb.host.user     -- current username
+rb.host.home     -- home directory path
+rb.host.shell    -- default login shell
 ```
+
+See the full [`rb.host` reference](/api/host) for details.
 
 ## Branching on OS
 
 ```lua
 local rb = require("@rootbeer")
 local zsh = require("@rootbeer/zsh")
-local sys = rb.data()
 
 local cfg = {
     path = "~/.zshrc",
@@ -35,7 +37,7 @@ local cfg = {
     evals = { "mise activate zsh" },
 }
 
-if sys.os == "macos" then
+if rb.host.os == "macos" then
     cfg.path_prepend = { "$HOME/.amp/bin" }
     cfg.evals[#cfg.evals + 1] = "/opt/homebrew/bin/brew shellenv"
     cfg.functions = {
@@ -53,7 +55,6 @@ Useful for work vs personal machines:
 ```lua
 local rb = require("@rootbeer")
 local git = require("@rootbeer/git")
-local sys = rb.data()
 
 local cfg = {
     path = "~/.gitconfig",
@@ -66,7 +67,7 @@ local cfg = {
     pull_rebase = true,
 }
 
-if sys.hostname == "work-macbook" then
+if rb.host.hostname == "work-macbook" then
     cfg.user.email = "aarnav@company.com"
 end
 
@@ -79,14 +80,13 @@ For logic reused across modules, just write Lua functions:
 
 ```lua
 local rb = require("@rootbeer")
-local sys = rb.data()
 
 local function is_mac()
-    return sys.os == "macos"
+    return rb.host.os == "macos"
 end
 
 local function is_work()
-    return sys.hostname == "work-macbook"
+    return rb.host.hostname == "work-macbook"
 end
 
 -- Use anywhere
