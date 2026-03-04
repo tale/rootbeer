@@ -10,7 +10,19 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: rb-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact: rb-linux-aarch64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: rb-macos-aarch64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: rb-macos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Repository
@@ -20,6 +32,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -28,16 +45,28 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Check formatting
+        if: matrix.target == 'aarch64-apple-darwin'
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --target ${{ matrix.target }} -- -D warnings
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Build
-        run: cargo build
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Test
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: cargo test
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: target/${{ matrix.target }}/release/rb
