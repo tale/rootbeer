@@ -67,6 +67,10 @@ fn main() {
         } => {
             init::run(source);
 
+            if !apply {
+                println!("  run `rb apply` to apply your configuration");
+            }
+
             if apply {
                 let mode = if dry_run {
                     rootbeer_core::Mode::DryRun
