@@ -1,4 +1,6 @@
 mod apply;
+mod cd;
+mod edit;
 mod init;
 
 use std::path::PathBuf;
@@ -36,6 +38,12 @@ enum Commands {
         #[arg(short = 'n', long)]
         dry_run: bool,
     },
+
+    /// Open a shell in the rootbeer source directory
+    Cd,
+
+    /// Open the rootbeer source directory in $VISUAL/$EDITOR
+    Edit,
 
     /// Apply the rootbeer configuration
     Apply {
@@ -86,6 +94,9 @@ fn main() {
                 apply::run(script_path(), mode, cli.lua_dir.as_ref(), None);
             }
         }
+
+        Commands::Cd => cd::run(),
+        Commands::Edit => edit::run(),
 
         Commands::Apply {
             dry_run,
