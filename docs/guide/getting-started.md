@@ -70,42 +70,8 @@ rb apply
 `rb apply` evaluates your manifest and writes/links files into place. Use
 `-n` (dry run) to see what would happen without touching the filesystem.
 
-## Conditionals
-
-Use `rb.host` to branch on the current machine:
-
-```lua
-local rb = require("@rootbeer")
-
-if rb.host.os == "macos" then
-    rb.file("~/.config/homebrew/env", 'export HOMEBREW_PREFIX="/opt/homebrew"\n')
-end
-
-if rb.host.hostname == "workstation" then
-    -- work-specific config
-end
-```
-
-See the full [`rb.host` reference](/api/host) for all available fields.
-
-## Symlinking
-
-For files you want to edit directly (like a gitconfig), use `rb.link_file()`
-to symlink them from your source directory:
-
-```lua
--- Source path is relative to the source directory
--- Target path supports ~ expansion
-rb.link_file("config/gitconfig", "~/.gitconfig")
-rb.link_file("config/nvim", "~/.config/nvim")
-```
-
-Symlinks are idempotent — if the link already points to the right place,
-nothing happens. Stale links are replaced.
-
 ## Next Steps
 
-- [Conditional Config](/guide/conditional-config) — Per-machine branching with `rb.host`
-- [Core API](/api/core) — Full reference for `rb.*` functions
-- [zsh](/api/zsh) — Declarative zsh configuration
-- [git](/api/git) — Declarative git configuration
+- [Core Concepts](/guide/core-concepts) — Plan/execute model, file operations, conditionals
+- [Multi-Device Config](/guide/multi-device) — Profiles and per-machine branching
+- [Core API Reference](/reference/core) — Full reference for `rb.*` functions

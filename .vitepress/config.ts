@@ -9,7 +9,8 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: "Guide", link: "/guide/getting-started" },
-      { text: "API", link: "/api/core" },
+      { text: "Modules", link: "/modules/zsh" },
+      { text: "Reference", link: "/reference/core" },
     ],
 
     sidebar: [
@@ -17,23 +18,44 @@ export default defineConfig({
         text: "Guide",
         items: [
           { text: "Getting Started", link: "/guide/getting-started" },
-          { text: "Conditional Config", link: "/guide/conditional-config" },
+          { text: "Core Concepts", link: "/guide/core-concepts" },
+          { text: "Multi-Device Config", link: "/guide/multi-device" },
         ],
       },
       {
-        text: "API Reference",
+        text: "Modules",
         items: [
-          { text: "Core", link: "/api/core" },
-          { text: "Host", link: "/api/host" },
-          { text: "zsh", link: "/api/zsh" },
-          { text: "git", link: "/api/git" },
-          { text: "ssh", link: "/api/ssh" },
-          { text: "brew", link: "/api/brew" },
-          { text: "profile", link: "/api/profile" },
+          {
+            text: "Shell",
+            collapsed: true,
+            items: [{ text: "zsh", link: "/modules/zsh" }],
+          },
+          {
+            text: "Developer Tools",
+            collapsed: true,
+            items: [
+              { text: "git", link: "/modules/git" },
+              { text: "ssh", link: "/modules/ssh" },
+            ],
+          },
+          {
+            text: "Package Managers",
+            collapsed: true,
+            items: [{ text: "brew", link: "/modules/brew" }],
+          },
+        ],
+      },
+      {
+        text: "Reference",
+        collapsed: true,
+        items: [
+          { text: "Core API", link: "/reference/core" },
+          { text: "Host", link: "/reference/host" },
         ],
       },
       {
         text: "Contributing",
+        collapsed: true,
         items: [
           { text: "Dev Setup", link: "/contributing/setup" },
           { text: "Architecture", link: "/contributing/architecture" },

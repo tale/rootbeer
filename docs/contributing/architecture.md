@@ -96,5 +96,5 @@ language server. Users load them via `require("@rootbeer/git")`.
    Update `lua/rootbeer/core.lua` with the type signature.
 3. **Lua module** — Create `lua/rootbeer/<name>.lua`. Define `@class` types,
    accept a config table, transform it, and call the lower-level APIs.
-4. **Docs** — Add a page in `docs/api/<name>.md` and register it in
+4. **Docs** — Add a page in `docs/modules/<name>.md` and register it in
    `.vitepress/config.ts`.

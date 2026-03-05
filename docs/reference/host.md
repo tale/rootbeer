@@ -22,4 +22,4 @@ end
 
 ## API Reference
 
-<!--@include: ./_generated/host.md-->
+<!--@include: ../api/_generated/host.md-->

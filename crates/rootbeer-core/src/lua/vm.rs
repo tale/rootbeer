@@ -37,23 +37,6 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
 
     rb.set("profile", profile)?;
 
-    rb.set(
-        "extend",
-        lua.create_function(|lua, (a, b): (mlua::Table, mlua::Table)| {
-            let out = lua.create_table()?;
-            let mut i = 1;
-            for val in a.sequence_values::<mlua::Value>() {
-                out.raw_set(i, val?)?;
-                i += 1;
-            }
-            for val in b.sequence_values::<mlua::Value>() {
-                out.raw_set(i, val?)?;
-                i += 1;
-            }
-            Ok(out)
-        })?,
-    )?;
-
     lua.globals().set("rootbeer", &rb)?;
     lua.register_module("@rootbeer", rb)?;
 
