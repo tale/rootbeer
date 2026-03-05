@@ -7,6 +7,11 @@
 --- @type rootbeer.HostInfo
 rootbeer.host = {}
 
+--- The active configuration profile, or `nil` when no profile was specified.
+--- Set via `rb apply <profile>` on the command line.
+--- @type string?
+rootbeer.profile = nil
+
 --- Writes content to a file. Parent directories are created automatically.
 --- Paths starting with `~` are expanded to `$HOME`; relative paths resolve
 --- from the script directory.

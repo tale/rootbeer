@@ -2,7 +2,12 @@ use std::path::PathBuf;
 
 use rootbeer_core::OpResult;
 
-pub fn run(script: PathBuf, mode: rootbeer_core::Mode, lua_dir: Option<&PathBuf>) {
+pub fn run(
+    script: PathBuf,
+    mode: rootbeer_core::Mode,
+    lua_dir: Option<&PathBuf>,
+    profile: Option<String>,
+) {
     if !script.exists() {
         eprintln!("error: script not found: {}", script.display());
         std::process::exit(1);
@@ -16,6 +21,8 @@ pub fn run(script: PathBuf, mode: rootbeer_core::Mode, lua_dir: Option<&PathBuf>
     if let Some(lua_dir) = lua_dir {
         runtime.lua_dir = lua_dir.clone();
     }
+
+    runtime.profile = profile;
 
     match rootbeer_core::execute_with(runtime, mode) {
         Ok(report) => {

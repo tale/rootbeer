@@ -25,6 +25,7 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     let lua = Lua::new();
 
     let lua_dir = runtime.lua_dir.clone();
+    let profile = runtime.profile.clone();
     lua.set_app_data(runtime);
     lua.set_app_data(Run::default());
 
@@ -33,6 +34,8 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     serializer::register(&lua, &rb)?;
     sys::register(&rb)?;
     secret::register(&lua, &rb)?;
+
+    rb.set("profile", profile)?;
 
     rb.set(
         "extend",

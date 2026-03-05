@@ -14,6 +14,7 @@ pub struct Runtime {
     pub script_dir: PathBuf,
     pub script_name: String,
     pub lua_dir: PathBuf,
+    pub profile: Option<String>,
 }
 
 impl Runtime {
@@ -39,6 +40,7 @@ impl Runtime {
             lua_dir: PathBuf::from(env!("ROOTBEER_LUA_DIR")),
             script_dir,
             script_name,
+            profile: None,
         })
     }
 

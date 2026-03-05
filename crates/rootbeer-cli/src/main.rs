@@ -44,7 +44,11 @@ enum Commands {
         dry_run: bool,
 
         /// Path to a .lua script to execute (default: data_dir/source/rootbeer.lua)
+        #[arg(short, long)]
         script: Option<PathBuf>,
+
+        /// Configuration profile name, exposed as `rb.profile` in Lua
+        profile: Option<String>,
     },
 }
 
@@ -79,11 +83,15 @@ fn main() {
                 };
 
                 println!();
-                apply::run(script_path(), mode, cli.lua_dir.as_ref());
+                apply::run(script_path(), mode, cli.lua_dir.as_ref(), None);
             }
         }
 
-        Commands::Apply { dry_run, script } => {
+        Commands::Apply {
+            dry_run,
+            script,
+            profile,
+        } => {
             let mode = if dry_run {
                 rootbeer_core::Mode::DryRun
             } else {
@@ -91,7 +99,7 @@ fn main() {
             };
 
             let script = script.unwrap_or_else(script_path);
-            apply::run(script, mode, cli.lua_dir.as_ref());
+            apply::run(script, mode, cli.lua_dir.as_ref(), profile);
         }
     }
 }

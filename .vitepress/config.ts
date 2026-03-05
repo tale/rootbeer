@@ -29,6 +29,7 @@ export default defineConfig({
           { text: "git", link: "/api/git" },
           { text: "ssh", link: "/api/ssh" },
           { text: "brew", link: "/api/brew" },
+          { text: "profile", link: "/api/profile" },
         ],
       },
       {

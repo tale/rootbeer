@@ -95,6 +95,26 @@ if is_mac() then
 end
 ```
 
+## Profiles
+
+For full per-machine configurations, use [profiles](/api/profile). Define all
+your machines in the repo and select at the command line — the same model as
+NixOS flakes:
+
+```lua
+local profile = require("@rootbeer/profile")
+
+profile.config({
+    work = "hosts/work.lua",
+    personal = "hosts/personal.lua",
+})
+```
+
+```bash
+rb apply work       # runs hosts/work.lua
+rb apply personal   # runs hosts/personal.lua
+```
+
 ## The pattern
 
 There's no special API for conditionals. The approach is always:

@@ -30,7 +30,8 @@ different tools built around these assumptions defined below:
   meta files via `scripts/lua2md.ts`. NEVER hand-edit files in `_generated/` and
   NEVER manually write API field tables in doc pages. Instead, update or create
   the corresponding `lua/rootbeer/*.lua` meta file with `@class`/`@field`
-  annotations, and use `<!--@include: ./_generated/<name>.md-->` in the doc page.
+  annotations, and use `<!--@include: ./_generated/<name>.md-->` in the doc page
+  (also taking care to ensure the path is added to the sidebar if necessary).
 - When updating native API functions, the `core.lua` meta file should contain
   the correct type-signatures for the language server to pick up on. Each module
   (core, host, git, zsh, etc.) has its own meta file in `lua/rootbeer/`.
