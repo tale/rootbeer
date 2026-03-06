@@ -13,10 +13,13 @@ hero:
       link: https://github.com/tale/rootbeer
 
 features:
-  - title: Real Scripting, No Templates
-    details: Use Lua's loops, conditionals, and functions instead of learning a templating DSL. Your config is code.
-  - title: Declarative Modules
-    details: Describe what your shell config, git config, or SSH config should look like with simple Lua tables.
-  - title: Cross-Platform
-    details: Detect OS, architecture, and hostname at runtime. One config repo, multiple machines.
+  - icon: ⚡
+    title: Config is Code
+    details: Lua — not templates, not YAML. Loops, conditionals, and functions out of the box.
+  - icon: 📦
+    title: Declarative Modules
+    details: zsh, git, SSH, Homebrew, and more — describe the end state as a Lua table, rootbeer generates the files.
+  - icon: 🌐
+    title: One Repo, Every Machine
+    details: Profiles and host detection let you manage all your machines from a single dotfiles repo.
 ---

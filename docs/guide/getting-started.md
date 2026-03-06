@@ -6,37 +6,29 @@ power of a real scripting language instead of Go templates.
 
 ## Installation
 
-Rootbeer is built from source using Cargo.
+Install rootbeer and bootstrap a dotfiles repo in one command:
 
 ```bash
-cargo build --release
+sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init tale/dotfiles
 ```
 
-If you have [mise](https://mise.jdx.dev/) installed:
+This installs `rb`, clones your repo into `~/.local/share/rootbeer/source/`,
+and you're ready to apply.
+
+To start fresh instead of cloning an existing repo:
 
 ```bash
-mise run build
+sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init
 ```
 
-## Initializing
-
-Set up a new source directory, or clone an existing dotfiles repo:
-
-```bash
-# Create a fresh source directory with a starter manifest
-rb init
-
-# Or clone from a GitHub repo
-rb init tale/dotfiles
-```
-
-This creates `~/.local/share/rootbeer/source/` with a `rootbeer.lua` manifest
-file. This directory is your dotfiles repo — commit it, push it, clone it on
-another machine.
+This creates `~/.local/share/rootbeer/source/` with a starter `rootbeer.lua`
+manifest. This directory is your dotfiles repo — commit it, push it, clone
+it on another machine.
 
 ## Your First Config
 
-Open `~/.local/share/rootbeer/source/rootbeer.lua`:
+Open your manifest with `rb edit`, or `rb cd` to jump into the source
+directory:
 
 ```lua
 local rb = require("@rootbeer")
