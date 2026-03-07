@@ -30,6 +30,10 @@ enum Commands {
         /// When omitted, creates a fresh source directory with a starter rootbeer.lua.
         source: Option<String>,
 
+        /// Remove existing source directory before initializing
+        #[arg(short, long)]
+        force: bool,
+
         /// Run apply after initialization
         #[arg(short, long)]
         apply: bool,
@@ -74,10 +78,11 @@ fn main() {
     match cli.command {
         Commands::Init {
             source,
+            force,
             apply,
             dry_run,
         } => {
-            init::run(source);
+            init::run(source, force);
 
             if !apply {
                 println!("  run `rb apply` to apply your configuration");

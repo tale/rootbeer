@@ -21,35 +21,54 @@ enum Source {
 }
 
 fn parse_source(s: &str) -> Source {
+    // Explicit git URLs
     if s.starts_with("https://")
         || s.starts_with("http://")
         || s.starts_with("git://")
         || s.starts_with("ssh://")
         || s.starts_with("git@")
     {
-        Source::GitUrl(s.to_string())
-    } else if s.contains('/') && !s.contains('.') && s.matches('/').count() == 1 {
-        Source::GitHub(s.to_string())
-    } else if std::path::Path::new(s).exists() {
-        Source::Local(PathBuf::from(s))
-    } else if s.contains('/') && s.matches('/').count() == 1 {
-        // Treat as GitHub shorthand even if it has dots (e.g., user.name/repo)
-        Source::GitHub(s.to_string())
-    } else {
-        eprintln!("error: could not determine source type for '{s}'");
-        eprintln!("  expected: user/repo, git URL, or local path");
-        std::process::exit(1);
+        return Source::GitUrl(s.to_string());
     }
+
+    // Local path (exists on disk)
+    if Path::new(s).exists() {
+        return Source::Local(PathBuf::from(s));
+    }
+
+    // GitHub shorthand: exactly one slash, no path separators that suggest a local path
+    if s.matches('/').count() == 1 && !s.starts_with('/') && !s.starts_with('.') {
+        return Source::GitHub(s.to_string());
+    }
+
+    eprintln!("error: could not determine source type for '{s}'");
+    eprintln!("  expected: user/repo, git URL, or local path");
+    std::process::exit(1);
 }
 
-pub fn run(source: Option<String>) {
+pub fn run(source: Option<String>, force: bool) {
     let dest = super::source_dir();
+
+    if force && dest.exists() {
+        // Remove symlink or directory
+        if dest.is_symlink() {
+            fs::remove_file(&dest).unwrap_or_else(|e| {
+                eprintln!("error: failed to remove {}: {e}", dest.display());
+                std::process::exit(1);
+            });
+        } else {
+            fs::remove_dir_all(&dest).unwrap_or_else(|e| {
+                eprintln!("error: failed to remove {}: {e}", dest.display());
+                std::process::exit(1);
+            });
+        }
+    }
 
     match source {
         None => {
             if dest.exists() {
                 eprintln!("error: source directory already exists: {}", dest.display());
-                eprintln!("  remove it first or provide a source to re-initialize");
+                eprintln!("  use --force to replace it");
                 std::process::exit(1);
             }
 
@@ -82,7 +101,7 @@ pub fn run(source: Option<String>) {
 
             if dest.exists() {
                 eprintln!("error: source directory already exists: {}", dest.display());
-                eprintln!("  remove it first or provide a different source");
+                eprintln!("  use --force to replace it");
                 std::process::exit(1);
             }
 
@@ -139,7 +158,7 @@ fn init_from_local(path: &Path, dest: &Path) {
 
     if dest.exists() {
         eprintln!("error: source directory already exists: {}", dest.display());
-        eprintln!("  remove it first or provide a different source");
+        eprintln!("  use --force to replace it");
         std::process::exit(1);
     }
 
