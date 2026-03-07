@@ -2,7 +2,9 @@ use std::sync::{Mutex, MutexGuard};
 
 use mlua::{Lua, Result};
 
-use crate::lua::require::RootbeerRequirer;
+#[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+use crate::lua::require::EmbeddedRequirer;
+use crate::lua::require::FsRequirer;
 use crate::lua::{fs, secret, serializer, sys};
 use crate::plan::Op;
 use crate::Runtime;
@@ -40,8 +42,23 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     lua.globals().set("rootbeer", &rb)?;
     lua.register_module("@rootbeer", rb)?;
 
-    let require_fn = lua.create_require_function(RootbeerRequirer::new(lua_dir))?;
+    let require_fn = make_require_fn(&lua, lua_dir)?;
     lua.globals().set("require", require_fn)?;
 
     Ok(lua)
+}
+
+fn make_require_fn(lua: &Lua, lua_dir: std::path::PathBuf) -> Result<mlua::Function> {
+    // In debug builds, always use the filesystem so Lua changes don't
+    // require a Rust recompile. In release builds with embedded-stdlib,
+    // serve the stdlib from memory unless --lua-dir was explicitly set.
+    #[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+    {
+        let default_dir = std::path::PathBuf::from(env!("ROOTBEER_LUA_DIR"));
+        if lua_dir == default_dir {
+            return lua.create_require_function(EmbeddedRequirer::new());
+        }
+    }
+
+    lua.create_require_function(FsRequirer::new(lua_dir))
 }

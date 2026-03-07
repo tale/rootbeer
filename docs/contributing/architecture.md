@@ -87,6 +87,24 @@ For example, `git.lua` takes a `git.Config` table and:
 Each module is self-contained with its own `@class` annotations for the
 language server. Users load them via `require("@rootbeer/git")`.
 
+## Lua Standard Library Loading
+
+The `@rootbeer/*` modules in `lua/rootbeer/` can be loaded two ways:
+
+- **Filesystem (debug builds)** — Modules are read from disk via `FsRequirer`,
+  using the `ROOTBEER_LUA_DIR` path set at compile time. This means `cargo run`
+  picks up Lua changes immediately with no Rust recompile.
+- **Embedded (release builds)** — When the `embedded-stdlib` feature is enabled
+  (it is by default), release builds bake every module into the binary via
+  `include_str!`. The `EmbeddedRequirer` serves them from memory so the binary
+  is fully self-contained.
+
+The selection is automatic: `cargo build` (debug) always uses the filesystem,
+`cargo build --release` uses embedded. Passing `--lua-dir` to the CLI forces
+filesystem loading in either mode.
+
+See [Packaging](./packaging) for distribution-specific build instructions.
+
 ## Adding a New Module
 
 1. **Primitives** — If the module needs a new kind of side-effect, add an

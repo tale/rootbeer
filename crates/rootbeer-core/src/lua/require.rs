@@ -4,13 +4,13 @@ use std::{io, path::PathBuf};
 /// A custom Require implementation that wraps TextRequirer and injects
 /// a synthetic `@rootbeer` alias pointing to `<lua_dir>/rootbeer`.
 /// This avoids needing a `.luaurc` file on disk.
-pub(crate) struct RootbeerRequirer {
+pub(crate) struct FsRequirer {
     inner: TextRequirer,
     config: Vec<u8>,
 }
 
 /// Takes the Lua directory and binds the `@rootbeer` alias to the directory.
-impl RootbeerRequirer {
+impl FsRequirer {
     pub fn new(lua_dir: PathBuf) -> Self {
         let root = lua_dir.join("rootbeer");
         let config = format!(r#"{{"aliases":{{"rootbeer":"{}"}}}}"#, root.display()).into_bytes();
@@ -23,7 +23,7 @@ impl RootbeerRequirer {
 }
 
 /// Delegate TextRequirer methods
-impl Require for RootbeerRequirer {
+impl Require for FsRequirer {
     fn is_require_allowed(&self, chunk_name: &str) -> bool {
         self.inner.is_require_allowed(chunk_name)
     }
@@ -62,5 +62,137 @@ impl Require for RootbeerRequirer {
 
     fn loader(&self, lua: &Lua) -> Result<Function> {
         self.inner.loader(lua)
+    }
+}
+
+/// Embedded stdlib modules baked into the binary at compile time.
+/// Each entry is (module_name, source_code).
+#[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+const EMBEDDED_MODULES: &[(&str, &str)] = &[
+    ("brew", include_str!("../../../../lua/rootbeer/brew.lua")),
+    ("core", include_str!("../../../../lua/rootbeer/core.lua")),
+    ("git", include_str!("../../../../lua/rootbeer/git.lua")),
+    ("host", include_str!("../../../../lua/rootbeer/host.lua")),
+    (
+        "profile",
+        include_str!("../../../../lua/rootbeer/profile.lua"),
+    ),
+    ("ssh", include_str!("../../../../lua/rootbeer/ssh.lua")),
+    ("zsh", include_str!("../../../../lua/rootbeer/zsh.lua")),
+];
+
+/// A Require implementation that serves the `@rootbeer` stdlib from
+/// compile-time embedded sources. User scripts are still loaded from
+/// disk via a wrapped TextRequirer.
+#[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+pub(crate) struct EmbeddedRequirer {
+    inner: TextRequirer,
+    path: Vec<String>,
+    in_alias: bool,
+}
+
+#[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+impl EmbeddedRequirer {
+    pub fn new() -> Self {
+        Self {
+            inner: TextRequirer::new(),
+            path: Vec::new(),
+            in_alias: false,
+        }
+    }
+
+    fn find_module(name: &str) -> Option<&'static str> {
+        EMBEDDED_MODULES
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, src)| *src)
+    }
+}
+
+#[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+const EMBEDDED_SENTINEL: &str = "/__rootbeer_embedded__";
+
+#[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+impl Require for EmbeddedRequirer {
+    fn is_require_allowed(&self, chunk_name: &str) -> bool {
+        self.inner.is_require_allowed(chunk_name)
+    }
+
+    fn reset(&mut self, chunk_name: &str) -> std::result::Result<(), NavigateError> {
+        self.path.clear();
+        self.in_alias = false;
+        self.inner.reset(chunk_name)
+    }
+
+    fn jump_to_alias(&mut self, path: &str) -> std::result::Result<(), NavigateError> {
+        if path == EMBEDDED_SENTINEL {
+            self.path.clear();
+            self.in_alias = true;
+            Ok(())
+        } else {
+            self.in_alias = false;
+            self.inner.jump_to_alias(path)
+        }
+    }
+
+    fn to_parent(&mut self) -> std::result::Result<(), NavigateError> {
+        if self.in_alias {
+            if self.path.pop().is_some() {
+                Ok(())
+            } else {
+                self.in_alias = false;
+                self.inner.to_parent()
+            }
+        } else {
+            self.inner.to_parent()
+        }
+    }
+
+    fn to_child(&mut self, name: &str) -> std::result::Result<(), NavigateError> {
+        if self.in_alias {
+            self.path.push(name.to_owned());
+            Ok(())
+        } else {
+            self.inner.to_child(name)
+        }
+    }
+
+    fn has_module(&self) -> bool {
+        if self.in_alias {
+            let key = self.path.join("/");
+            Self::find_module(&key).is_some()
+        } else {
+            self.inner.has_module()
+        }
+    }
+
+    fn cache_key(&self) -> String {
+        if self.in_alias {
+            format!("@rootbeer/{}", self.path.join("/"))
+        } else {
+            self.inner.cache_key()
+        }
+    }
+
+    fn has_config(&self) -> bool {
+        !self.in_alias
+    }
+
+    fn config(&self) -> io::Result<Vec<u8>> {
+        Ok(format!(r#"{{"aliases":{{"rootbeer":"{EMBEDDED_SENTINEL}"}}}}"#).into_bytes())
+    }
+
+    fn loader(&self, lua: &Lua) -> Result<Function> {
+        if self.in_alias {
+            let key = self.path.join("/");
+            let src = Self::find_module(&key).ok_or_else(|| {
+                mlua::Error::runtime(format!("embedded module @rootbeer/{key} not found"))
+            })?;
+            lua.load(src)
+                .set_name(format!("@rootbeer/{key}"))
+                .into_function()
+        } else {
+            self.inner.loader(lua)
+        }
     }
 }
