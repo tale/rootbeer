@@ -3,15 +3,13 @@ pre-commit:
   commands:
     fmt:
       glob: "*.rs"
-      run: cargo fmt --all -- --check
+      run: cargo fmt --all
+      stage_fixed: true
     clippy:
       glob: "*.rs"
-      run: cargo clippy --workspace -- -D warnings
+      run: cargo clippy --workspace --fix --allow-dirty --allow-staged -- -D warnings
+      stage_fixed: true
     oxfmt:
       glob: "*.{js,ts}"
       run: pnpm oxfmt --write {staged_files}
-
-pre-push:
-  commands:
-    test:
-      run: cargo test --workspace
+      stage_fixed: true

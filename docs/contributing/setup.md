@@ -87,12 +87,13 @@ Install the pre-commit and pre-push hooks with:
 lefthook install
 ```
 
-This runs automatically on commit and push:
+This runs automatically on commit:
 
-| Hook | Checks |
+| Hook | Action |
 |------|--------|
-| `pre-commit` | `cargo fmt --check`, `cargo clippy` |
-| `pre-push` | `cargo test --workspace` |
+| `pre-commit` | `cargo fmt`, `cargo clippy --fix`, `pnpm oxfmt` |
+
+All fixers auto-stage corrected files so commits are always clean.
 
 ## Editor Setup
 
