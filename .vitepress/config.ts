@@ -43,6 +43,11 @@ export default defineConfig({
             collapsed: true,
             items: [{ text: "brew", link: "/modules/brew" }],
           },
+          {
+            text: "System",
+            collapsed: true,
+            items: [{ text: "mac", link: "/modules/mac" }],
+          },
         ],
       },
       {
