@@ -9,7 +9,7 @@ App Store apps as a Lua table — rootbeer generates a Brewfile and runs
 `brew bundle` to apply it.
 
 ```lua
-local brew = require("@rootbeer/brew")
+local brew = require("rootbeer.brew")
 ```
 
 ## Example

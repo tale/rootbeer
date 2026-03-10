@@ -1,5 +1,5 @@
-local rb = require("@rootbeer")
-local zsh = require("@rootbeer/zsh")
+local rb = require("rootbeer")
+local zsh = require("rootbeer.zsh")
 
 print("rootbeer test run")
 for k, v in pairs(rb.host) do

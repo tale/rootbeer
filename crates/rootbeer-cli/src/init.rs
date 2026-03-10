@@ -95,6 +95,7 @@ pub fn run(source: Option<String>, force: bool) {
                 Source::GitUrl(url) => url,
                 Source::Local(path) => {
                     init_from_local(&path, &dest);
+                    setup_lsp(&dest);
                     return;
                 }
             };
@@ -137,6 +138,14 @@ pub fn run(source: Option<String>, force: bool) {
 
             println!("initialized from {s} at {}", dest.display());
         }
+    }
+
+    setup_lsp(&dest);
+}
+
+fn setup_lsp(source_dir: &Path) {
+    if let Err(e) = super::lsp::ensure_luaurc(source_dir) {
+        eprintln!("warning: failed to set up LSP type definitions: {e}");
     }
 }
 

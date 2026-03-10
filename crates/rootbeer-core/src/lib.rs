@@ -3,7 +3,14 @@ mod lua;
 mod plan;
 
 pub use executor::{ExecutionReport, Mode, OpResult};
+#[cfg(feature = "embedded-stdlib")]
+pub use lua::require::embedded_modules;
 pub use plan::Op;
+
+/// Returns the compile-time Lua standard library directory path.
+pub fn lua_dir() -> PathBuf {
+    PathBuf::from(env!("ROOTBEER_LUA_DIR"))
+}
 
 use std::fmt::Display;
 use std::path::{Path, PathBuf};

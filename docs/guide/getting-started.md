@@ -31,8 +31,8 @@ Open your manifest with `rb edit`, or `rb cd` to jump into the source
 directory:
 
 ```lua
-local rb = require("@rootbeer")
-local zsh = require("@rootbeer/zsh")
+local rb = require("rootbeer")
+local zsh = require("rootbeer.zsh")
 
 rb.file("~/.zshrc", zsh.config({
     env = {

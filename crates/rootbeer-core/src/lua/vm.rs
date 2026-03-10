@@ -42,7 +42,24 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     lua.globals().set("rootbeer", &rb)?;
     lua.register_module("@rootbeer", rb)?;
 
-    let require_fn = make_require_fn(&lua, lua_dir)?;
+    let inner_require = make_require_fn(&lua, lua_dir)?;
+
+    // Wrap require() to accept standard Lua dot-separated paths
+    // (e.g. require("rootbeer.git")) in addition to Luau's native
+    // @-prefixed paths (e.g. require("@rootbeer/git")). Luau's C++
+    // layer rejects paths that don't start with @, ./, or ../ so the
+    // translation must happen before the path reaches it.
+    let require_fn = lua.create_function(move |_lua, path: String| {
+        let translated =
+            // I'm sorry god for what I have created.
+            if !path.starts_with('@') && !path.starts_with("./") && !path.starts_with("../") {
+                format!("@{}", path.replace('.', "/"))
+            } else {
+                path
+            };
+
+        inner_require.call::<mlua::Value>(translated)
+    })?;
     lua.globals().set("require", require_fn)?;
 
     Ok(lua)

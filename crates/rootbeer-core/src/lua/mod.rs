@@ -1,5 +1,5 @@
 mod fs;
-mod require;
+pub(crate) mod require;
 mod secret;
 mod serializer;
 mod sys;

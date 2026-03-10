@@ -11,7 +11,7 @@ a single Lua table and rootbeer generates all the zsh files for you:
 `<dir>/.zshrc`.
 
 ```lua
-local zsh = require("@rootbeer/zsh")
+local zsh = require("rootbeer.zsh")
 ```
 
 ## Example

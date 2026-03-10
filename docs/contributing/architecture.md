@@ -85,11 +85,11 @@ For example, `git.lua` takes a `git.Config` table and:
   `rootbeer.file()`
 
 Each module is self-contained with its own `@class` annotations for the
-language server. Users load them via `require("@rootbeer/git")`.
+language server. Users load them via `require("rootbeer.git")`.
 
 ## Lua Standard Library Loading
 
-The `@rootbeer/*` modules in `lua/rootbeer/` can be loaded two ways:
+The `rootbeer.*` modules in `lua/rootbeer/` can be loaded two ways:
 
 - **Filesystem (debug builds)** — Modules are read from disk via `FsRequirer`,
   using the `ROOTBEER_LUA_DIR` path set at compile time. This means `cargo run`

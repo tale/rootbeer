@@ -10,7 +10,7 @@ Your rootbeer config is Lua — not templates, not YAML. Use `if` statements,
 loops, functions, and modules to build your system configuration.
 
 ```lua
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 
 for _, dir in ipairs({ "projects", "scratch", "notes" }) do
     rb.file("~/" .. dir .. "/.keep", "")
@@ -31,7 +31,7 @@ without touching the filesystem.
 `rb.file()` writes generated content to a path:
 
 ```lua
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 
 rb.file("~/.config/homebrew/env", 'export HOMEBREW_PREFIX="/opt/homebrew"\n')
 ```
@@ -57,7 +57,7 @@ pattern is: build a config table, mutate it with `if` branches, pass it
 to the module.
 
 ```lua
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 local host = rb.host
 
 local cfg = {

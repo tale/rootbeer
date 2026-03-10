@@ -2,6 +2,7 @@ mod apply;
 mod cd;
 mod edit;
 mod init;
+mod lsp;
 
 use std::path::PathBuf;
 
@@ -48,6 +49,9 @@ enum Commands {
 
     /// Open the rootbeer source directory in $VISUAL/$EDITOR
     Edit,
+
+    /// Extract type definitions and write .luaurc for editor autocomplete
+    Lsp,
 
     /// Apply the rootbeer configuration
     Apply {
@@ -100,6 +104,7 @@ fn main() {
             }
         }
 
+        Commands::Lsp => lsp::run(&source_dir()),
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),
 

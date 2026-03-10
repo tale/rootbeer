@@ -11,7 +11,7 @@ For system information, see [`rb.host`](/reference/host).
 For per-machine configuration, see [Multi-Device Config](/guide/multi-device).
 
 ```lua
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 ```
 
 ## `rb.profile`

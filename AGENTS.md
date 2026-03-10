@@ -20,7 +20,30 @@ defined in the highest layer which consumes the lower level APIs, allowing the
 user to follow a nicely typed API to manage their zsh configuration.
 
 This pattern needs to remain consistent across all modules and there are a few
-different tools built around these assumptions defined below:
+different tools built around these assumptions defined below.
+
+## Require Syntax
+
+Two require styles are supported at runtime — Luau-native `@`-prefixed paths
+and standard Lua dot-separated paths:
+
+- `require("rootbeer.git")` — dot syntax, preferred in **all user-facing code**
+  (docs, examples, test files). Works natively with lua-language-server for
+  autocomplete and type checking.
+- `require("@rootbeer/git")` — Luau-native syntax, used **only in internal
+  stdlib modules** (`lua/rootbeer/*.lua`). These files run inside Luau where
+  `@` aliases are first-class.
+
+A Rust-level require wrapper in `vm.rs` translates dot paths to `@` paths
+before they reach Luau's C++ layer (which only accepts `@`, `./`, `../`
+prefixes). This means both styles work everywhere at runtime, but docs and
+examples must always use dot syntax for LuaLS compatibility.
+
+The LSP setup (`rb lsp` / `rb init`) writes type definitions to
+`~/.local/share/rootbeer/typedefs/` and a `.luarc.json` with
+`workspace.library` pointing there. A generated `init.lua` lets
+`require("rootbeer")` resolve to the `rootbeer` class type. No LuaLS plugin
+is needed — standard `workspace.library` resolution handles everything.
 
 - I/O operations run in a plan/execute mode, where calls only append to a log of
   operations that need to be executed on the apply stage.

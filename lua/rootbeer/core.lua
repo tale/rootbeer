@@ -1,5 +1,6 @@
 --- @meta
 
+--- @class rootbeer
 --- Primitives for managing files, creating symlinks, and querying system information.
 
 --- Information about the current host machine and user.

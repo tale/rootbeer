@@ -28,7 +28,7 @@ Disable the default feature to get this behavior:
 cargo build --release --no-default-features
 ```
 
-In this mode, the binary reads `@rootbeer/*` modules from disk at runtime.
+In this mode, the binary reads `rootbeer.*` modules from disk at runtime.
 The path is set at compile time via the `ROOTBEER_LUA_DIR` environment
 variable (defaults to the repo's `lua/` directory):
 

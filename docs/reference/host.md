@@ -9,7 +9,7 @@ It is populated once at startup from POSIX syscalls — no environment variables
 are used.
 
 ```lua
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 
 if rb.host.os == "macos" then
     -- macOS specific config

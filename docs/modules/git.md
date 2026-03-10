@@ -10,7 +10,7 @@ from a single Lua table — no more hand-editing INI sections. Shortcuts like
 lets you pass through tool-specific sections like `delta` or `interactive`.
 
 ```lua
-local git = require("@rootbeer/git")
+local git = require("rootbeer.git")
 ```
 
 ## Example

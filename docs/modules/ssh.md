@@ -9,7 +9,7 @@ options as a Lua table — rootbeer generates the `~/.ssh/config` file for you.
 Booleans are automatically rendered as `yes`/`no`.
 
 ```lua
-local ssh = require("@rootbeer/ssh")
+local ssh = require("rootbeer.ssh")
 ```
 
 ## Example

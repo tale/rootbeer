@@ -10,7 +10,7 @@ local rb = require("@rootbeer")
 --- When `rb.profile` is `nil` the call is a no-op.
 ---
 --- ```lua
---- local profile = require("@rootbeer/profile")
+--- local profile = require("rootbeer.profile")
 ---
 --- profile.config({
 ---   work = "hosts/work.lua",
