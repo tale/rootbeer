@@ -62,6 +62,21 @@ rb apply
 `rb apply` evaluates your manifest and writes/links files into place. Use
 `-n` (dry run) to see what would happen without touching the filesystem.
 
+## Editor Autocomplete
+
+`rb init` automatically sets up [lua-language-server](https://luals.github.io/)
+so you get full autocomplete and type checking out of the box. If you need to
+regenerate the setup (or set it up manually), run:
+
+```bash
+rb lsp
+```
+
+This extracts type definitions to `~/.local/share/rootbeer/typedefs/` and
+writes a `.luarc.json` in your source directory. Any editor with
+lua-language-server support (VS Code, Neovim, etc.) will pick up completions
+for all `require("rootbeer.*")` modules automatically.
+
 ## Next Steps
 
 - [Core Concepts](/guide/core-concepts) — Plan/execute model, file operations, conditionals
