@@ -20,12 +20,21 @@ rootbeer.profile = nil
 --- @param content string The content to write.
 function rootbeer.file(path, content) end
 
---- Creates a symbolic link. The source path is relative to the script
---- directory and must exist. The destination supports `~` expansion.
+--- Creates a symbolic link from a file in the script directory.
+--- The source path is relative to the script directory and must exist.
+--- The destination supports `~` expansion.
 --- Idempotent — existing correct links are skipped, stale links are replaced.
 --- @param src string Source path relative to the script directory.
 --- @param dst string Destination path (supports `~` expansion).
 function rootbeer.link_file(src, dst) end
+
+--- Creates a symbolic link between arbitrary paths.
+--- Both paths support `~` expansion and relative path resolution.
+--- Unlike `link_file`, the source is not restricted to the script directory.
+--- The source must exist at plan time.
+--- @param src string Source path (supports `~` expansion).
+--- @param dst string Destination path (supports `~` expansion).
+function rootbeer.link(src, dst) end
 
 --- Executes a shell command. The command is deferred until the apply stage.
 --- @param cmd string The command to run (e.g. `"brew"`).

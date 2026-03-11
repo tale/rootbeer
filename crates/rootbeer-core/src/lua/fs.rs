@@ -64,6 +64,30 @@ pub(crate) fn register(lua: &Lua, table: &Table) -> LuaResult<()> {
     )?;
 
     table.set(
+        "link",
+        lua.create_function(|lua, (src, dest): (String, String)| {
+            let (runtime, run) = super::ctx(lua);
+            let resolved_src = resolve_path(&runtime.script_dir, &src);
+            let resolved_dst = resolve_path(&runtime.script_dir, &dest);
+
+            if !resolved_src.exists() {
+                return Err(LuaError::RuntimeError(format!(
+                    "link source '{}' (resolved to '{}'): not found",
+                    src,
+                    resolved_src.display(),
+                )));
+            }
+
+            run.lock().push(Op::Symlink {
+                src: resolved_src,
+                dst: resolved_dst,
+            });
+
+            Ok(())
+        })?,
+    )?;
+
+    table.set(
         "path_exists",
         lua.create_function(|lua, path: String| {
             let (runtime, _) = super::ctx(lua);

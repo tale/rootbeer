@@ -51,9 +51,12 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     // translation must happen before the path reaches it.
     let require_fn = lua.create_function(move |_lua, path: String| {
         let translated =
-            // I'm sorry god for what I have created.
             if !path.starts_with('@') && !path.starts_with("./") && !path.starts_with("../") {
-                format!("@{}", path.replace('.', "/"))
+                if path == "rootbeer" || path.starts_with("rootbeer.") {
+                    format!("@{}", path.replace('.', "/"))
+                } else {
+                    format!("./{}", path.replace('.', "/"))
+                }
             } else {
                 path
             };
