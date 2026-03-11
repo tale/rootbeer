@@ -13,6 +13,12 @@ rootbeer.host = {}
 --- @type string?
 rootbeer.profile = nil
 
+--- Absolute path to the rootbeer source directory (the directory containing
+--- the entry-point script). Useful for commands that need to operate on the
+--- source repo itself (e.g. `git remote set-url`).
+--- @type string
+rootbeer.source_dir = ""
+
 --- Writes content to a file. Parent directories are created automatically.
 --- Paths starting with `~` are expanded to `$HOME`; relative paths resolve
 --- from the script directory.
@@ -36,7 +42,7 @@ function rootbeer.link_file(src, dst) end
 --- @param dst string Destination path (supports `~` expansion).
 function rootbeer.link(src, dst) end
 
---- Executes a shell command. The command is deferred until the apply stage.
+--- Executes a command in the source directory. The command is deferred until the apply stage.
 --- @param cmd string The command to run (e.g. `"brew"`).
 --- @param args? string[] Optional arguments passed to the command.
 function rootbeer.exec(cmd, args) end

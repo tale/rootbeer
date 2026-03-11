@@ -29,7 +29,7 @@ pub fn dry_run(ops: &[Op]) -> ExecutionReport {
                 report.results.push(result);
             }
 
-            Op::Exec { cmd, args } => {
+            Op::Exec { cmd, args, .. } => {
                 let display = std::iter::once(cmd.as_str())
                     .chain(args.iter().map(|s| s.as_str()))
                     .collect::<Vec<_>>()

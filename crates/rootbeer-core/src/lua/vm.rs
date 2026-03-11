@@ -28,6 +28,7 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
 
     let lua_dir = runtime.lua_dir.clone();
     let profile = runtime.profile.clone();
+    let source_dir = runtime.script_dir.to_string_lossy().to_string();
     lua.set_app_data(runtime);
     lua.set_app_data(Run::default());
 
@@ -38,6 +39,7 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     secret::register(&lua, &rb)?;
 
     rb.set("profile", profile)?;
+    rb.set("source_dir", source_dir)?;
 
     lua.globals().set("rootbeer", &rb)?;
     lua.register_module("@rootbeer", rb)?;

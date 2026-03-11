@@ -80,9 +80,10 @@ pub fn apply(ops: &[Op], force: bool) -> io::Result<ExecutionReport> {
                 report.results.push(result);
             }
 
-            Op::Exec { cmd, args } => {
+            Op::Exec { cmd, args, cwd } => {
                 let status = process::Command::new(cmd)
                     .args(args)
+                    .current_dir(cwd)
                     .stdin(process::Stdio::inherit())
                     .stdout(process::Stdio::inherit())
                     .stderr(process::Stdio::inherit())
