@@ -5,7 +5,7 @@ use std::{fs, io};
 const STARTER_MANIFEST: &str = r#"local rb = require("@rootbeer")
 
 -- Write files, create symlinks, and configure your system here.
--- See https://rootbeer.dev for documentation.
+-- See https://rootbeer.tale.me for documentation.
 
 -- Example: write a simple file
 -- rb.file("~/.config/example.txt", "hello from rootbeer!\n")
