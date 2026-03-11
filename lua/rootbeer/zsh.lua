@@ -9,11 +9,15 @@ local rb = require("@rootbeer")
 --- @field profile? zsh.ProfileConfig Login shell configuration written to `.zprofile`.
 --- @field options? string[] `setopt` options (e.g. `"CORRECT"`, `"EXTENDED_GLOB"`).
 --- @field keybind_mode? "emacs"|"vi" Input mode (`set -o emacs` or `set -o vi`).
+--- @field variables? table<string, string> Shell variable assignments (not exported).
 --- @field aliases? table<string, string> Shell aliases defined via `alias name="command"`.
 --- @field prompt? string Raw `PS1` prompt string.
+--- @field vcs_info? boolean|zsh.VcsInfoConfig Enable git branch info in the prompt via `vcs_info`. When `true`, uses default format `" (%b)"`. Automatically sets `PROMPT_SUBST`, adds a `precmd` hook, and autoloads `vcs_info`.
 --- @field history? zsh.HistoryConfig History settings.
 --- @field completions? zsh.CompletionConfig Completion system settings.
---- @field functions? table<string, string> Shell functions. Keys are names, values are the function body.
+--- @field functions? table<string, string> Shell functions. Keys are names, values are the function body. Supports multi-line `[[...]]` strings.
+--- @field widgets? string[] Function names to register as ZLE widgets via `zle -N`. The function must be defined in `functions`.
+--- @field hooks? table<string, string|string[]> Zsh hook registrations via `add-zsh-hook`. Keys are hook names (e.g. `"precmd"`), values are function names or lists of function names.
 --- @field keybindings? table<string, string> `bindkey` mappings (e.g. `{ ["^R"] = "my-widget" }`).
 --- @field evals? string[] Commands wrapped in `eval "$(cmd)"`.
 --- @field sources? string[] File paths to source.
@@ -34,6 +38,10 @@ local rb = require("@rootbeer")
 --- @field dedup? boolean Remove duplicate entries. Defaults to `true`.
 --- @field share? boolean Share history across sessions. Defaults to `true`.
 --- @field append? boolean Append to history file. Defaults to `true`.
+
+--- @class zsh.VcsInfoConfig
+--- @field formats? string Format string for `vcs_info`. Defaults to `" (%b)"`.
+--- @field check_for_changes? boolean Enable dirty/staged indicators. Defaults to `true`.
 
 --- @class zsh.CompletionConfig
 --- @field enable? boolean Run `compinit`. Defaults to `true`.
@@ -162,6 +170,31 @@ local function build_zshrc(dir, cfg)
 		end
 	end
 
+	if cfg.vcs_info then
+		local vi = type(cfg.vcs_info) == "table" and cfg.vcs_info or {}
+		local formats = vi.formats or " (%b)"
+		local check = vi.check_for_changes ~= false
+
+		local block = {}
+		block[#block + 1] = "autoload -Uz vcs_info"
+		if check then
+			block[#block + 1] = 'zstyle ":vcs_info:git:*" check-for-changes true'
+		end
+		block[#block + 1] = 'zstyle ":vcs_info:git:*" formats "' .. formats .. '"'
+		block[#block + 1] = "autoload -Uz add-zsh-hook"
+		block[#block + 1] = "add-zsh-hook precmd vcs_info"
+		block[#block + 1] = "setopt PROMPT_SUBST"
+		add_block(lines, block)
+	end
+
+	if cfg.variables then
+		local block = {}
+		for name, value in pairs(cfg.variables) do
+			block[#block + 1] = name .. "=" .. value
+		end
+		add_block(lines, block)
+	end
+
 	if cfg.prompt then
 		add(lines, "PS1='" .. cfg.prompt .. "'", true)
 	end
@@ -252,6 +285,29 @@ local function build_zshrc(dir, cfg)
 			block[#block + 1] = "}"
 			add_block(lines, block)
 		end
+	end
+
+	if cfg.widgets then
+		local block = {}
+		for _, name in ipairs(cfg.widgets) do
+			block[#block + 1] = "zle -N " .. name
+		end
+		add_block(lines, block)
+	end
+
+	if cfg.hooks then
+		local block = {}
+		block[#block + 1] = "autoload -Uz add-zsh-hook"
+		for hook, fns in pairs(cfg.hooks) do
+			if type(fns) == "string" then
+				block[#block + 1] = "add-zsh-hook " .. hook .. " " .. fns
+			else
+				for _, fn in ipairs(fns) do
+					block[#block + 1] = "add-zsh-hook " .. hook .. " " .. fn
+				end
+			end
+		end
+		add_block(lines, block)
 	end
 
 	if cfg.keybindings then
