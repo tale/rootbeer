@@ -59,6 +59,10 @@ enum Commands {
         #[arg(short = 'n', long)]
         dry_run: bool,
 
+        /// Overwrite existing files/directories when creating symlinks
+        #[arg(short, long)]
+        force: bool,
+
         /// Path to a .lua script to execute (default: data_dir/source/rootbeer.lua)
         #[arg(short, long)]
         script: Option<PathBuf>,
@@ -93,14 +97,17 @@ fn main() {
             }
 
             if apply {
-                let mode = if dry_run {
-                    rootbeer_core::Mode::DryRun
-                } else {
-                    rootbeer_core::Mode::Apply
+                let opts = rootbeer_core::Options {
+                    mode: if dry_run {
+                        rootbeer_core::Mode::DryRun
+                    } else {
+                        rootbeer_core::Mode::Apply
+                    },
+                    ..Default::default()
                 };
 
                 println!();
-                apply::run(script_path(), mode, cli.lua_dir.as_ref(), None);
+                apply::run(script_path(), opts, cli.lua_dir.as_ref(), None);
             }
         }
 
@@ -110,17 +117,21 @@ fn main() {
 
         Commands::Apply {
             dry_run,
+            force,
             script,
             profile,
         } => {
-            let mode = if dry_run {
-                rootbeer_core::Mode::DryRun
-            } else {
-                rootbeer_core::Mode::Apply
+            let opts = rootbeer_core::Options {
+                mode: if dry_run {
+                    rootbeer_core::Mode::DryRun
+                } else {
+                    rootbeer_core::Mode::Apply
+                },
+                force,
             };
 
             let script = script.unwrap_or_else(script_path);
-            apply::run(script, mode, cli.lua_dir.as_ref(), profile);
+            apply::run(script, opts, cli.lua_dir.as_ref(), profile);
         }
     }
 }

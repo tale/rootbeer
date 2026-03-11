@@ -1,10 +1,8 @@
 use std::path::PathBuf;
 
-use rootbeer_core::OpResult;
-
 pub fn run(
     script: PathBuf,
-    mode: rootbeer_core::Mode,
+    opts: rootbeer_core::Options,
     lua_dir: Option<&PathBuf>,
     profile: Option<String>,
 ) {
@@ -24,30 +22,15 @@ pub fn run(
 
     runtime.profile = profile;
 
-    match rootbeer_core::execute_with(runtime, mode) {
+    eprintln!(
+        "applying ({}){}",
+        opts.mode,
+        if opts.force { " [force]" } else { "" }
+    );
+    match rootbeer_core::execute_with(runtime, opts) {
         Ok(report) => {
-            println!("ran in {} mode:", report.mode);
-            for result in &report.results {
-                match result {
-                    OpResult::FileWritten { path, bytes } => {
-                        println!("  write {} ({bytes} bytes)", path.display());
-                    }
-
-                    OpResult::SymlinkCreated { src, dst } => {
-                        println!("  link {} -> {}", dst.display(), src.display());
-                    }
-
-                    OpResult::SymlinkUnchanged { dst } => {
-                        println!("  link {} (unchanged)", dst.display());
-                    }
-
-                    OpResult::CommandRan { cmd, status } => {
-                        println!("  exec `{cmd}` (exit {status})");
-                    }
-                }
-            }
+            eprintln!("done ({} operations)", report.results.len());
         }
-
         Err(e) => {
             eprintln!("error: {e}");
             std::process::exit(1);

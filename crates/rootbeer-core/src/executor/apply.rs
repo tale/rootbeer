@@ -1,11 +1,11 @@
 use std::{fs, io, os::unix::fs as unix_fs, process};
 
 use crate::{
-    executor::{ExecutionReport, OpResult},
+    executor::{log_result, ExecutionReport, OpResult},
     Mode, Op,
 };
 
-pub fn apply(ops: &[Op]) -> io::Result<ExecutionReport> {
+pub fn apply(ops: &[Op], force: bool) -> io::Result<ExecutionReport> {
     let mut report = ExecutionReport {
         mode: Mode::Apply,
         ..Default::default()
@@ -19,28 +19,44 @@ pub fn apply(ops: &[Op]) -> io::Result<ExecutionReport> {
                 }
 
                 fs::write(path, content)?;
-                report.results.push(OpResult::FileWritten {
+                let result = OpResult::FileWritten {
                     path: path.clone(),
                     bytes: content.len(),
-                });
+                };
+                log_result(&result);
+                report.results.push(result);
             }
 
             Op::Symlink { src, dst } => {
+                let mut overwritten = false;
+
                 if dst.is_symlink() {
                     if let Ok(target) = fs::read_link(dst) {
                         if target == *src {
-                            report
-                                .results
-                                .push(OpResult::SymlinkUnchanged { dst: dst.clone() });
+                            let result = OpResult::SymlinkUnchanged { dst: dst.clone() };
+                            log_result(&result);
+                            report.results.push(result);
                             continue;
                         }
                         fs::remove_file(dst)?;
                     }
                 } else if dst.exists() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::AlreadyExists,
-                        format!("target {} exists and is not a symlink", dst.display()),
-                    ));
+                    if force {
+                        overwritten = true;
+                        if dst.is_dir() {
+                            fs::remove_dir_all(dst)?;
+                        } else {
+                            fs::remove_file(dst)?;
+                        }
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            format!(
+                                "target {} exists and is not a symlink (use --force to overwrite)",
+                                dst.display()
+                            ),
+                        ));
+                    }
                 }
 
                 if let Some(parent) = dst.parent() {
@@ -48,10 +64,20 @@ pub fn apply(ops: &[Op]) -> io::Result<ExecutionReport> {
                 }
 
                 unix_fs::symlink(src, dst)?;
-                report.results.push(OpResult::SymlinkCreated {
-                    src: src.clone(),
-                    dst: dst.clone(),
-                });
+
+                let result = if overwritten {
+                    OpResult::SymlinkOverwritten {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                } else {
+                    OpResult::SymlinkCreated {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                };
+                log_result(&result);
+                report.results.push(result);
             }
 
             Op::Exec { cmd, args } => {
@@ -67,10 +93,12 @@ pub fn apply(ops: &[Op]) -> io::Result<ExecutionReport> {
                     .collect::<Vec<_>>()
                     .join(" ");
 
-                report.results.push(OpResult::CommandRan {
+                let result = OpResult::CommandRan {
                     cmd: display,
                     status: status.code().unwrap_or(1),
-                });
+                };
+                log_result(&result);
+                report.results.push(result);
             }
         }
     }

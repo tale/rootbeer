@@ -1,5 +1,5 @@
 use crate::{
-    executor::{ExecutionReport, OpResult},
+    executor::{log_result, ExecutionReport, OpResult},
     Mode, Op,
 };
 
@@ -12,17 +12,21 @@ pub fn dry_run(ops: &[Op]) -> ExecutionReport {
     for op in ops {
         match op {
             Op::WriteFile { path, content } => {
-                report.results.push(OpResult::FileWritten {
+                let result = OpResult::FileWritten {
                     path: path.clone(),
                     bytes: content.len(),
-                });
+                };
+                log_result(&result);
+                report.results.push(result);
             }
 
             Op::Symlink { src, dst } => {
-                report.results.push(OpResult::SymlinkCreated {
+                let result = OpResult::SymlinkCreated {
                     src: src.clone(),
                     dst: dst.clone(),
-                });
+                };
+                log_result(&result);
+                report.results.push(result);
             }
 
             Op::Exec { cmd, args } => {
@@ -31,10 +35,12 @@ pub fn dry_run(ops: &[Op]) -> ExecutionReport {
                     .collect::<Vec<_>>()
                     .join(" ");
 
-                report.results.push(OpResult::CommandRan {
+                let result = OpResult::CommandRan {
                     cmd: display,
                     status: 0,
-                });
+                };
+                log_result(&result);
+                report.results.push(result);
             }
         }
     }

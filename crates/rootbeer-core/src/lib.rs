@@ -2,7 +2,7 @@ mod executor;
 mod lua;
 mod plan;
 
-pub use executor::{ExecutionReport, Mode, OpResult};
+pub use executor::{ExecutionReport, Mode, OpResult, Options};
 #[cfg(feature = "embedded-stdlib")]
 pub use lua::require::embedded_modules;
 pub use plan::Op;
@@ -90,12 +90,12 @@ impl From<mlua::Error> for Error {
     }
 }
 
-pub fn execute(script: &Path, mode: Mode) -> Result<ExecutionReport, Error> {
+pub fn execute(script: &Path, opts: Options) -> Result<ExecutionReport, Error> {
     let runtime = Runtime::from_script(script)?;
-    execute_with(runtime, mode)
+    execute_with(runtime, opts)
 }
 
-pub fn execute_with(runtime: Runtime, mode: Mode) -> Result<ExecutionReport, Error> {
+pub fn execute_with(runtime: Runtime, opts: Options) -> Result<ExecutionReport, Error> {
     let script_path = runtime.script_dir.join(&runtime.script_name);
     let source = fs::read_to_string(&script_path)?;
     let chunk_name = format!("@{}", script_path.with_extension("").display());
@@ -108,8 +108,8 @@ pub fn execute_with(runtime: Runtime, mode: Mode) -> Result<ExecutionReport, Err
         .unwrap_or_default()
         .into_ops();
 
-    let report = match mode {
-        Mode::Apply => executor::apply(&ops)?,
+    let report = match opts.mode {
+        Mode::Apply => executor::apply(&ops, opts.force)?,
         Mode::DryRun => executor::dry_run(&ops),
     };
 
