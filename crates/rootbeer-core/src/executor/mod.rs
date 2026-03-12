@@ -1,32 +1,7 @@
-use std::{
-    fmt::{Display, Formatter, Result},
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
 mod apply;
 mod dry_run;
-
-#[derive(Debug, Default)]
-pub enum Mode {
-    #[default]
-    Apply,
-    DryRun,
-}
-
-#[derive(Debug, Default)]
-pub struct Options {
-    pub mode: Mode,
-    pub force: bool,
-}
-
-impl Display for Mode {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        match self {
-            Mode::Apply => write!(f, "apply"),
-            Mode::DryRun => write!(f, "dry run"),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub enum OpResult {
@@ -39,7 +14,6 @@ pub enum OpResult {
 
 #[derive(Debug, Default)]
 pub struct ExecutionReport {
-    pub mode: Mode,
     pub results: Vec<OpResult>,
 }
 

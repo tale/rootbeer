@@ -1,13 +1,10 @@
 use crate::{
     executor::{log_result, ExecutionReport, OpResult},
-    Mode, Op,
+    Op,
 };
 
 pub fn dry_run(ops: &[Op]) -> ExecutionReport {
-    let mut report = ExecutionReport {
-        mode: Mode::DryRun,
-        ..Default::default()
-    };
+    let mut report = ExecutionReport::default();
 
     for op in ops {
         match op {

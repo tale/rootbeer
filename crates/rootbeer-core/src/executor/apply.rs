@@ -2,14 +2,11 @@ use std::{fs, io, os::unix::fs as unix_fs, process};
 
 use crate::{
     executor::{log_result, ExecutionReport, OpResult},
-    Mode, Op,
+    Op,
 };
 
 pub fn apply(ops: &[Op], force: bool) -> io::Result<ExecutionReport> {
-    let mut report = ExecutionReport {
-        mode: Mode::Apply,
-        ..Default::default()
-    };
+    let mut report = ExecutionReport::default();
 
     for op in ops {
         match op {
