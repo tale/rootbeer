@@ -2,14 +2,14 @@ mod apply;
 mod cd;
 mod edit;
 mod init;
-mod lsp;
+mod typegen;
 
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "rb", version, about, long_about = None)]
+#[command(name = "rb", version, about, long_about = None, max_term_width = 80)]
 /// A command-line tool to deterministically manage your system using Lua!
 struct Cli {
     #[command(subcommand)]
@@ -39,9 +39,6 @@ enum Commands {
     /// Open the rootbeer source directory in $VISUAL/$EDITOR
     Edit,
 
-    /// Extract type definitions and write .luaurc for editor autocomplete
-    Lsp(lsp::Args),
-
     /// Apply the rootbeer configuration
     Apply(apply::Args),
 }
@@ -53,7 +50,6 @@ fn main() {
         Commands::Init(args) => init::run(args),
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),
-        Commands::Lsp(args) => lsp::run(args),
         Commands::Apply(args) => apply::run(args, cli.lua_dir.as_ref()),
     }
 }

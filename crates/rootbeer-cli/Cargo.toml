@@ -12,5 +12,5 @@ default = ["embedded-stdlib"]
 embedded-stdlib = ["rootbeer-core/embedded-stdlib"]
 
 [dependencies]
-clap = { version = "4.5.60", features = ["derive"] }
+clap = { version = "4.5.60", features = ["derive", "wrap_help"] }
 rootbeer-core = { path = "../rootbeer-core" }

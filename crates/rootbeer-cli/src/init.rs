@@ -204,7 +204,5 @@ fn init_from_local(path: &Path, dest: &Path) {
 }
 
 fn setup_lsp(config_dir: &Path) {
-    if let Err(e) = super::lsp::ensure_luaurc(config_dir) {
-        eprintln!("warning: failed to set up LSP type definitions: {e}");
-    }
+    super::typegen::setup(config_dir);
 }
