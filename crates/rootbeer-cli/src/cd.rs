@@ -1,15 +1,20 @@
 use std::process::Command;
 
 pub fn run() {
-    let dest = super::source_dir();
-
+    let dest = rootbeer_core::config_dir();
     if !dest.exists() {
-        eprintln!("error: source directory does not exist: {}", dest.display());
-        eprintln!("  run `rb init` first");
+        eprintln!("error: rootbeer has not been initialized");
+        eprintln!("hint: run `rb init` first");
         std::process::exit(1);
     }
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let shell = match std::env::var("SHELL") {
+        Ok(s) if !s.is_empty() => s,
+        _ => {
+            eprintln!("warning: SHELL environment variable is not set, defaulting to /bin/sh");
+            "/bin/sh".to_string()
+        }
+    };
 
     let status = Command::new(&shell)
         .current_dir(&dest)

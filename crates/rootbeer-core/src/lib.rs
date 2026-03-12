@@ -50,16 +50,39 @@ impl Runtime {
             profile: None,
         })
     }
+}
 
-    pub fn default_dir() -> PathBuf {
-        if let Some(xdg_data_home) = std::env::var_os("XDG_DATA_HOME") {
-            PathBuf::from(xdg_data_home).join("rootbeer")
-        } else if let Some(home) = std::env::var_os("HOME") {
-            PathBuf::from(home).join(".local/share/rootbeer")
-        } else {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        }
+fn xdg_dir(env_var: &str, fallback: &str) -> PathBuf {
+    if let Some(val) = std::env::var_os(env_var) {
+        PathBuf::from(val).join("rootbeer")
+    } else if let Some(home) = std::env::var_os("HOME") {
+        PathBuf::from(home).join(fallback).join("rootbeer")
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
+}
+
+/// User configuration directory (`~/.config/rootbeer`).
+/// The user's dotfiles/lua scripts live here.
+pub fn config_dir() -> PathBuf {
+    xdg_dir("XDG_CONFIG_HOME", ".config")
+}
+
+/// State directory (`~/.local/state/rootbeer`).
+/// Revisions, operation history, and other persistent runtime state.
+pub fn state_dir() -> PathBuf {
+    xdg_dir("XDG_STATE_HOME", ".local/state")
+}
+
+/// Data directory (`~/.local/share/rootbeer`).
+/// Type definitions, extracted stdlib, and other shared data.
+pub fn data_dir() -> PathBuf {
+    xdg_dir("XDG_DATA_HOME", ".local/share")
+}
+
+/// Default path to the user's rootbeer script inside the config directory.
+pub fn script_path() -> PathBuf {
+    config_dir().join("init.lua")
 }
 
 #[derive(Debug)]

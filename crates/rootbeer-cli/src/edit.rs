@@ -1,11 +1,10 @@
 use std::process::Command;
 
 pub fn run() {
-    let dest = super::source_dir();
-
+    let dest = rootbeer_core::config_dir();
     if !dest.exists() {
         eprintln!("error: source directory does not exist: {}", dest.display());
-        eprintln!("  run `rb init` first");
+        eprintln!("hint: run `rb init` first");
         std::process::exit(1);
     }
 
@@ -19,6 +18,11 @@ pub fn run() {
         .status()
         .unwrap_or_else(|e| {
             eprintln!("error: failed to run editor ({editor}): {e}");
+            if editor == "vi" {
+                eprintln!(
+                    "hint: set the VISUAL or EDITOR environment variable to your preferred editor"
+                );
+            }
             std::process::exit(1);
         });
 
