@@ -1,19 +1,21 @@
 use crate::{
-    executor::{log_result, ExecutionReport, OpResult},
+    executor::{ExecutionHandler, ExecutionReport, OpResult},
     Op,
 };
 
-pub fn dry_run(ops: &[Op]) -> ExecutionReport {
+pub fn dry_run(ops: &[Op], handler: &mut impl ExecutionHandler) -> ExecutionReport {
     let mut report = ExecutionReport::default();
 
     for op in ops {
+        handler.on_start(op);
+
         match op {
             Op::WriteFile { path, content } => {
                 let result = OpResult::FileWritten {
                     path: path.clone(),
                     bytes: content.len(),
                 };
-                log_result(&result);
+                handler.on_result(&result);
                 report.results.push(result);
             }
 
@@ -22,7 +24,7 @@ pub fn dry_run(ops: &[Op]) -> ExecutionReport {
                     src: src.clone(),
                     dst: dst.clone(),
                 };
-                log_result(&result);
+                handler.on_result(&result);
                 report.results.push(result);
             }
 
@@ -36,7 +38,7 @@ pub fn dry_run(ops: &[Op]) -> ExecutionReport {
                     cmd: display,
                     status: 0,
                 };
-                log_result(&result);
+                handler.on_result(&result);
                 report.results.push(result);
             }
         }

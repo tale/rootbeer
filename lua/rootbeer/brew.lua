@@ -44,7 +44,7 @@ function M.config(cfg)
 	end
 
 	rb.file(path, table.concat(lines, "\n") .. "\n")
-	rb.exec("brew", { "bundle", "--file=" .. path, "--no-upgrade" })
+	rb.exec("brew", { "bundle", "--file=" .. path })
 end
 
 return M

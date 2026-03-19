@@ -27,6 +27,7 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     let lua = Lua::new();
 
     let lua_dir = runtime.lua_dir.clone();
+    let script_dir = runtime.script_dir.clone();
     let profile = runtime.profile.clone();
     let source_dir = runtime.script_dir.to_string_lossy().to_string();
     lua.set_app_data(runtime);
@@ -44,7 +45,7 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     lua.globals().set("rootbeer", &rb)?;
     lua.register_module("@rootbeer", rb)?;
 
-    let inner_require = make_require_fn(&lua, lua_dir)?;
+    let inner_require = make_require_fn(&lua, lua_dir, script_dir)?;
 
     // Wrap require() to accept standard Lua dot-separated paths
     // (e.g. require("rootbeer.git")) in addition to Luau's native
@@ -57,7 +58,7 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
                 if path == "rootbeer" || path.starts_with("rootbeer.") {
                     format!("@{}", path.replace('.', "/"))
                 } else {
-                    format!("./{}", path.replace('.', "/"))
+                    format!("@source/{}", path.replace('.', "/"))
                 }
             } else {
                 path
@@ -70,7 +71,11 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     Ok(lua)
 }
 
-fn make_require_fn(lua: &Lua, lua_dir: std::path::PathBuf) -> Result<mlua::Function> {
+fn make_require_fn(
+    lua: &Lua,
+    lua_dir: std::path::PathBuf,
+    script_dir: std::path::PathBuf,
+) -> Result<mlua::Function> {
     // In debug builds, always use the filesystem so Lua changes don't
     // require a Rust recompile. In release builds with embedded-stdlib,
     // serve the stdlib from memory unless --lua-dir was explicitly set.
@@ -82,5 +87,5 @@ fn make_require_fn(lua: &Lua, lua_dir: std::path::PathBuf) -> Result<mlua::Funct
         }
     }
 
-    lua.create_require_function(FsRequirer::new(lua_dir))
+    lua.create_require_function(FsRequirer::new(lua_dir, script_dir))
 }

@@ -1,5 +1,6 @@
 use mlua::{Function, Lua, NavigateError, Require, Result, TextRequirer};
-use std::{io, path::PathBuf};
+use std::io;
+use std::path::{Path, PathBuf};
 
 /// A custom Require implementation that wraps TextRequirer and injects
 /// a synthetic `@rootbeer` alias pointing to `<lua_dir>/rootbeer`.
@@ -9,11 +10,17 @@ pub(crate) struct FsRequirer {
     config: Vec<u8>,
 }
 
-/// Takes the Lua directory and binds the `@rootbeer` alias to the directory.
+/// Takes the Lua directory and script directory, binding the `@rootbeer`
+/// alias to the stdlib and `@source` to the user's script directory.
 impl FsRequirer {
-    pub fn new(lua_dir: PathBuf) -> Self {
+    pub fn new(lua_dir: PathBuf, script_dir: PathBuf) -> Self {
         let root = lua_dir.join("rootbeer");
-        let config = format!(r#"{{"aliases":{{"rootbeer":"{}"}}}}"#, root.display()).into_bytes();
+        let config = format!(
+            r#"{{"aliases":{{"rootbeer":"{}","source":"{}"}}}}"#,
+            root.display(),
+            script_dir.display()
+        )
+        .into_bytes();
 
         Self {
             inner: TextRequirer::new(),
@@ -29,6 +36,33 @@ impl Require for FsRequirer {
     }
 
     fn reset(&mut self, chunk_name: &str) -> std::result::Result<(), NavigateError> {
+        // TextRequirer's resolve_module probes extensions (.lua, .luau) on the
+        // chunk path. If the chunk name already contains an extension (e.g.
+        // `@.../init.lua`), it tries `init.lua.lua` which doesn't exist.
+        // Strip .lua/.luau extensions before delegating.
+        //
+        // Additionally, resolve_module treats bare `init` specially — it skips
+        // extension probing and only checks if the path is a directory. After
+        // stripping `init.lua` → `init`, the path is neither a file nor a
+        // directory. Use the parent directory instead: resolve_module finds
+        // the init.lua inside it.
+        if chunk_name.starts_with('@') {
+            let path = Path::new(&chunk_name[1..]);
+            let ext = path.extension().and_then(|e| e.to_str());
+
+            if ext == Some("lua") || ext == Some("luau") {
+                let stripped = path.with_extension("");
+                let stem = stripped.file_name().and_then(|s| s.to_str());
+
+                if stem == Some("init") {
+                    if let Some(parent) = stripped.parent() {
+                        return self.inner.reset(&format!("@{}", parent.display()));
+                    }
+                }
+
+                return self.inner.reset(&format!("@{}", stripped.display()));
+            }
+        }
         self.inner.reset(chunk_name)
     }
 

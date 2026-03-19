@@ -1,14 +1,21 @@
-use std::{fs, io, os::unix::fs as unix_fs, process};
+use std::io::{self, BufRead, BufReader};
+use std::{fs, os::unix::fs as unix_fs, process, thread};
 
 use crate::{
-    executor::{log_result, ExecutionReport, OpResult},
+    executor::{ExecutionHandler, ExecutionReport, OpResult},
     Op,
 };
 
-pub fn apply(ops: &[Op], force: bool) -> io::Result<ExecutionReport> {
+pub fn apply(
+    ops: &[Op],
+    force: bool,
+    handler: &mut impl ExecutionHandler,
+) -> io::Result<ExecutionReport> {
     let mut report = ExecutionReport::default();
 
     for op in ops {
+        handler.on_start(op);
+
         match op {
             Op::WriteFile { path, content } => {
                 if let Some(parent) = path.parent() {
@@ -20,7 +27,8 @@ pub fn apply(ops: &[Op], force: bool) -> io::Result<ExecutionReport> {
                     path: path.clone(),
                     bytes: content.len(),
                 };
-                log_result(&result);
+
+                handler.on_result(&result);
                 report.results.push(result);
             }
 
@@ -31,10 +39,11 @@ pub fn apply(ops: &[Op], force: bool) -> io::Result<ExecutionReport> {
                     if let Ok(target) = fs::read_link(dst) {
                         if target == *src {
                             let result = OpResult::SymlinkUnchanged { dst: dst.clone() };
-                            log_result(&result);
+                            handler.on_result(&result);
                             report.results.push(result);
                             continue;
                         }
+
                         fs::remove_file(dst)?;
                     }
                 } else if dst.exists() {
@@ -73,29 +82,49 @@ pub fn apply(ops: &[Op], force: bool) -> io::Result<ExecutionReport> {
                         dst: dst.clone(),
                     }
                 };
-                log_result(&result);
+                handler.on_result(&result);
                 report.results.push(result);
             }
 
             Op::Exec { cmd, args, cwd } => {
-                let status = process::Command::new(cmd)
-                    .args(args)
-                    .current_dir(cwd)
-                    .stdin(process::Stdio::inherit())
-                    .stdout(process::Stdio::inherit())
-                    .stderr(process::Stdio::inherit())
-                    .status()?;
-
                 let display = std::iter::once(cmd.as_str())
                     .chain(args.iter().map(|s| s.as_str()))
                     .collect::<Vec<_>>()
                     .join(" ");
 
+                let mut child = process::Command::new(cmd)
+                    .args(args)
+                    .current_dir(cwd)
+                    .stdin(process::Stdio::inherit())
+                    .stdout(process::Stdio::piped())
+                    .stderr(process::Stdio::piped())
+                    .spawn()?;
+
+                let stderr = child.stderr.take().unwrap();
+                let stderr_lines = thread::spawn(move || {
+                    BufReader::new(stderr)
+                        .lines()
+                        .collect::<Result<Vec<_>, _>>()
+                });
+
+                let stdout = child.stdout.take().unwrap();
+                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                    handler.on_output(&line);
+                }
+
+                if let Ok(Ok(lines)) = stderr_lines.join() {
+                    for line in lines {
+                        handler.on_output(&line);
+                    }
+                }
+
+                let status = child.wait()?;
+
                 let result = OpResult::CommandRan {
                     cmd: display,
                     status: status.code().unwrap_or(1),
                 };
-                log_result(&result);
+                handler.on_result(&result);
                 report.results.push(result);
             }
         }

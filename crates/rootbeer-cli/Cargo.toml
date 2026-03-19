@@ -13,4 +13,5 @@ embedded-stdlib = ["rootbeer-core/embedded-stdlib"]
 
 [dependencies]
 clap = { version = "4.5.60", features = ["derive", "wrap_help"] }
+owo-colors = { version = "4.3.0", features = ["supports-colors"] }
 rootbeer-core = { path = "../rootbeer-core" }

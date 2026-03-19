@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-use crate::executor::{self, ExecutionReport};
+use crate::executor::{self, ExecutionHandler, ExecutionReport};
 use crate::plan::Op;
 use crate::{Error, Runtime};
 
@@ -24,6 +24,7 @@ impl Display for Mode {
 
 #[derive(Debug)]
 pub struct Options {
+    pub script_dir: PathBuf,
     pub script_name: String,
     pub lua_dir: PathBuf,
     pub profile: Option<String>,
@@ -34,6 +35,15 @@ pub struct Options {
 impl Options {
     pub fn from_script(script: &Path) -> io::Result<Self> {
         let script = script.canonicalize()?;
+        let script_dir = script
+            .parent()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "script has no parent directory",
+                )
+            })?
+            .to_path_buf();
 
         let script_name = script
             .file_name()
@@ -43,6 +53,7 @@ impl Options {
 
         Ok(Self {
             lua_dir: PathBuf::from(env!("ROOTBEER_LUA_DIR")),
+            script_dir,
             script_name,
             profile: None,
             mode: Mode::default(),
@@ -51,14 +62,7 @@ impl Options {
     }
 }
 
-/// The main entrypoint to interact with the rootbeer core library. A `Pipeline`
-/// is configured with a set of options and will correctly handle the entire
-/// process end-to-end:
-///
-/// 1. Evaluating the Lua script and building a list of operations
-/// 2. Executing the operations based on the configured mode
-/// 3. Returning a report of the execution results
-/// 4. (future) Managing revisions, rollbacks, and other stateful features
+/// Entry point: configure the pipeline, then call `.plan()` to evaluate Lua.
 pub struct Pipeline {
     opts: Options,
 }
@@ -76,18 +80,17 @@ impl Pipeline {
         self.opts.force
     }
 
-    pub fn plan(&self) -> Result<Vec<Op>, Error> {
+    /// Evaluate the Lua script and advance to the planned phase.
+    pub fn plan(self) -> Result<PlannedPipeline, Error> {
         let runtime = Runtime {
-            script_dir: crate::config_dir(),
+            script_dir: self.opts.script_dir.clone(),
             script_name: self.opts.script_name.clone(),
             lua_dir: self.opts.lua_dir.clone(),
             profile: self.opts.profile.clone(),
         };
 
-        let script_path = runtime.script_dir.join(&runtime.script_name);
-        let source = fs::read_to_string(&script_path)?;
-        let chunk_name = format!("@{}", script_path.with_extension("").display());
-
+        let source = fs::read_to_string(runtime.script_dir.join(&runtime.script_name))?;
+        let chunk_name = format!("@{}", runtime.script_dir.display());
         let lua = crate::lua::create_vm(runtime)?;
         lua.load(&source).set_name(&chunk_name).exec()?;
 
@@ -96,19 +99,39 @@ impl Pipeline {
             .unwrap_or_default()
             .into_ops();
 
-        Ok(ops)
+        Ok(PlannedPipeline {
+            opts: self.opts,
+            ops,
+        })
+    }
+}
+
+/// A pipeline that has been planned — ops are collected, ready to execute.
+pub struct PlannedPipeline {
+    opts: Options,
+    ops: Vec<Op>,
+}
+
+impl PlannedPipeline {
+    pub fn ops(&self) -> &[Op] {
+        &self.ops
     }
 
-    pub fn execute(&self, ops: &[Op]) -> Result<ExecutionReport, Error> {
+    pub fn mode(&self) -> Mode {
+        self.opts.mode
+    }
+
+    pub fn force(&self) -> bool {
+        self.opts.force
+    }
+
+    /// Execute the planned operations, reporting progress to the handler.
+    pub fn execute(self, handler: &mut impl ExecutionHandler) -> Result<ExecutionReport, Error> {
         let report = match self.opts.mode {
-            Mode::Apply => executor::apply(ops, self.opts.force)?,
-            Mode::DryRun => executor::dry_run(ops),
+            Mode::Apply => executor::apply(&self.ops, self.opts.force, handler)?,
+            Mode::DryRun => executor::dry_run(&self.ops, handler),
         };
-        Ok(report)
-    }
 
-    pub fn run(&self) -> Result<ExecutionReport, Error> {
-        let ops = self.plan()?;
-        self.execute(&ops)
+        Ok(report)
     }
 }

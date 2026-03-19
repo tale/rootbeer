@@ -3,8 +3,8 @@ mod lua;
 mod pipeline;
 mod plan;
 
-pub use executor::{ExecutionReport, OpResult};
-pub use pipeline::{Mode, Options, Pipeline};
+pub use executor::{ExecutionHandler, ExecutionReport, OpResult};
+pub use pipeline::{Mode, Options, Pipeline, PlannedPipeline};
 pub use plan::Op;
 
 #[cfg(feature = "embedded-stdlib")]
@@ -53,6 +53,11 @@ pub fn state_dir() -> PathBuf {
 /// Type definitions, extracted stdlib, and other shared data.
 pub fn data_dir() -> PathBuf {
     xdg_dir("XDG_DATA_HOME", ".local/share")
+}
+
+/// Default path to the user's rootbeer script inside the config directory.
+pub fn script_path() -> PathBuf {
+    config_dir().join("init.lua")
 }
 
 #[derive(Debug)]
