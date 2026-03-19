@@ -46,7 +46,7 @@ impl Require for FsRequirer {
         // stripping `init.lua` → `init`, the path is neither a file nor a
         // directory. Use the parent directory instead: resolve_module finds
         // the init.lua inside it.
-        if chunk_name.starts_with('@') {
+        if let Some(chunk_name) = chunk_name.strip_prefix('@') {
             let path = Path::new(&chunk_name[1..]);
             let ext = path.extension().and_then(|e| e.to_str());
 
