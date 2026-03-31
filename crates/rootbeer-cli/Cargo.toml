@@ -17,3 +17,6 @@ owo-colors = { version = "4.3.0", features = ["supports-colors"] }
 rootbeer-core = { path = "../rootbeer-core" }
 ureq = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[build-dependencies]
+time = "0.3"

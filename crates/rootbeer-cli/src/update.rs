@@ -18,7 +18,14 @@ pub fn run() {
     });
 
     let old_version = env!("RB_BUILD_TIMESTAMP");
-    let new_version = fetch_text(&version_url);
+    let new_version = ureq::get(&version_url)
+        .call()
+        .ok()
+        .and_then(|resp| resp.into_body().read_to_string().ok());
+
+    if new_version.is_none() {
+        eprintln!("warning: could not fetch latest version info, proceeding with update...");
+    }
 
     if let Some(ref new) = new_version {
         if new.trim() == old_version {
@@ -28,22 +35,27 @@ pub fn run() {
     }
 
     println!("downloading rootbeer nightly for {platform}...");
+    let archive = match ureq::get(&url)
+        .call()
+        .ok()
+        .and_then(|resp| resp.into_body().read_to_vec().ok())
+    {
+        Some(data) => data,
+        None => {
+            eprintln!("error: failed to download update archive");
+            eprintln!("hint: check your internet connection or try again later");
+            std::process::exit(1);
+        }
+    };
 
-    let zip_bytes = fetch_bytes(&url).unwrap_or_else(|e| {
-        eprintln!("error: download failed: {e}");
-        eprintln!("hint: check your internet connection or try again later");
-        std::process::exit(1);
-    });
-
-    let binary = extract_rb_from_zip(&zip_bytes).unwrap_or_else(|e| {
+    let binary = extract_rb_from_zip(&archive).unwrap_or_else(|e| {
         eprintln!("error: failed to extract archive: {e}");
         std::process::exit(1);
     });
 
     let dest = install_dir.join("rb");
-
-    // Write to a temp file in the same directory, then rename atomically
     let tmp_dest = install_dir.join(".rb.update.tmp");
+
     std::fs::write(&tmp_dest, &binary).unwrap_or_else(|e| {
         let _ = std::fs::remove_file(&tmp_dest);
         eprintln!("error: failed to write binary: {e}");
@@ -71,17 +83,6 @@ pub fn run() {
         Some(new) => println!("rootbeer updated: {old_version} -> {}", new.trim()),
         None => println!("rootbeer updated from {old_version}"),
     }
-}
-
-fn fetch_bytes(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let response = ureq::get(url).call()?;
-    let buf = response.into_body().read_to_vec()?;
-    Ok(buf)
-}
-
-fn fetch_text(url: &str) -> Option<String> {
-    let response = ureq::get(url).call().ok()?;
-    response.into_body().read_to_string().ok()
 }
 
 fn extract_rb_from_zip(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
