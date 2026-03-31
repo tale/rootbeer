@@ -1,11 +1,11 @@
-use std::process::Command;
+use std::io::{self, Read};
 
 const BASE_URL: &str = "https://rootbeer.tale.me/nightly";
 
 pub fn run() {
     let platform = detect_platform();
-    let artifact = format!("rb-{platform}.zip");
-    let url = format!("{BASE_URL}/{artifact}");
+    let url = format!("{BASE_URL}/rb-{platform}.zip");
+    let version_url = format!("{BASE_URL}/version.txt");
 
     let current_exe = std::env::current_exe().unwrap_or_else(|e| {
         eprintln!("error: could not determine current executable path: {e}");
@@ -17,109 +17,95 @@ pub fn run() {
         std::process::exit(1);
     });
 
-    let tmpdir = std::env::temp_dir().join(format!("rb-update-{}", std::process::id()));
-    std::fs::create_dir_all(&tmpdir).unwrap_or_else(|e| {
-        eprintln!("error: failed to create temp directory: {e}");
-        std::process::exit(1);
-    });
+    let old_version = env!("RB_BUILD_TIMESTAMP");
+    let new_version = fetch_text(&version_url);
 
-    let zip_path = tmpdir.join("rb.zip");
+    if let Some(ref new) = new_version {
+        if new.trim() == old_version {
+            println!("rootbeer is already up to date ({old_version})");
+            return;
+        }
+    }
 
     println!("downloading rootbeer nightly for {platform}...");
 
-    let status = Command::new("curl")
-        .args(["-fsSL", &url, "-o", &zip_path.to_string_lossy()])
-        .status()
-        .unwrap_or_else(|e| {
-            cleanup(&tmpdir);
-            eprintln!("error: failed to run curl: {e}");
-            std::process::exit(1);
-        });
-
-    if !status.success() {
-        cleanup(&tmpdir);
-        eprintln!("error: download failed");
+    let zip_bytes = fetch_bytes(&url).unwrap_or_else(|e| {
+        eprintln!("error: download failed: {e}");
         eprintln!("hint: check your internet connection or try again later");
         std::process::exit(1);
-    }
+    });
 
-    let status = Command::new("unzip")
-        .args([
-            "-q",
-            "-o",
-            &zip_path.to_string_lossy(),
-            "-d",
-            &tmpdir.to_string_lossy(),
-        ])
-        .status()
-        .unwrap_or_else(|e| {
-            cleanup(&tmpdir);
-            eprintln!("error: failed to run unzip: {e}");
-            std::process::exit(1);
-        });
-
-    if !status.success() {
-        cleanup(&tmpdir);
-        eprintln!("error: failed to unzip archive");
+    let binary = extract_rb_from_zip(&zip_bytes).unwrap_or_else(|e| {
+        eprintln!("error: failed to extract archive: {e}");
         std::process::exit(1);
-    }
+    });
 
-    let new_binary = tmpdir.join("rb");
     let dest = install_dir.join("rb");
 
-    // Make executable
+    // Write to a temp file in the same directory, then rename atomically
+    let tmp_dest = install_dir.join(".rb.update.tmp");
+    std::fs::write(&tmp_dest, &binary).unwrap_or_else(|e| {
+        let _ = std::fs::remove_file(&tmp_dest);
+        eprintln!("error: failed to write binary: {e}");
+        std::process::exit(1);
+    });
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let perms = std::fs::Permissions::from_mode(0o755);
-        std::fs::set_permissions(&new_binary, perms).unwrap_or_else(|e| {
-            cleanup(&tmpdir);
+        std::fs::set_permissions(&tmp_dest, perms).unwrap_or_else(|e| {
+            let _ = std::fs::remove_file(&tmp_dest);
             eprintln!("error: failed to set permissions: {e}");
             std::process::exit(1);
         });
     }
 
-    std::fs::rename(&new_binary, &dest)
-        .or_else(|_| {
-            // rename fails across filesystems, fall back to copy
-            std::fs::copy(&new_binary, &dest).map(|_| ())
-        })
-        .unwrap_or_else(|e| {
-            cleanup(&tmpdir);
-            eprintln!("error: failed to replace binary at {}: {e}", dest.display());
+    std::fs::rename(&tmp_dest, &dest).unwrap_or_else(|e| {
+        let _ = std::fs::remove_file(&tmp_dest);
+        eprintln!("error: failed to replace binary at {}: {e}", dest.display());
+        std::process::exit(1);
+    });
+
+    match new_version {
+        Some(new) => println!("rootbeer updated: {old_version} -> {}", new.trim()),
+        None => println!("rootbeer updated from {old_version}"),
+    }
+}
+
+fn fetch_bytes(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let response = ureq::get(url).call()?;
+    let buf = response.into_body().read_to_vec()?;
+    Ok(buf)
+}
+
+fn fetch_text(url: &str) -> Option<String> {
+    let response = ureq::get(url).call().ok()?;
+    response.into_body().read_to_string().ok()
+}
+
+fn extract_rb_from_zip(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let cursor = io::Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(cursor)?;
+
+    let mut file = archive
+        .by_name("rb")
+        .map_err(|e| format!("archive does not contain 'rb': {e}"))?;
+
+    let mut buf = Vec::with_capacity(file.size() as usize);
+    file.read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+fn detect_platform() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "macos-aarch64",
+        ("macos", "x86_64") => "macos-x86_64",
+        ("linux", "x86_64") => "linux-x86_64",
+        ("linux", "aarch64") => "linux-aarch64",
+        (os, arch) => {
+            eprintln!("error: unsupported platform: {os}-{arch}");
             std::process::exit(1);
-        });
-
-    cleanup(&tmpdir);
-    println!(
-        "rootbeer updated to latest nightly (was: {})",
-        env!("RB_BUILD_TIMESTAMP")
-    );
-    println!("run `rb --version` to see the new build timestamp");
-}
-
-fn cleanup(dir: &std::path::Path) {
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-fn detect_platform() -> String {
-    let os = if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_os = "linux") {
-        "linux"
-    } else {
-        eprintln!("error: unsupported OS");
-        std::process::exit(1);
-    };
-
-    let arch = if cfg!(target_arch = "x86_64") {
-        "x86_64"
-    } else if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else {
-        eprintln!("error: unsupported architecture");
-        std::process::exit(1);
-    };
-
-    format!("{os}-{arch}")
+        }
+    }
 }

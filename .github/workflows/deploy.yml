@@ -112,6 +112,7 @@ jobs:
           for name in linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64; do
             (cd "artifacts/rb-${name}" && zip "../../.vitepress/dist/nightly/rb-${name}.zip" rb)
           done
+          date -u '+%Y-%m-%d %H:%M UTC' > .vitepress/dist/nightly/version.txt
 
       - name: Preserve existing nightly binaries
         if: needs.changes.outputs.source != 'true'
@@ -121,6 +122,8 @@ jobs:
             curl -fsSL "https://rootbeer.tale.me/nightly/rb-${name}.zip" \
               -o ".vitepress/dist/nightly/rb-${name}.zip" || true
           done
+          curl -fsSL "https://rootbeer.tale.me/nightly/version.txt" \
+            -o ".vitepress/dist/nightly/version.txt" || true
 
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v3
