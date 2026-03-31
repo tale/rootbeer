@@ -71,6 +71,12 @@ impl ExecutionHandler for CliHandler {
                     eprintln!("  {} `{cmd}` (exit {status})", "fail".red());
                 }
             }
+            OpResult::RemoteUpdated { from, to } => {
+                eprintln!("  {} {from} -> {to}", "remote".green());
+            }
+            OpResult::RemoteUnchanged { url } => {
+                eprintln!("  {} {url} (unchanged)", "skip".dimmed());
+            }
         }
     }
 }

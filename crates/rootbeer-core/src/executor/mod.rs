@@ -12,6 +12,8 @@ pub enum OpResult {
     SymlinkUnchanged { dst: PathBuf },
     SymlinkOverwritten { src: PathBuf, dst: PathBuf },
     CommandRan { cmd: String, status: i32 },
+    RemoteUpdated { from: String, to: String },
+    RemoteUnchanged { url: String },
 }
 
 /// Receives lifecycle events during pipeline execution.

@@ -1,5 +1,5 @@
 use std::io::{self, BufRead, BufReader};
-use std::{fs, os::unix::fs as unix_fs, process, thread};
+use std::{fs, os::unix::fs as unix_fs, process, process::Command, thread};
 
 use crate::{
     executor::{ExecutionHandler, ExecutionReport, OpResult},
@@ -126,6 +126,50 @@ pub fn apply(
                 };
                 handler.on_result(&result);
                 report.results.push(result);
+            }
+
+            Op::SetRemoteUrl { dir, url } => {
+                let current = Command::new("git")
+                    .args(["-C", &dir.to_string_lossy(), "remote", "get-url", "origin"])
+                    .output()
+                    .map_err(|e| io::Error::other(format!("git: {e}")))?;
+
+                if !current.status.success() {
+                    return Err(io::Error::other(
+                        "failed to get origin URL; is the source directory a git repo?",
+                    ));
+                }
+
+                let current_url = String::from_utf8_lossy(&current.stdout).trim().to_string();
+
+                if *url == current_url {
+                    let result = OpResult::RemoteUnchanged { url: current_url };
+                    handler.on_result(&result);
+                    report.results.push(result);
+                } else {
+                    let status = Command::new("git")
+                        .args([
+                            "-C",
+                            &dir.to_string_lossy(),
+                            "remote",
+                            "set-url",
+                            "origin",
+                            url,
+                        ])
+                        .status()
+                        .map_err(|e| io::Error::other(format!("git: {e}")))?;
+
+                    if !status.success() {
+                        return Err(io::Error::other("failed to set origin URL"));
+                    }
+
+                    let result = OpResult::RemoteUpdated {
+                        from: current_url,
+                        to: url.clone(),
+                    };
+                    handler.on_result(&result);
+                    report.results.push(result);
+                }
             }
         }
     }

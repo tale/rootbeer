@@ -12,8 +12,9 @@ Install rootbeer and bootstrap a dotfiles repo in one command:
 sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init tale/dotfiles
 ```
 
-This installs `rb`, clones your repo into `~/.local/share/rootbeer/source/`,
-and you're ready to apply.
+This installs `rb` to `~/.rootbeer/bin/`, clones your repo into
+`~/.config/rootbeer/`, and you're ready to apply. Add `~/.rootbeer/bin` to
+your `PATH` to use `rb` going forward.
 
 To start fresh instead of cloning an existing repo:
 
@@ -21,9 +22,28 @@ To start fresh instead of cloning an existing repo:
 sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init
 ```
 
-This creates `~/.local/share/rootbeer/source/` with a starter `rootbeer.lua`
-manifest. This directory is your dotfiles repo — commit it, push it, clone
-it on another machine.
+This creates `~/.config/rootbeer/` with a starter `init.lua` manifest. This
+directory is your dotfiles repo — commit it, push it, clone it on another
+machine.
+
+### Private repos and SSH
+
+The bootstrap clones over HTTPS by default. If your SSH keys are already
+set up, use `--ssh`:
+
+```bash
+sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init --ssh tale/dotfiles
+```
+
+You can also pass a full git URL directly:
+
+```bash
+sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init git@github.com:tale/dotfiles.git
+```
+
+If you bootstrap over HTTPS and want to switch to SSH later, use
+`rb remote ssh` or declare the remote in your config with `rb.remote()` —
+see [Core Concepts](/guide/core-concepts#source-remote).
 
 ## Your First Config
 

@@ -65,6 +65,12 @@ function rootbeer.is_file(path) end
 --- @return boolean
 function rootbeer.is_dir(path) end
 
+--- Sets the `origin` remote URL for the rootbeer source directory.
+--- The change is deferred until the apply stage. Idempotent — skipped when
+--- the current URL already matches.
+--- @param url string The desired remote URL (any git URL).
+function rootbeer.remote(url) end
+
 
 --- @class rootbeer.Secret
 rootbeer.secret = {}

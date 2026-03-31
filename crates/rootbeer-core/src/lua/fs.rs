@@ -127,5 +127,17 @@ pub(crate) fn register(lua: &Lua, table: &Table) -> LuaResult<()> {
         })?,
     )?;
 
+    table.set(
+        "remote",
+        lua.create_function(|lua, url: String| {
+            let (runtime, run) = super::ctx(lua);
+            run.lock().push(Op::SetRemoteUrl {
+                dir: runtime.script_dir.clone(),
+                url,
+            });
+            Ok(())
+        })?,
+    )?;
+
     Ok(())
 }

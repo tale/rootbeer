@@ -16,6 +16,9 @@ Install and bootstrap in one command:
 # Clone an existing dotfiles repo
 sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init tale/dotfiles
 
+# Clone via SSH (if keys are already set up)
+sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init --ssh tale/dotfiles
+
 # Or start fresh
 sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init
 ```

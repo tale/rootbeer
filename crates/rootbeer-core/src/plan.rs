@@ -15,4 +15,8 @@ pub enum Op {
         args: Vec<String>,
         cwd: PathBuf,
     },
+    SetRemoteUrl {
+        dir: PathBuf,
+        url: String,
+    },
 }

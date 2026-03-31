@@ -50,6 +50,25 @@ rb.link_file("config/nvim", "~/.config/nvim")
 Symlinks are idempotent — if the link already points to the right place,
 nothing happens. Stale links are replaced.
 
+## Source Remote
+
+`rb.remote()` declares the desired `origin` URL for the rootbeer source
+directory. This is useful when you bootstrap over HTTPS on a fresh machine
+and want to switch to SSH once keys are in place:
+
+```lua
+rb.remote("git@github.com:tale/dotfiles.git")
+```
+
+The change is idempotent — if the remote already matches, nothing happens.
+You can also switch remotes manually at any time with the CLI:
+
+```bash
+rb remote ssh    # rewrite GitHub origin to SSH
+rb remote https  # rewrite GitHub origin to HTTPS
+rb remote        # print current origin URL
+```
+
 ## Conditionals
 
 There's no special API for conditionals — your config is just Lua. The

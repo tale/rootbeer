@@ -12,6 +12,10 @@ pub struct Args {
     /// Overwrite a pre-existing config directory (use with caution!)
     #[arg(short, long)]
     pub force: bool,
+
+    /// Clone GitHub shorthand repos via SSH instead of HTTPS
+    #[arg(long)]
+    pub ssh: bool,
 }
 
 const STARTER_MANIFEST: &str = r#"local rb = require("rootbeer")
@@ -100,7 +104,11 @@ pub fn run(args: Args) {
         InitSource::Local(path) => init_from_local(&path, &dest),
 
         InitSource::GitHub(shorthand) => {
-            let url = format!("https://github.com/{shorthand}.git");
+            let url = if args.ssh {
+                format!("git@github.com:{shorthand}.git")
+            } else {
+                format!("https://github.com/{shorthand}.git")
+            };
             clone_git(&url, &dest);
             println!("initialized from {shorthand} at {}", dest.display());
         }
@@ -151,6 +159,9 @@ fn clone_git(url: &str, dest: &Path) {
 
     if !status.success() {
         eprintln!("error: git clone failed");
+        eprintln!("hint: if this is a private repo, try one of:");
+        eprintln!("  rb init --ssh user/repo");
+        eprintln!("  rb init git@github.com:user/repo.git");
         std::process::exit(1);
     }
 

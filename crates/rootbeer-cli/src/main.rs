@@ -2,6 +2,7 @@ mod apply;
 mod cd;
 mod edit;
 mod init;
+mod remote;
 mod typegen;
 
 use std::path::PathBuf;
@@ -41,6 +42,9 @@ enum Commands {
 
     /// Apply the rootbeer configuration
     Apply(apply::Args),
+
+    /// View or change the git remote protocol for the source directory
+    Remote(remote::Args),
 }
 
 fn main() {
@@ -51,5 +55,6 @@ fn main() {
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),
         Commands::Apply(args) => apply::run(args, cli.lua_dir.as_ref()),
+        Commands::Remote(args) => remote::run(args),
     }
 }
