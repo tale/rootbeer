@@ -116,15 +116,17 @@ pub fn embedded_modules() -> &'static [(&'static str, &'static str)] {
 #[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
 pub(crate) struct EmbeddedRequirer {
     inner: TextRequirer,
+    script_dir: PathBuf,
     path: Vec<String>,
     in_alias: bool,
 }
 
 #[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
 impl EmbeddedRequirer {
-    pub fn new() -> Self {
+    pub fn new(script_dir: PathBuf) -> Self {
         Self {
             inner: TextRequirer::new(),
+            script_dir,
             path: Vec::new(),
             in_alias: false,
         }
@@ -208,7 +210,11 @@ impl Require for EmbeddedRequirer {
     }
 
     fn config(&self) -> io::Result<Vec<u8>> {
-        Ok(format!(r#"{{"aliases":{{"rootbeer":"{EMBEDDED_SENTINEL}"}}}}"#).into_bytes())
+        Ok(format!(
+            r#"{{"aliases":{{"rootbeer":"{EMBEDDED_SENTINEL}","source":"{}"}}}}"#,
+            self.script_dir.display()
+        )
+        .into_bytes())
     }
 
     fn loader(&self, lua: &Lua) -> Result<Function> {

@@ -82,7 +82,7 @@ fn make_require_fn(
     {
         let default_dir = std::path::PathBuf::from(env!("ROOTBEER_LUA_DIR"));
         if lua_dir == default_dir {
-            return lua.create_require_function(EmbeddedRequirer::new());
+            return lua.create_require_function(EmbeddedRequirer::new(script_dir));
         }
     }
 
