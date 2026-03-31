@@ -91,7 +91,11 @@ pub fn run() {
         });
 
     cleanup(&tmpdir);
-    println!("rootbeer updated to latest nightly");
+    println!(
+        "rootbeer updated to latest nightly (was: {})",
+        env!("RB_BUILD_TIMESTAMP")
+    );
+    println!("run `rb --version` to see the new build timestamp");
 }
 
 fn cleanup(dir: &std::path::Path) {

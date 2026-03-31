@@ -11,7 +11,13 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "rb", version, about, long_about = None, max_term_width = 80)]
+#[command(
+    name = "rb",
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("RB_BUILD_TIMESTAMP"), ")"),
+    about,
+    long_about = None,
+    max_term_width = 80
+)]
 /// A command-line tool to deterministically manage your system using Lua!
 struct Cli {
     #[command(subcommand)]
