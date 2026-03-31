@@ -36,18 +36,17 @@ impl Require for FsRequirer {
     }
 
     fn reset(&mut self, chunk_name: &str) -> std::result::Result<(), NavigateError> {
-        // TextRequirer's resolve_module probes extensions (.lua, .luau) on the
-        // chunk path. If the chunk name already contains an extension (e.g.
-        // `@.../init.lua`), it tries `init.lua.lua` which doesn't exist.
-        // Strip .lua/.luau extensions before delegating.
+        // TextRequirer probes `.lua`/`.luau` extensions automatically. If the
+        // chunk name already contains one (e.g. `@.../init.lua`), it would try
+        // `init.lua.lua` which doesn't exist. Strip the extension before
+        // delegating so the probe finds the correct file.
         //
-        // Additionally, resolve_module treats bare `init` specially — it skips
-        // extension probing and only checks if the path is a directory. After
-        // stripping `init.lua` → `init`, the path is neither a file nor a
-        // directory. Use the parent directory instead: resolve_module finds
-        // the init.lua inside it.
-        if let Some(chunk_name) = chunk_name.strip_prefix('@') {
-            let path = Path::new(&chunk_name[1..]);
+        // Luau treats bare `init` as a directory marker — resolve_module only
+        // checks if the path is a directory, which fails for a file stem. Use
+        // the parent directory instead: resolve_module will find `init.lua`
+        // inside it, and relative requires (`./foo`) resolve correctly.
+        if let Some(rest) = chunk_name.strip_prefix('@') {
+            let path = Path::new(rest);
             let ext = path.extension().and_then(|e| e.to_str());
 
             if ext == Some("lua") || ext == Some("luau") {

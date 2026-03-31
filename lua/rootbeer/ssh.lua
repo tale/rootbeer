@@ -1,7 +1,7 @@
 --- @class ssh
 local M = {}
 
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 
 --- @class ssh.Config
 --- @field path? string Where to write the SSH config. Defaults to `"~/.ssh/config"`.

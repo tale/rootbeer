@@ -53,16 +53,15 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
     // layer rejects paths that don't start with @, ./, or ../ so the
     // translation must happen before the path reaches it.
     let require_fn = lua.create_function(move |_lua, path: String| {
-        let translated =
-            if !path.starts_with('@') && !path.starts_with("./") && !path.starts_with("../") {
-                if path == "rootbeer" || path.starts_with("rootbeer.") {
-                    format!("@{}", path.replace('.', "/"))
-                } else {
-                    format!("@source/{}", path.replace('.', "/"))
-                }
-            } else {
-                path
-            };
+        let translated = if path.starts_with('@') || path.starts_with("../") {
+            path
+        } else if path == "rootbeer" || path.starts_with("rootbeer.") {
+            format!("@{}", path.replace('.', "/"))
+        } else if let Some(rest) = path.strip_prefix("./") {
+            format!("@source/{rest}")
+        } else {
+            format!("@source/{}", path.replace('.', "/"))
+        };
 
         inner_require.call::<mlua::Value>(translated)
     })?;

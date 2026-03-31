@@ -90,7 +90,10 @@ impl Pipeline {
         };
 
         let source = fs::read_to_string(runtime.script_dir.join(&runtime.script_name))?;
-        let chunk_name = format!("@{}", runtime.script_dir.display());
+        let chunk_name = format!(
+            "@{}",
+            runtime.script_dir.join(&runtime.script_name).display()
+        );
         let lua = crate::lua::create_vm(runtime)?;
         lua.load(&source).set_name(&chunk_name).exec()?;
 

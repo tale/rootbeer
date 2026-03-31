@@ -1,7 +1,7 @@
 --- @class brew
 local M = {}
 
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 
 --- @class brew.Config
 --- @field path? string Where to write the Brewfile. Defaults to `"~/.config/Brewfile"`.

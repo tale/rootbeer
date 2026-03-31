@@ -1,7 +1,7 @@
 --- @class git
 local M = {}
 
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 
 --- @class git.Config
 --- @field path? string Where to write the gitconfig file. Defaults to `"~/.gitconfig"`.

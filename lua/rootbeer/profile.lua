@@ -1,7 +1,7 @@
 --- @class profile
 local M = {}
 
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 
 --- Collects and sorts the keys of the given map for error messages.
 --- @param map table<string, any>

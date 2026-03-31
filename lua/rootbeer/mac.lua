@@ -1,7 +1,7 @@
 --- @class mac
 local M = {}
 
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 
 --- @class mac.DefaultEntry
 --- @field domain string The defaults domain (e.g. `"com.apple.dock"`, `"NSGlobalDomain"`).

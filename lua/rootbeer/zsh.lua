@@ -1,7 +1,7 @@
 --- @class zsh
 local M = {}
 
-local rb = require("@rootbeer")
+local rb = require("rootbeer")
 
 --- @class zsh.Config
 --- @field dir? string ZDOTDIR path. Defaults to `"~/.config/zsh"`. All zsh files are written here and a bootstrap `~/.zshenv` is created to set `ZDOTDIR`.

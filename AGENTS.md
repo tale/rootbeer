@@ -24,20 +24,17 @@ different tools built around these assumptions defined below.
 
 ## Require Syntax
 
-Two require styles are supported at runtime — Luau-native `@`-prefixed paths
-and standard Lua dot-separated paths:
+Standard Lua dot-separated require paths are used **everywhere** — stdlib
+modules, user scripts, docs, and examples:
 
-- `require("rootbeer.git")` — dot syntax, preferred in **all user-facing code**
-  (docs, examples, test files). Works natively with lua-language-server for
-  autocomplete and type checking.
-- `require("@rootbeer/git")` — Luau-native syntax, used **only in internal
-  stdlib modules** (`lua/rootbeer/*.lua`). These files run inside Luau where
-  `@` aliases are first-class.
+- `require("rootbeer.git")` — dot syntax, used in **all** code.
+- `require("helper")` — resolves from the user's source directory.
 
-A Rust-level require wrapper in `vm.rs` translates dot paths to `@` paths
-before they reach Luau's C++ layer (which only accepts `@`, `./`, `../`
-prefixes). This means both styles work everywhere at runtime, but docs and
-examples must always use dot syntax for LuaLS compatibility.
+A Rust-level require wrapper in `vm.rs` translates dot paths to Luau-native
+`@`-prefixed paths before they reach Luau's C++ layer. This is a hidden
+implementation detail — all Lua files look like vanilla Lua and work with
+lua-language-server without special configuration. Never use `@`-prefixed
+paths in `.lua` files.
 
 The LSP setup (`rb lsp` / `rb init`) writes type definitions to
 `~/.local/share/rootbeer/typedefs/` and a `.luarc.json` with
