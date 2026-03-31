@@ -1,0 +1,131 @@
+name: Deploy
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      source: ${{ steps.filter.outputs.source }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Detect source changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            source:
+              - 'crates/**'
+              - 'lua/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.source == 'true'
+    strategy:
+      matrix:
+        include:
+          - name: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+          - name: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+          - name: macos-aarch64
+            target: aarch64-apple-darwin
+          - name: macos-x86_64
+            target: x86_64-apple-darwin
+    runs-on: ${{ contains(matrix.target, 'apple') && 'macos-latest' || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: rb-${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/rb
+
+  deploy:
+    name: Deploy
+    needs: [changes, build]
+    if: always() && !failure() && !cancelled()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install mise
+        uses: jdx/mise-action@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build site
+        run: pnpm build
+
+      - name: Download artifacts
+        if: needs.changes.outputs.source == 'true'
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+
+      - name: Package nightly binaries
+        if: needs.changes.outputs.source == 'true'
+        run: |
+          mkdir -p .vitepress/dist/nightly
+          for name in linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64; do
+            (cd "artifacts/rb-${name}" && zip "../../.vitepress/dist/nightly/rb-${name}.zip" rb)
+          done
+
+      - name: Preserve existing nightly binaries
+        if: needs.changes.outputs.source != 'true'
+        run: |
+          mkdir -p .vitepress/dist/nightly
+          for name in linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64; do
+            curl -fsSL "https://rootbeer.tale.me/nightly/rb-${name}.zip" \
+              -o ".vitepress/dist/nightly/rb-${name}.zip" || true
+          done
+
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .vitepress/dist
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

@@ -1,12 +1,9 @@
 #!/bin/sh
 # Rootbeer nightly installer
-# Usage: sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init --apply tale
+# Usage: sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init tale/dotfiles
 set -e
 
-REPO="tale/rootbeer"
-BRANCH="main"
-WORKFLOW="build"
-BASE_URL="https://nightly.link/${REPO}/workflows/${WORKFLOW}/${BRANCH}"
+BASE_URL="https://rootbeer.tale.me/nightly"
 INSTALL_DIR="${HOME}/.rootbeer/bin"
 
 detect_platform() {
@@ -36,8 +33,8 @@ detect_platform() {
 
 main() {
 	platform=$(detect_platform)
-	artifact="rb-${platform}"
-	url="${BASE_URL}/${artifact}.zip"
+	artifact="rb-${platform}.zip"
+	url="${BASE_URL}/${artifact}"
 
 	tmpdir=$(mktemp -d)
 	trap 'rm -rf "$tmpdir"' EXIT
@@ -58,8 +55,8 @@ main() {
 
 	if [ $# -gt 0 ]; then
 		echo ""
-		echo "running: rb $*"
-		"${INSTALL_DIR}/rb" "$@"
+		echo "running: ${INSTALL_DIR}/rb $*"
+		PATH="${INSTALL_DIR}:$PATH" "${INSTALL_DIR}/rb" "$@"
 	fi
 }
 

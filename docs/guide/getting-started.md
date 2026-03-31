@@ -12,9 +12,15 @@ Install rootbeer and bootstrap a dotfiles repo in one command:
 sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init tale/dotfiles
 ```
 
-This installs `rb` to `~/.rootbeer/bin/`, clones your repo into
-`~/.config/rootbeer/`, and you're ready to apply. Add `~/.rootbeer/bin` to
-your `PATH` to use `rb` going forward.
+This installs the latest nightly `rb` to `~/.rootbeer/bin/`, clones your repo
+into `~/.config/rootbeer/`, and you're ready to apply. Add `~/.rootbeer/bin`
+to your `PATH` to use `rb` going forward.
+
+To update to the latest nightly at any time:
+
+```bash
+rb update
+```
 
 To start fresh instead of cloning an existing repo:
 
