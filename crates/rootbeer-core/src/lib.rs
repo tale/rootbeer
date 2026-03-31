@@ -64,13 +64,47 @@ pub fn script_path() -> PathBuf {
 pub enum Error {
     Io(std::io::Error),
     Lua(mlua::Error),
+    /// The Lua script requires a profile but none was provided (or the
+    /// provided profile didn't match any entry).
+    ProfileRequired {
+        active: Option<String>,
+        profiles: Vec<String>,
+    },
 }
 
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Io(e) => write!(f, "{e}"),
-            Error::Lua(e) => write!(f, "{e}"),
+            Error::Lua(e) => {
+                // Extract just the first meaningful line from Lua runtime
+                // errors, dropping the "runtime error:" prefix and stack trace.
+                let msg = e.to_string();
+                let msg = msg
+                    .strip_prefix("runtime error: ")
+                    .unwrap_or(&msg)
+                    .split("\nstack traceback:")
+                    .next()
+                    .unwrap_or(&msg)
+                    .replace("@source/", "")
+                    .replace("@rootbeer/", "rootbeer.");
+                write!(f, "{msg}")
+            }
+            Error::ProfileRequired { active, profiles } => {
+                if let Some(name) = active {
+                    write!(
+                        f,
+                        "unknown profile '{name}', expected one of: {}",
+                        profiles.join(", ")
+                    )
+                } else {
+                    write!(
+                        f,
+                        "a profile is required, expected one of: {}",
+                        profiles.join(", ")
+                    )
+                }
+            }
         }
     }
 }

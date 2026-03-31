@@ -95,7 +95,9 @@ impl Pipeline {
             runtime.script_dir.join(&runtime.script_name).display()
         );
         let lua = crate::lua::create_vm(runtime)?;
-        lua.load(&source).set_name(&chunk_name).exec()?;
+        if let Err(e) = lua.load(&source).set_name(&chunk_name).exec() {
+            return Err(parse_profile_error(&e).unwrap_or_else(|| e.into()));
+        }
 
         let ops = lua
             .remove_app_data::<crate::lua::Run>()
@@ -107,6 +109,31 @@ impl Pipeline {
             ops,
         })
     }
+}
+
+const PROFILE_SENTINEL: &str = "__rb_profile_required:";
+
+/// Check if a Lua error contains a structured profile-required sentinel
+/// and convert it to `Error::ProfileRequired`.
+fn parse_profile_error(e: &mlua::Error) -> Option<Error> {
+    // The sentinel may be wrapped in CallbackError, RuntimeError, etc.
+    // Search the full error string for the sentinel line.
+    let full = e.to_string();
+    let sentinel_start = full.find(PROFILE_SENTINEL)?;
+    let rest = &full[sentinel_start + PROFILE_SENTINEL.len()..];
+    let first_line = rest.split('\n').next()?;
+    let (active, profiles_str) = first_line.split_once(':')?;
+    let active = if active.is_empty() {
+        None
+    } else {
+        Some(active.to_string())
+    };
+    let profiles = profiles_str
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    Some(Error::ProfileRequired { active, profiles })
 }
 
 /// A pipeline that has been planned — ops are collected, ready to execute.

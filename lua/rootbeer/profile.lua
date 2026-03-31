@@ -44,7 +44,7 @@ function M.config(map)
 
 	local path = map[name]
 	if path == nil then
-		error("unknown profile '" .. name .. "', expected one of: " .. table.concat(sorted_keys(map), ", "))
+		error("__rb_profile_required:" .. name .. ":" .. table.concat(sorted_keys(map), ","), 0)
 	end
 
 	require(path:gsub("%.lua$", ""))
@@ -76,11 +76,8 @@ function M.select(map)
 		return map.default
 	end
 
-	if name == nil then
-		error("profile.select: no profile is active and no default was provided")
-	end
-
-	error("profile.select: no match for profile '" .. name .. "' and no default (known: " .. table.concat(sorted_keys(map), ", ") .. ")")
+	local profiles = sorted_keys(map)
+	error("__rb_profile_required:" .. (name or "") .. ":" .. table.concat(profiles, ","), 0)
 end
 
 --- Runs `fn` only when the active profile matches.

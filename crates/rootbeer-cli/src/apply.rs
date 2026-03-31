@@ -109,7 +109,26 @@ pub fn run(args: Args, lua_dir: Option<&PathBuf>) {
     );
 
     let planned = pipeline.plan().unwrap_or_else(|e| {
-        eprintln!("{} error: {e}", "✗".red().bold());
+        if let rootbeer_core::Error::ProfileRequired { active, profiles } = &e {
+            match active {
+                Some(name) => eprintln!(
+                    "{} unknown profile '{}', expected one of: {}",
+                    "✗".red().bold(),
+                    name,
+                    profiles.join(", ")
+                ),
+                None => eprintln!(
+                    "{} a profile is required for this configuration",
+                    "✗".red().bold(),
+                ),
+            }
+            eprintln!(
+                "hint: run {} with a profile name",
+                format!("rb apply <{}>", profiles.join("|")).cyan()
+            );
+        } else {
+            eprintln!("{} error: {e}", "✗".red().bold());
+        }
         std::process::exit(1);
     });
 
