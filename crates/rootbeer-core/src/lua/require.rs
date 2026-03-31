@@ -2,6 +2,36 @@ use mlua::{Function, Lua, NavigateError, Require, Result, TextRequirer};
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Normalize a chunk name for TextRequirer's `reset()`.
+///
+/// TextRequirer probes `.lua`/`.luau` extensions automatically. If the chunk
+/// name already carries one (e.g. `@.../init.lua`) it would try `init.lua.lua`
+/// which doesn't exist. Additionally, Luau treats bare `init` as a directory
+/// marker — `resolve_module` only checks if the path *is* a directory, which
+/// fails for a bare file stem. We use the parent directory instead so that
+/// `resolve_module` finds `init.lua` inside it and relative requires resolve
+/// correctly.
+fn normalize_chunk_name(chunk_name: &str) -> Option<String> {
+    let rest = chunk_name.strip_prefix('@')?;
+    let path = Path::new(rest);
+    let ext = path.extension().and_then(|e| e.to_str());
+
+    if ext == Some("lua") || ext == Some("luau") {
+        let stripped = path.with_extension("");
+        let stem = stripped.file_name().and_then(|s| s.to_str());
+
+        if stem == Some("init") {
+            if let Some(parent) = stripped.parent() {
+                return Some(format!("@{}", parent.display()));
+            }
+        }
+
+        return Some(format!("@{}", stripped.display()));
+    }
+
+    None
+}
+
 /// A custom Require implementation that wraps TextRequirer and injects
 /// a synthetic `@rootbeer` alias pointing to `<lua_dir>/rootbeer`.
 /// This avoids needing a `.luaurc` file on disk.
@@ -36,31 +66,8 @@ impl Require for FsRequirer {
     }
 
     fn reset(&mut self, chunk_name: &str) -> std::result::Result<(), NavigateError> {
-        // TextRequirer probes `.lua`/`.luau` extensions automatically. If the
-        // chunk name already contains one (e.g. `@.../init.lua`), it would try
-        // `init.lua.lua` which doesn't exist. Strip the extension before
-        // delegating so the probe finds the correct file.
-        //
-        // Luau treats bare `init` as a directory marker — resolve_module only
-        // checks if the path is a directory, which fails for a file stem. Use
-        // the parent directory instead: resolve_module will find `init.lua`
-        // inside it, and relative requires (`./foo`) resolve correctly.
-        if let Some(rest) = chunk_name.strip_prefix('@') {
-            let path = Path::new(rest);
-            let ext = path.extension().and_then(|e| e.to_str());
-
-            if ext == Some("lua") || ext == Some("luau") {
-                let stripped = path.with_extension("");
-                let stem = stripped.file_name().and_then(|s| s.to_str());
-
-                if stem == Some("init") {
-                    if let Some(parent) = stripped.parent() {
-                        return self.inner.reset(&format!("@{}", parent.display()));
-                    }
-                }
-
-                return self.inner.reset(&format!("@{}", stripped.display()));
-            }
+        if let Some(normalized) = normalize_chunk_name(chunk_name) {
+            return self.inner.reset(&normalized);
         }
         self.inner.reset(chunk_name)
     }
@@ -152,6 +159,10 @@ impl Require for EmbeddedRequirer {
     fn reset(&mut self, chunk_name: &str) -> std::result::Result<(), NavigateError> {
         self.path.clear();
         self.in_alias = false;
+
+        if let Some(normalized) = normalize_chunk_name(chunk_name) {
+            return self.inner.reset(&normalized);
+        }
         self.inner.reset(chunk_name)
     }
 
@@ -229,5 +240,79 @@ impl Require for EmbeddedRequirer {
         } else {
             self.inner.loader(lua)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_lua_extension() {
+        assert_eq!(
+            normalize_chunk_name("@/home/user/.config/rootbeer/modules/git.lua"),
+            Some("@/home/user/.config/rootbeer/modules/git".into()),
+        );
+    }
+
+    #[test]
+    fn strips_luau_extension() {
+        assert_eq!(
+            normalize_chunk_name("@/home/user/.config/rootbeer/modules/git.luau"),
+            Some("@/home/user/.config/rootbeer/modules/git".into()),
+        );
+    }
+
+    #[test]
+    fn init_lua_resolves_to_parent() {
+        assert_eq!(
+            normalize_chunk_name("@/home/user/.config/rootbeer/modules/nvim/init.lua"),
+            Some("@/home/user/.config/rootbeer/modules/nvim".into()),
+        );
+    }
+
+    #[test]
+    fn init_luau_resolves_to_parent() {
+        assert_eq!(
+            normalize_chunk_name("@/home/user/.config/rootbeer/modules/nvim/init.luau"),
+            Some("@/home/user/.config/rootbeer/modules/nvim".into()),
+        );
+    }
+
+    #[test]
+    fn no_extension_passthrough() {
+        assert_eq!(
+            normalize_chunk_name("@/home/user/.config/rootbeer/modules/git"),
+            None,
+        );
+    }
+
+    #[test]
+    fn non_lua_extension_passthrough() {
+        assert_eq!(
+            normalize_chunk_name("@/home/user/.config/rootbeer/data.json"),
+            None,
+        );
+    }
+
+    #[test]
+    fn no_at_prefix_returns_none() {
+        assert_eq!(normalize_chunk_name("modules/git.lua"), None);
+    }
+
+    #[test]
+    fn rootbeer_alias_path_with_extension() {
+        assert_eq!(
+            normalize_chunk_name("@rootbeer/git.lua"),
+            Some("@rootbeer/git".into()),
+        );
+    }
+
+    #[test]
+    fn source_alias_init() {
+        assert_eq!(
+            normalize_chunk_name("@source/modules/nvim/init.lua"),
+            Some("@source/modules/nvim".into()),
+        );
     }
 }
