@@ -1,7 +1,3 @@
----
-outline: deep
----
-
 # Core API
 
 The core module provides the low-level primitives that all other modules build

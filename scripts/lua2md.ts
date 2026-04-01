@@ -188,13 +188,64 @@ function buildModules(entries: DocEntry[]): Map<string, ModulePage> {
     }
   }
 
+  // Deduplicate functions within each module (keep first occurrence by name)
+  for (const mod of modules.values()) {
+    const seen = new Set<string>();
+    mod.functions = mod.functions.filter((f) => {
+      if (seen.has(f.name)) return false;
+      seen.add(f.name);
+      return true;
+    });
+  }
+
   return modules;
 }
 
 // ── Rendering ──────────────────────────────────────────────────────
 
-function escapeCell(s: string): string {
-  return s.replace(/\|/g, "\\|");
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Convert a description string (which may contain markdown backtick spans) to HTML.
+ *  Backtick spans become <code> tags; text outside backticks is HTML-escaped. */
+function descToHtml(s: string): string {
+  if (!s) return "";
+  return s.replace(/`([^`]+)`|([^`]+)/g, (_, code, text) => {
+    if (code !== undefined) return `<code>${escapeHtml(code)}</code>`;
+    return escapeHtml(text);
+  });
+}
+
+function renderField(f: { name: string; view: string; desc: string; optional: boolean }): string {
+  const lines: string[] = [];
+  lines.push(`<div class="api-field">`);
+  lines.push(`  <div class="api-field-header">`);
+  lines.push(`    <code class="api-field-name">${escapeHtml(f.name)}</code>`);
+  lines.push(`    <code class="api-field-type">${escapeHtml(f.view)}</code>`);
+  if (f.optional) {
+    lines.push(`    <span class="api-field-badge">optional</span>`);
+  }
+  lines.push(`  </div>`);
+  lines.push(`  <div class="api-field-desc">${descToHtml(f.desc)}</div>`);
+  lines.push(`</div>`);
+  return lines.join("\n");
+}
+
+function renderFields(
+  fields: { name: string; view: string; desc: string; optional: boolean }[],
+): string {
+  const lines: string[] = [];
+  lines.push("");
+  lines.push(`<div class="api-fields">`);
+  lines.push("");
+  for (const f of fields) {
+    lines.push(renderField(f));
+    lines.push("");
+  }
+  lines.push(`</div>`);
+  lines.push("");
+  return lines.join("\n");
 }
 
 function renderSnippet(mod: ModulePage): string {
@@ -210,57 +261,48 @@ function renderSnippet(mod: ModulePage): string {
       out.push("");
     }
 
-    // Check if any arg references a known class
     const classArgs = func.args.filter((a) => mod.classes.some((c) => c.name === a.view));
     const plainArgs = func.args.filter((a) => !mod.classes.some((c) => c.name === a.view));
 
-    if (plainArgs.length) {
-      out.push("**Parameters:**");
-      out.push("");
-      out.push("| Name | Type | Description |");
-      out.push("|------|------|-------------|");
-      for (const a of plainArgs) {
-        out.push(`| \`${a.name}\` | \`${escapeCell(a.view)}\` | ${escapeCell(a.desc ?? "")} |`);
+    // Single class-typed arg with no plain args: render class fields directly
+    if (classArgs.length === 1 && plainArgs.length === 0) {
+      const cls = mod.classes.find((c) => c.name === classArgs[0].view)!;
+      out.push(renderFields(cls.fields));
+    } else {
+      // Plain args first
+      if (plainArgs.length) {
+        const fields = plainArgs.map((a) => ({
+          name: a.name,
+          view: a.view,
+          desc: a.desc ?? "",
+          optional: false,
+        }));
+        out.push(renderFields(fields));
       }
-      out.push("");
-    }
 
-    for (const a of classArgs) {
-      const cls = mod.classes.find((c) => c.name === a.view)!;
-      out.push(`**\`${a.name}\`** \`${escapeCell(a.view)}\` — ${escapeCell(a.desc ?? "")}`);
-      out.push("");
-      out.push("| Name | Type | Description |");
-      out.push("|------|------|-------------|");
-      for (const f of cls.fields) {
-        const badge = f.optional ? " *(optional)*" : "";
-        out.push(`| \`${f.name}\`${badge} | \`${escapeCell(f.view)}\` | ${escapeCell(f.desc)} |`);
+      // Class args with sub-headings
+      for (const a of classArgs) {
+        const cls = mod.classes.find((c) => c.name === a.view)!;
+        out.push(`#### \`${escapeHtml(a.name)}\` \`${escapeHtml(a.view)}\``);
+        out.push("");
+        out.push(renderFields(cls.fields));
       }
-      out.push("");
     }
 
     if (func.returns.length) {
-      out.push("**Returns:**");
-      out.push("");
       for (const r of func.returns) {
         const cls = mod.classes.find((c) => c.name === r.view);
         if (cls) {
-          const desc = r.desc ? ` — ${r.desc}` : "";
-          out.push(`\`${escapeCell(r.view)}\`${desc}`);
+          const desc = r.desc ? ` — ${descToHtml(r.desc)}` : "";
+          out.push(`<div class="api-returns"><code>${escapeHtml(r.view)}</code>${desc}</div>`);
           out.push("");
-          out.push("| Name | Type | Description |");
-          out.push("|------|------|-------------|");
-          for (const f of cls.fields) {
-            const badge = f.optional ? " *(optional)*" : "";
-            out.push(
-              `| \`${f.name}\`${badge} | \`${escapeCell(f.view)}\` | ${escapeCell(f.desc)} |`,
-            );
-          }
+          out.push(renderFields(cls.fields));
         } else {
-          const desc = r.desc ? ` — ${r.desc}` : "";
-          out.push(`- \`${escapeCell(r.view)}\`${desc}`);
+          const desc = r.desc ? ` — ${descToHtml(r.desc)}` : "";
+          out.push(`<div class="api-returns"><code>${escapeHtml(r.view)}</code>${desc}</div>`);
+          out.push("");
         }
       }
-      out.push("");
     }
   }
 
@@ -279,13 +321,7 @@ function renderSnippet(mod: ModulePage): string {
     if (referencedClasses.has(cls.name)) continue;
     out.push(`### \`${cls.name}\``);
     out.push("");
-    out.push("| Name | Type | Description |");
-    out.push("|------|------|-------------|");
-    for (const f of cls.fields) {
-      const badge = f.optional ? " *(optional)*" : "";
-      out.push(`| \`${f.name}\`${badge} | \`${escapeCell(f.view)}\` | ${escapeCell(f.desc)} |`);
-    }
-    out.push("");
+    out.push(renderFields(cls.fields));
   }
 
   return out.join("\n") + "\n";

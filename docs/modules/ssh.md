@@ -1,7 +1,3 @@
----
-outline: deep
----
-
 # ssh
 
 Declarative SSH configuration. Define your includes, host blocks, and global

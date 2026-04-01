@@ -1,7 +1,3 @@
----
-outline: deep
----
-
 # brew
 
 Declarative Homebrew package management. Define your formulae, casks, and Mac

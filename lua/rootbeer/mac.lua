@@ -149,10 +149,10 @@ function M.finder(cfg)
 end
 
 --- @class mac.HotCorner
---- @field top_left? mac.HotCornerAction
---- @field top_right? mac.HotCornerAction
---- @field bottom_left? mac.HotCornerAction
---- @field bottom_right? mac.HotCornerAction
+--- @field top_left? mac.HotCornerAction Action for top-left corner.
+--- @field top_right? mac.HotCornerAction Action for top-right corner.
+--- @field bottom_left? mac.HotCornerAction Action for bottom-left corner.
+--- @field bottom_right? mac.HotCornerAction Action for bottom-right corner.
 
 --- @alias mac.HotCornerAction
 --- | "disabled"

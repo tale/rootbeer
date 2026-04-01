@@ -1,0 +1,389 @@
+/* ── Brutalist / Blocky Theme ─────────────────────────────────────── */
+
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root {
+  /* ── Typography ──────────────────────────────────────────────── */
+  --vp-font-family-base: "Space Grotesk", system-ui, -apple-system, sans-serif;
+  --vp-font-family-mono: "JetBrains Mono", ui-monospace, "Menlo", monospace;
+
+  /* ── Brand: warm amber accent ────────────────────────────────── */
+  --vp-c-brand-1: #c05621;
+  --vp-c-brand-2: #d4652b;
+  --vp-c-brand-3: #e07435;
+  --vp-c-brand-soft: rgba(192, 86, 33, 0.12);
+
+  /* ── Backgrounds ─────────────────────────────────────────────── */
+  --vp-c-bg: #faf9f7;
+  --vp-c-bg-alt: #f0eeeb;
+  --vp-c-bg-elv: #ffffff;
+  --vp-c-bg-soft: #eae8e4;
+
+  /* ── Borders: visible, structural ────────────────────────────── */
+  --vp-c-border: #c8c5bf;
+  --vp-c-divider: #d8d5cf;
+  --vp-c-gutter: #c8c5bf;
+
+  /* ── Text ─────────────────────────────────────────────────────── */
+  --vp-c-text-1: #1a1a1a;
+  --vp-c-text-2: #4a4a4a;
+  --vp-c-text-3: #7a7a7a;
+
+  /* ── Shadows: flat / none ────────────────────────────────────── */
+  --vp-shadow-1: none;
+  --vp-shadow-2: none;
+  --vp-shadow-3: none;
+  --vp-shadow-4: none;
+  --vp-shadow-5: none;
+
+  /* ── Buttons ─────────────────────────────────────────────────── */
+  --vp-button-brand-border: var(--vp-c-brand-1);
+  --vp-button-brand-bg: var(--vp-c-brand-3);
+  --vp-button-brand-hover-border: var(--vp-c-brand-1);
+  --vp-button-brand-hover-bg: var(--vp-c-brand-1);
+  --vp-button-alt-border: var(--vp-c-border);
+  --vp-button-alt-bg: transparent;
+  --vp-button-alt-hover-border: var(--vp-c-text-1);
+  --vp-button-alt-hover-bg: transparent;
+
+  /* ── Custom blocks: bordered, not soft ───────────────────────── */
+  --vp-custom-block-tip-border: var(--vp-c-brand-1);
+  --vp-custom-block-tip-bg: var(--vp-c-brand-soft);
+  --vp-custom-block-info-border: var(--vp-c-border);
+  --vp-custom-block-warning-border: var(--vp-c-yellow-1);
+  --vp-custom-block-danger-border: var(--vp-c-red-1);
+
+  /* ── Nav ──────────────────────────────────────────────────────── */
+  --vp-nav-bg-color: var(--vp-c-bg);
+
+  /* ── Home hero ───────────────────────────────────────────────── */
+  --vp-home-hero-name-color: var(--vp-c-text-1);
+  --vp-home-hero-name-background: none;
+}
+
+.dark {
+  --vp-c-brand-1: #e8935a;
+  --vp-c-brand-2: #d4793e;
+  --vp-c-brand-3: #c06a30;
+  --vp-c-brand-soft: rgba(232, 147, 90, 0.14);
+
+  --vp-c-bg: #141414;
+  --vp-c-bg-alt: #1c1c1c;
+  --vp-c-bg-elv: #1e1e1e;
+  --vp-c-bg-soft: #242424;
+
+  --vp-c-border: #3a3a3a;
+  --vp-c-divider: #2e2e2e;
+  --vp-c-gutter: #3a3a3a;
+
+  --vp-c-text-1: #e8e6e3;
+  --vp-c-text-2: #a8a5a0;
+  --vp-c-text-3: #6e6b66;
+
+  --vp-button-alt-bg: transparent;
+  --vp-button-alt-hover-bg: transparent;
+}
+
+/* ── Kill all border-radius ────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+
+/* ── Headings: heavy, uppercase for h1 ─────────────────────────── */
+
+.vp-doc h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  border-bottom: 3px solid var(--vp-c-text-1);
+  padding-bottom: 0.4em;
+}
+
+.vp-doc h2 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  border-bottom: 2px solid var(--vp-c-border);
+  padding-bottom: 0.3em;
+}
+
+.vp-doc h3 {
+  font-weight: 600;
+}
+
+/* ── Code blocks: thick border, no rounding ────────────────────── */
+
+.vp-doc div[class*="language-"] {
+  border: 2px solid var(--vp-c-border);
+}
+
+.vp-doc :not(pre) > code {
+  border: 1px solid var(--vp-c-border);
+  padding: 0.15em 0.35em;
+  font-weight: 500;
+}
+
+/* ── Tables: structural borders ────────────────────────────────── */
+
+.vp-doc table {
+  border: 2px solid var(--vp-c-border);
+}
+
+.vp-doc th {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.8em;
+  letter-spacing: 0.05em;
+  border-bottom: 2px solid var(--vp-c-text-1);
+}
+
+.vp-doc td {
+  border-bottom: 1px solid var(--vp-c-border);
+}
+
+/* ── Nav bar: bottom border ────────────────────────────────────── */
+
+.VPNav {
+  border-bottom: 2px solid var(--vp-c-border) !important;
+}
+
+/* ── Sidebar: right border ─────────────────────────────────────── */
+
+.VPSidebar {
+  border-right: 2px solid var(--vp-c-border) !important;
+}
+
+/* ── Custom blocks: left border accent ─────────────────────────── */
+
+.vp-doc .custom-block {
+  border: 2px solid var(--vp-c-border);
+  border-left-width: 4px;
+}
+
+.vp-doc .custom-block.tip {
+  border-left-color: var(--vp-c-brand-1);
+}
+
+.vp-doc .custom-block.warning {
+  border-left-color: var(--vp-c-yellow-1);
+}
+
+.vp-doc .custom-block.danger {
+  border-left-color: var(--vp-c-red-1);
+}
+
+/* ── Hero buttons: blocky with thick border ────────────────────── */
+
+.VPButton {
+  border: 2px solid !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.04em !important;
+  transition: transform 80ms ease, box-shadow 80ms ease !important;
+}
+
+.VPButton:hover {
+  transform: translate(-2px, -2px) !important;
+  box-shadow: 4px 4px 0 var(--vp-c-text-1) !important;
+}
+
+.VPButton:active {
+  transform: translate(0, 0) !important;
+  box-shadow: none !important;
+}
+
+/* ── Feature cards: bordered boxes ─────────────────────────────── */
+
+.VPFeature {
+  border: 2px solid var(--vp-c-border) !important;
+  transition: transform 80ms ease, box-shadow 80ms ease !important;
+}
+
+.VPFeature:hover {
+  transform: translate(-2px, -2px) !important;
+  box-shadow: 4px 4px 0 var(--vp-c-border) !important;
+}
+
+/* ── Sidebar links: blocky active state ────────────────────────── */
+
+.VPSidebarItem.is-active > .item > .indicator {
+  width: 3px !important;
+}
+
+/* ── Search input ──────────────────────────────────────────────── */
+
+.VPNavBarSearch .DocSearch-Button,
+#local-search {
+  border: 2px solid var(--vp-c-border) !important;
+}
+
+/* ── Home: hero ────────────────────────────────────────────────── */
+
+.VPHero .name {
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+}
+
+.VPHero .text {
+  font-weight: 700 !important;
+  letter-spacing: -0.02em !important;
+}
+
+.VPHero .tagline {
+  font-size: 1.1em !important;
+  color: var(--vp-c-text-2) !important;
+  max-width: 480px !important;
+}
+
+/* ── Home: feature icons ────────────────────────────────────────── */
+
+.VPFeature .icon {
+  font-size: 1.8em !important;
+}
+
+.VPFeature .title {
+  font-weight: 700 !important;
+  letter-spacing: -0.01em !important;
+}
+
+.VPFeature .details {
+  color: var(--vp-c-text-2) !important;
+}
+
+.VPFeature .link-text {
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  font-size: 0.8em !important;
+  letter-spacing: 0.06em !important;
+  color: var(--vp-c-brand-1) !important;
+}
+
+/* ── Home: code preview section ────────────────────────────────── */
+
+.home-code-preview {
+  max-width: 688px;
+  margin: 0 auto;
+  padding: 0 24px 64px;
+}
+
+.home-code-preview h2 {
+  font-weight: 700;
+  font-size: 1.4em;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  border-bottom: 3px solid var(--vp-c-text-1);
+  padding-bottom: 0.3em;
+  margin-bottom: 1.2em;
+}
+
+.home-code-preview div[class*="language-"] {
+  border: 2px solid var(--vp-c-border);
+  font-size: 0.9em;
+}
+
+@media (min-width: 640px) {
+  .home-code-preview {
+    max-width: 740px;
+  }
+}
+
+@media (min-width: 960px) {
+  .home-code-preview {
+    max-width: 900px;
+  }
+}
+
+/* ── API Reference: field cards ────────────────────────────────── */
+
+.api-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 16px 0 24px;
+  border: 2px solid var(--vp-c-border);
+}
+
+.api-field {
+  padding: 12px 16px;
+  background: var(--vp-c-bg-alt);
+  border-bottom: 1px solid var(--vp-c-border);
+}
+
+.api-field:last-child {
+  border-bottom: none;
+}
+
+.api-field-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.api-field-name {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 0.9em !important;
+  font-weight: 600 !important;
+  color: var(--vp-c-brand-1) !important;
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+.api-field-type {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 0.8em !important;
+  font-weight: 400 !important;
+  color: var(--vp-c-text-2) !important;
+  background: var(--vp-c-bg-soft) !important;
+  border: 1px solid var(--vp-c-border) !important;
+  padding: 1px 6px !important;
+}
+
+.api-field-badge {
+  font-size: 0.7em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vp-c-text-3);
+  border: 1px solid var(--vp-c-border);
+  padding: 1px 6px;
+}
+
+.api-field-desc {
+  margin-top: 4px;
+  font-size: 0.9em;
+  color: var(--vp-c-text-2);
+  line-height: 1.5;
+}
+
+.api-field-desc:empty {
+  display: none;
+}
+
+.api-field-desc code {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 0.85em !important;
+  background: var(--vp-c-bg-soft) !important;
+  border: 1px solid var(--vp-c-border) !important;
+  padding: 1px 4px !important;
+  color: var(--vp-c-text-1) !important;
+}
+
+.api-returns {
+  margin: 8px 0 24px;
+  padding: 8px 16px;
+  border-left: 3px solid var(--vp-c-brand-1);
+  background: var(--vp-c-bg-alt);
+  font-size: 0.9em;
+}
+
+.api-returns code {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 0.9em !important;
+  color: var(--vp-c-brand-1) !important;
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+}

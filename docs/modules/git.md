@@ -1,7 +1,3 @@
----
-outline: deep
----
-
 # git
 
 Declarative git configuration. Manages your `~/.gitconfig` and global gitignore

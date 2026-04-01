@@ -69,6 +69,10 @@ export default defineConfig({
       },
     ],
 
+    outline: {
+      level: "deep",
+    },
+
     socialLinks: [
       { icon: "github", link: "https://github.com/tale/rootbeer" },
       { icon: "githubsponsors", link: "https://github.com/sponsors/tale" },

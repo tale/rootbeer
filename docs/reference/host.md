@@ -1,7 +1,3 @@
----
-outline: deep
----
-
 # Host
 
 The `rb.host` table provides information about the current machine and user.

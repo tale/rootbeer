@@ -1,7 +1,3 @@
----
-outline: deep
----
-
 # Multi-Device Config
 
 ::: tip

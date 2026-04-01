@@ -1,7 +1,3 @@
----
-outline: deep
----
-
 # zsh
 
 Declarative zsh configuration. Describe your entire shell setup — environment

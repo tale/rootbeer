@@ -1,7 +1,3 @@
----
-outline: deep
----
-
 # Core Concepts
 
 ## Config is Code
