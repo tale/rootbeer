@@ -39,6 +39,14 @@ export default defineConfig({
             ],
           },
           {
+            text: "AI Coding",
+            collapsed: true,
+            items: [
+              { text: "amp", link: "/modules/amp" },
+              { text: "claude_code", link: "/modules/claude-code" },
+            ],
+          },
+          {
             text: "Package Managers",
             collapsed: true,
             items: [{ text: "brew", link: "/modules/brew" }],
