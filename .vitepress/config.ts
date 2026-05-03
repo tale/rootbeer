@@ -56,6 +56,15 @@ export default defineConfig({
             collapsed: true,
             items: [{ text: "mac", link: "/modules/mac" }],
           },
+          {
+            text: "Writers",
+            collapsed: true,
+            items: [
+              { text: "json", link: "/modules/json" },
+              { text: "toml", link: "/modules/toml" },
+              { text: "ini", link: "/modules/ini" },
+            ],
+          },
         ],
       },
       {

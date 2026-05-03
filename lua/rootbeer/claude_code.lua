@@ -105,7 +105,7 @@ function M.config(cfg)
 	-- Drop empty env table to keep output clean
 	if next(settings.env) == nil then settings.env = nil end
 
-	rb.file(path, rb.encode.json(settings) .. "\n")
+	rb.json.write(path, settings)
 end
 
 return M

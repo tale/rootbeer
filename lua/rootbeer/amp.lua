@@ -59,7 +59,7 @@ function M.config(cfg)
 		settings["amp.updates.mode"] = cfg.updates_mode
 	end
 
-	rb.file(path, rb.encode.json(settings) .. "\n")
+	rb.json.write(path, settings)
 end
 
 return M

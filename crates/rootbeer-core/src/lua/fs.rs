@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 /// Resolves a path, while handling '~' for the home directory otherwise
 /// falling back to the script directory for relative paths.
-fn resolve_path(script_dir: &Path, path: &str) -> PathBuf {
+pub(super) fn resolve_path(script_dir: &Path, path: &str) -> PathBuf {
     let expanded = if let Some(rest) = path.strip_prefix('~') {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
         if rest.is_empty() {

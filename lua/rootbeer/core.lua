@@ -80,29 +80,14 @@ rootbeer.secret = {}
 --- @return string The secret value.
 function rootbeer.secret.op(reference) end
 
---- @class rootbeer.Encode
-rootbeer.encode = {}
+--- JSON writer. See `json.lua` for the full type definition.
+--- @type rootbeer.json
+rootbeer.json = {}
 
---- Serializes a two-level table to an INI/gitconfig-formatted string.
---- Top-level keys must be tables and become `[section]` headers.
---- Scalar values within a section are emitted as `key = value`.
---- Nested table values become subsections (`[section "subsection"]`).
---- Nesting beyond two levels is ignored.
---- @param table table<string, table<string, string|number|boolean|table>> The table to serialize.
---- @return string The INI-encoded string.
-function rootbeer.encode.ini(table) end
+--- TOML writer. See `toml.lua` for the full type definition.
+--- @type rootbeer.toml
+rootbeer.toml = {}
 
---- Serializes a Lua table to a JSON string with 2-space indentation.
---- Tables with consecutive integer keys starting at 1 are encoded as arrays.
---- All other tables are encoded as objects.
---- @param table table The table to serialize.
---- @return string The JSON-encoded string.
-function rootbeer.encode.json(table) end
-
---- Serializes a Lua table to a TOML string.
---- Top-level scalar keys become key-value pairs. Nested tables become
---- `[section]` headers. Arrays of scalars use inline syntax; arrays of
---- tables use `[[array]]` syntax.
---- @param table table The table to serialize.
---- @return string The TOML-encoded string.
-function rootbeer.encode.toml(table) end
+--- INI writer (write-only). See `ini.lua` for the full type definition.
+--- @type rootbeer.ini
+rootbeer.ini = {}

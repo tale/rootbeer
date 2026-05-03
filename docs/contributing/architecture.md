@@ -35,7 +35,7 @@ The middle layer exposes Rust functionality to Lua scripts through
 | Module | Registers | Purpose |
 |--------|-----------|---------|
 | `fs.rs` | `rootbeer.file()`, `rootbeer.link_file()` | File writes and symlinks (append to the `Op` log) |
-| `serializer.rs` | `rootbeer.encode.ini()` | Data-format serializers |
+| `writer.rs` | `rootbeer.json`, `rootbeer.toml`, `rootbeer.ini` | Format writers (encode / decode / read / write) |
 | `sys.rs` | `rootbeer.data()` | Runtime system info (OS, arch, hostname, etc.) |
 
 Everything is wired together in `vm.rs`, which creates the Lua VM, registers
@@ -44,7 +44,7 @@ all modules, and sets up the custom `require` loader:
 ```rust
 let rb = lua.create_table()?;
 fs::register(&lua, &rb)?;
-serializer::register(&lua, &rb)?;
+writer::register(&lua, &rb)?;
 sys::register(&lua, &rb)?;
 lua.globals().set("rootbeer", &rb)?;
 ```
@@ -75,14 +75,14 @@ A typical module follows this pattern:
 
 1. Accept a structured config table from the user.
 2. Transform it into the format the target tool expects.
-3. Call `rootbeer.file()` or `rootbeer.encode.*()` to produce output.
+3. Call `rootbeer.file()` or a format writer (`rootbeer.json.write()`,
+   `rootbeer.toml.write()`, `rootbeer.ini.write()`, …) to produce output.
 
 For example, `git.lua` takes a `git.Config` table and:
 
 - Builds an INI structure from typed fields (`user`, `signing`, `lfs`, etc.)
 - Optionally writes a `.gitignore` alongside the config via `rootbeer.file()`
-- Serializes the result with `rootbeer.encode.ini()` and writes it with
-  `rootbeer.file()`
+- Serializes and writes the result in one step via `rootbeer.ini.write()`
 
 Each module is self-contained with its own `@class` annotations for the
 language server. Users load them via `require("rootbeer.git")`.

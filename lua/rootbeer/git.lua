@@ -128,7 +128,7 @@ function M.config(cfg)
 		end
 	end
 
-	rb.file(path, rb.encode.ini(quoted))
+	rb.ini.write(path, quoted)
 end
 
 return M

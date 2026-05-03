@@ -1,9 +1,9 @@
 mod fs;
 pub(crate) mod require;
 mod secret;
-mod serializer;
 mod sys;
 mod vm;
+mod writer;
 
 use crate::Runtime;
 use mlua::{AppDataRef, Lua};

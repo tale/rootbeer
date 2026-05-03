@@ -5,7 +5,7 @@ use mlua::{Lua, Result};
 #[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
 use crate::lua::require::EmbeddedRequirer;
 use crate::lua::require::FsRequirer;
-use crate::lua::{fs, secret, serializer, sys};
+use crate::lua::{fs, secret, sys, writer};
 use crate::plan::Op;
 use crate::Runtime;
 
@@ -35,7 +35,7 @@ pub(crate) fn create_vm(runtime: Runtime) -> Result<Lua> {
 
     let rb = lua.create_table()?;
     fs::register(&lua, &rb)?;
-    serializer::register(&lua, &rb)?;
+    writer::register(&lua, &rb)?;
     sys::register(&rb)?;
     secret::register(&lua, &rb)?;
 

@@ -38,4 +38,20 @@ end
 -- Symlink a static file
 rb.link_file("dotfiles/gitconfig", "/tmp/rb-test/gitconfig")
 
+-- Writer smoke test: round-trip JSON / TOML, exercise INI encode + write
+local sample = { name = "rootbeer", tags = { "dotfiles", "lua" }, count = 3 }
+
+local json_str = rb.json.encode(sample)
+local json_back = rb.json.decode(json_str)
+assert(json_back.name == "rootbeer", "json round-trip failed")
+assert(#json_back.tags == 2, "json array round-trip failed")
+
+local toml_str = rb.toml.encode(sample)
+local toml_back = rb.toml.decode(toml_str)
+assert(toml_back.count == 3, "toml round-trip failed")
+
+rb.json.write("/tmp/rb-test/sample.json", sample)
+rb.toml.write("/tmp/rb-test/sample.toml", sample)
+rb.ini.write("/tmp/rb-test/sample.ini", { section = { key = "value" } })
+
 print("done")
