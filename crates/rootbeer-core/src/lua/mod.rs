@@ -5,6 +5,11 @@ mod sys;
 mod vm;
 mod writer;
 
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+mod tests;
+
 use crate::Runtime;
 use mlua::{AppDataRef, Lua};
 pub(crate) use vm::{create_vm, Run};

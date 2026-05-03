@@ -165,3 +165,60 @@ impl PlannedPipeline {
         Ok(report)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_unknown_profile_with_active_name() {
+        let lua_err = mlua::Error::RuntimeError(
+            "__rb_profile_required:work:personal,work\nstack traceback".into(),
+        );
+        let parsed = parse_profile_error(&lua_err).expect("should parse");
+        match parsed {
+            Error::ProfileRequired { active, profiles } => {
+                assert_eq!(active.as_deref(), Some("work"));
+                assert_eq!(profiles, vec!["personal".to_string(), "work".into()]);
+            }
+            _ => panic!("expected ProfileRequired"),
+        }
+    }
+
+    #[test]
+    fn parses_missing_profile_with_no_active_name() {
+        let lua_err = mlua::Error::RuntimeError("__rb_profile_required::personal,work".into());
+        let parsed = parse_profile_error(&lua_err).expect("should parse");
+        match parsed {
+            Error::ProfileRequired { active, profiles } => {
+                assert_eq!(active, None);
+                assert_eq!(profiles, vec!["personal".to_string(), "work".into()]);
+            }
+            _ => panic!("expected ProfileRequired"),
+        }
+    }
+
+    #[test]
+    fn returns_none_when_sentinel_absent() {
+        let lua_err = mlua::Error::RuntimeError("plain error".into());
+        assert!(parse_profile_error(&lua_err).is_none());
+    }
+
+    #[test]
+    fn parses_when_sentinel_is_embedded_in_callback_error() {
+        // The real error is wrapped with a "runtime error: ..." prefix
+        // and a stack traceback; the parser must still find it.
+        let lua_err = mlua::Error::RuntimeError(
+            "runtime error: [string \"@\"]:3: __rb_profile_required:foo:a,b\nstack traceback:\n  ..."
+                .to_string(),
+        );
+        let parsed = parse_profile_error(&lua_err).expect("should parse");
+        match parsed {
+            Error::ProfileRequired { active, profiles } => {
+                assert_eq!(active.as_deref(), Some("foo"));
+                assert_eq!(profiles, vec!["a".to_string(), "b".into()]);
+            }
+            _ => panic!("expected ProfileRequired"),
+        }
+    }
+}

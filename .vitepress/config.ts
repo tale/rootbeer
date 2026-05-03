@@ -81,6 +81,7 @@ export default defineConfig({
         items: [
           { text: "Dev Setup", link: "/contributing/setup" },
           { text: "Architecture", link: "/contributing/architecture" },
+          { text: "Testing", link: "/contributing/testing" },
           { text: "Packaging", link: "/contributing/packaging" },
         ],
       },

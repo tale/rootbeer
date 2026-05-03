@@ -55,3 +55,74 @@ pub fn dry_run(ops: &[Op], handler: &mut impl ExecutionHandler) -> ExecutionRepo
 
     report
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[derive(Default)]
+    struct Recorder {
+        starts: Vec<String>,
+        results: Vec<OpResult>,
+    }
+
+    impl ExecutionHandler for Recorder {
+        fn on_start(&mut self, op: &Op) {
+            self.starts.push(format!("{op:?}"));
+        }
+        fn on_output(&mut self, _: &str) {}
+        fn on_result(&mut self, r: &OpResult) {
+            self.results.push(r.clone());
+        }
+    }
+
+    #[test]
+    fn dry_run_does_not_touch_filesystem() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("missing/file.txt");
+        let ops = vec![Op::WriteFile {
+            path: path.clone(),
+            content: "hello".into(),
+        }];
+
+        dry_run(&ops, &mut Recorder::default());
+
+        assert!(!path.exists(), "dry run must not create files");
+    }
+
+    #[test]
+    fn dry_run_emits_one_result_per_op_in_order() {
+        let ops = vec![
+            Op::WriteFile {
+                path: PathBuf::from("/tmp/rb-test/a"),
+                content: "a".into(),
+            },
+            Op::Symlink {
+                src: PathBuf::from("/tmp/rb-test/src"),
+                dst: PathBuf::from("/tmp/rb-test/dst"),
+            },
+            Op::Exec {
+                cmd: "echo".into(),
+                args: vec!["hi".into()],
+                cwd: PathBuf::from("/tmp"),
+            },
+            Op::SetRemoteUrl {
+                dir: PathBuf::from("/tmp"),
+                url: "git@example.com:repo.git".into(),
+            },
+        ];
+
+        let mut h = Recorder::default();
+        let report = dry_run(&ops, &mut h);
+
+        assert_eq!(report.results.len(), 4);
+        assert!(matches!(report.results[0], OpResult::FileWritten { .. }));
+        assert!(matches!(report.results[1], OpResult::SymlinkCreated { .. }));
+        assert!(matches!(
+            report.results[2],
+            OpResult::CommandRan { status: 0, .. }
+        ));
+        assert!(matches!(report.results[3], OpResult::RemoteUpdated { .. }));
+    }
+}
