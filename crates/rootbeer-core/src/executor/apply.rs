@@ -87,6 +87,28 @@ pub fn apply(
                 report.results.push(result);
             }
 
+            Op::CopyFileIfMissing { src, dst } => {
+                if dst.exists() || dst.is_symlink() {
+                    let result = OpResult::FileCopySkipped { dst: dst.clone() };
+                    handler.on_result(&result);
+                    report.results.push(result);
+                    continue;
+                }
+
+                if let Some(parent) = dst.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+
+                fs::copy(src, dst)?;
+
+                let result = OpResult::FileCopied {
+                    src: src.clone(),
+                    dst: dst.clone(),
+                };
+                handler.on_result(&result);
+                report.results.push(result);
+            }
+
             Op::Exec { cmd, args, cwd } => {
                 let display = std::iter::once(cmd.as_str())
                     .chain(args.iter().map(|s| s.as_str()))
@@ -310,6 +332,51 @@ mod tests {
 
         assert!(matches!(&h.results[0], OpResult::SymlinkOverwritten { .. }));
         assert_eq!(fs::read_link(&dst).unwrap(), src);
+    }
+
+    #[test]
+    fn copy_file_creates_dest_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("seed.txt");
+        let dst = tmp.path().join("nested/seed.txt");
+        fs::write(&src, "hello").unwrap();
+
+        let mut h = Recorder::default();
+        apply(
+            &[Op::CopyFileIfMissing {
+                src: src.clone(),
+                dst: dst.clone(),
+            }],
+            false,
+            &mut h,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&dst).unwrap(), "hello");
+        assert!(matches!(&h.results[0], OpResult::FileCopied { .. }));
+    }
+
+    #[test]
+    fn copy_file_skips_when_dest_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("seed.txt");
+        let dst = tmp.path().join("seed.txt.dst");
+        fs::write(&src, "fresh").unwrap();
+        fs::write(&dst, "user-modified").unwrap();
+
+        let mut h = Recorder::default();
+        apply(
+            &[Op::CopyFileIfMissing {
+                src,
+                dst: dst.clone(),
+            }],
+            false,
+            &mut h,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&dst).unwrap(), "user-modified");
+        assert!(matches!(&h.results[0], OpResult::FileCopySkipped { .. }));
     }
 
     #[test]

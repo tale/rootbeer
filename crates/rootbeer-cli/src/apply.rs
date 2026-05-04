@@ -64,6 +64,17 @@ impl ExecutionHandler for CliHandler {
                     src.display()
                 );
             }
+            OpResult::FileCopied { src, dst } => {
+                eprintln!(
+                    "  {} {} <- {}",
+                    "copy".green(),
+                    dst.display(),
+                    src.display()
+                );
+            }
+            OpResult::FileCopySkipped { dst } => {
+                eprintln!("  {} {} (exists)", "skip".dimmed(), dst.display());
+            }
             OpResult::CommandRan { cmd, status } => {
                 if *status == 0 {
                     eprintln!("  {} `{cmd}`", "done".green());

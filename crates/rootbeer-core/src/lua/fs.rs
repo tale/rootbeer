@@ -57,6 +57,31 @@ pub(crate) fn register(lua: &Lua, table: &Table) -> LuaResult<()> {
     )?;
 
     table.set(
+        "copy_file",
+        lua.create_function(|lua, (src, dest): (String, String)| {
+            let (runtime, run) = super::ctx(lua);
+            let resolved_src = runtime.script_dir.join(&src);
+            let resolved_dst = resolve_path(&runtime.script_dir, &dest);
+
+            let canonical_src = resolved_src.canonicalize().map_err(|e| {
+                LuaError::RuntimeError(format!(
+                    "copy_file source '{}' (resolved to '{}'): {}",
+                    src,
+                    resolved_src.display(),
+                    e
+                ))
+            })?;
+
+            run.lock().push(Op::CopyFileIfMissing {
+                src: canonical_src,
+                dst: resolved_dst,
+            });
+
+            Ok(())
+        })?,
+    )?;
+
+    table.set(
         "link",
         lua.create_function(|lua, (src, dest): (String, String)| {
             let (runtime, run) = super::ctx(lua);

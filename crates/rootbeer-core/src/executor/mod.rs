@@ -11,6 +11,8 @@ pub enum OpResult {
     SymlinkCreated { src: PathBuf, dst: PathBuf },
     SymlinkUnchanged { dst: PathBuf },
     SymlinkOverwritten { src: PathBuf, dst: PathBuf },
+    FileCopied { src: PathBuf, dst: PathBuf },
+    FileCopySkipped { dst: PathBuf },
     CommandRan { cmd: String, status: i32 },
     Chmodded { path: PathBuf, mode: u32 },
     RemoteUpdated { from: String, to: String },

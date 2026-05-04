@@ -28,6 +28,19 @@ pub fn dry_run(ops: &[Op], handler: &mut impl ExecutionHandler) -> ExecutionRepo
                 report.results.push(result);
             }
 
+            Op::CopyFileIfMissing { src, dst } => {
+                let result = if dst.exists() || dst.is_symlink() {
+                    OpResult::FileCopySkipped { dst: dst.clone() }
+                } else {
+                    OpResult::FileCopied {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                };
+                handler.on_result(&result);
+                report.results.push(result);
+            }
+
             Op::Exec { cmd, args, .. } => {
                 let display = std::iter::once(cmd.as_str())
                     .chain(args.iter().map(|s| s.as_str()))

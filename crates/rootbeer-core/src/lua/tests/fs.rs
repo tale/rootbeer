@@ -145,6 +145,43 @@ fn rb_link_file_canonicalizes_source() {
 }
 
 #[test]
+fn rb_copy_file_pushes_copy_op_with_canonical_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("seed.txt");
+    fs::write(&src, "x").unwrap();
+
+    let ops = run_in(
+        r#"rb.copy_file("seed.txt", "/tmp/rb-test/seed.txt")"#,
+        tmp.path(),
+    );
+
+    let canonical = src.canonicalize().unwrap();
+    assert_eq!(
+        ops,
+        vec![Op::CopyFileIfMissing {
+            src: canonical,
+            dst: PathBuf::from("/tmp/rb-test/seed.txt"),
+        }]
+    );
+}
+
+#[test]
+fn rb_copy_file_errors_on_missing_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lua = crate::lua::test_support::vm(tmp.path(), None);
+    let err = lua
+        .load(
+            r#"
+            local rb = require("rootbeer")
+            rb.copy_file("nope.txt", "/tmp/x")
+            "#,
+        )
+        .exec()
+        .unwrap_err();
+    assert!(err.to_string().contains("copy_file source"), "got: {err}");
+}
+
+#[test]
 fn path_predicates_return_correct_values() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(tmp.path().join("a.txt"), "x").unwrap();

@@ -10,6 +10,10 @@ pub enum Op {
         src: PathBuf,
         dst: PathBuf,
     },
+    CopyFileIfMissing {
+        src: PathBuf,
+        dst: PathBuf,
+    },
     Exec {
         cmd: String,
         args: Vec<String>,

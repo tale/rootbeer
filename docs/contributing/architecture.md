@@ -37,7 +37,7 @@ The middle layer exposes Rust functionality to Lua scripts through
 
 | Module     | Registers                                                                                | Purpose                                                       |
 |------------|------------------------------------------------------------------------------------------|---------------------------------------------------------------|
-| `fs.rs`    | `rootbeer.file`, `link`, `link_file`, `path_exists`, `is_file`, `is_dir`, `exec`, `remote` | File writes, symlinks, command exec, path queries             |
+| `fs.rs`    | `rootbeer.file`, `link`, `link_file`, `copy_file`, `path_exists`, `is_file`, `is_dir`, `exec`, `remote` | File writes, symlinks, command exec, path queries             |
 | `writer/`  | `rootbeer.json`, `toml`, `yaml`, `plist`, `scripts`                                       | Format codecs and script writers (`encode`/`decode`/`read`/`write`) |
 | `sys.rs`   | `rootbeer.host`                                                                          | Runtime system info (OS, arch, hostname, user, home, shell)   |
 | `secret.rs`| `rootbeer.secret`                                                                        | Read secrets from external providers (1Password via `op`)     |

@@ -34,6 +34,17 @@ function rootbeer.file(path, content) end
 --- @param dst string Destination path (supports `~` expansion).
 function rootbeer.link_file(src, dst) end
 
+--- Copies a file from the script directory to the destination, but only if
+--- the destination does not already exist. Useful for seeding configuration
+--- files that the user (or an application) is expected to modify after the
+--- initial bootstrap (e.g. an editor config that records UI state).
+--- The source path is relative to the script directory and must exist.
+--- The destination supports `~` expansion. If the destination already exists,
+--- the operation is reported as `skip`.
+--- @param src string Source path relative to the script directory.
+--- @param dst string Destination path (supports `~` expansion).
+function rootbeer.copy_file(src, dst) end
+
 --- Creates a symbolic link between arbitrary paths.
 --- Both paths support `~` expansion and relative path resolution.
 --- Unlike `link_file`, the source is not restricted to the script directory.
