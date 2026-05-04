@@ -12,6 +12,7 @@ pub enum OpResult {
     SymlinkUnchanged { dst: PathBuf },
     SymlinkOverwritten { src: PathBuf, dst: PathBuf },
     CommandRan { cmd: String, status: i32 },
+    Chmodded { path: PathBuf, mode: u32 },
     RemoteUpdated { from: String, to: String },
     RemoteUnchanged { url: String },
 }

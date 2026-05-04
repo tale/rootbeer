@@ -56,15 +56,23 @@ export default defineConfig({
             collapsed: true,
             items: [{ text: "mac", link: "/modules/mac" }],
           },
+        ],
+      },
+      {
+        text: "Data Formats",
+        items: [
           {
-            text: "Writers",
+            text: "Overview",
+            link: "/formats/",
             collapsed: true,
             items: [
-              { text: "json", link: "/modules/json" },
-              { text: "toml", link: "/modules/toml" },
-              { text: "ini", link: "/modules/ini" },
+              { text: "json", link: "/formats/json" },
+              { text: "toml", link: "/formats/toml" },
+              { text: "yaml", link: "/formats/yaml" },
+              { text: "plist", link: "/formats/plist" },
             ],
           },
+          { text: "Script Writers", link: "/scripts/" },
         ],
       },
       {

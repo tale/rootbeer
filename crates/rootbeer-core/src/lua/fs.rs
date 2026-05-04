@@ -27,14 +27,7 @@ pub(crate) fn register(lua: &Lua, table: &Table) -> LuaResult<()> {
     table.set(
         "file",
         lua.create_function(|lua, (path, content): (String, String)| {
-            let (runtime, run) = super::ctx(lua);
-            let resolved = resolve_path(&runtime.script_dir, &path);
-            run.lock().push(Op::WriteFile {
-                path: resolved,
-                content,
-            });
-
-            Ok(())
+            super::defer_write(lua, &path, content)
         })?,
     )?;
 

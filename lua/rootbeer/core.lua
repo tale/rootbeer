@@ -80,14 +80,23 @@ rootbeer.secret = {}
 --- @return string The secret value.
 function rootbeer.secret.op(reference) end
 
---- JSON writer. See `json.lua` for the full type definition.
+--- JSON codec. See `json.lua` for the full type definition.
 --- @type rootbeer.json
 rootbeer.json = {}
 
---- TOML writer. See `toml.lua` for the full type definition.
+--- TOML codec. See `toml.lua` for the full type definition.
 --- @type rootbeer.toml
 rootbeer.toml = {}
 
---- INI writer (write-only). See `ini.lua` for the full type definition.
---- @type rootbeer.ini
-rootbeer.ini = {}
+--- YAML codec. See `yaml.lua` for the full type definition.
+--- @type rootbeer.yaml
+rootbeer.yaml = {}
+
+--- Apple plist codec. See `plist.lua` for the full type definition.
+--- @type rootbeer.plist
+rootbeer.plist = {}
+
+--- Script writers — executable scripts with shebang + chmod 0755.
+--- See `scripts.lua` for the full type definition.
+--- @type rootbeer.scripts
+rootbeer.scripts = {}

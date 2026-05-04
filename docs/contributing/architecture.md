@@ -14,8 +14,11 @@ representing every side-effect the system can produce:
 
 ```rust
 pub enum Op {
-    WriteFile { path: PathBuf, content: String },
-    Symlink   { src: PathBuf, dst: PathBuf },
+    WriteFile    { path: PathBuf, content: String },
+    Symlink      { src: PathBuf, dst: PathBuf },
+    Exec         { cmd: String, args: Vec<String>, cwd: PathBuf },
+    Chmod        { path: PathBuf, mode: u32 },
+    SetRemoteUrl { dir: PathBuf, url: String },
 }
 ```
 
@@ -32,11 +35,17 @@ The middle layer exposes Rust functionality to Lua scripts through
 [mlua](https://docs.rs/mlua). Each module registers functions onto the
 `rootbeer` global table:
 
-| Module | Registers | Purpose |
-|--------|-----------|---------|
-| `fs.rs` | `rootbeer.file()`, `rootbeer.link_file()` | File writes and symlinks (append to the `Op` log) |
-| `writer.rs` | `rootbeer.json`, `rootbeer.toml`, `rootbeer.ini` | Format writers (encode / decode / read / write) |
-| `sys.rs` | `rootbeer.data()` | Runtime system info (OS, arch, hostname, etc.) |
+| Module     | Registers                                                                                | Purpose                                                       |
+|------------|------------------------------------------------------------------------------------------|---------------------------------------------------------------|
+| `fs.rs`    | `rootbeer.file`, `link`, `link_file`, `path_exists`, `is_file`, `is_dir`, `exec`, `remote` | File writes, symlinks, command exec, path queries             |
+| `writer/`  | `rootbeer.json`, `toml`, `yaml`, `plist`, `scripts`                                       | Format codecs and script writers (`encode`/`decode`/`read`/`write`) |
+| `sys.rs`   | `rootbeer.host`                                                                          | Runtime system info (OS, arch, hostname, user, home, shell)   |
+| `secret.rs`| `rootbeer.secret`                                                                        | Read secrets from external providers (1Password via `op`)     |
+
+Common Lua-context primitives live in `lua/mod.rs` next to `ctx()`:
+`slurp`, `defer_write`, and `defer_chmod`. These wrap the boilerplate of
+reading the runtime / pushing onto the run log, and are reused by `fs.rs`
+and the writer submodules.
 
 Everything is wired together in `vm.rs`, which creates the Lua VM, registers
 all modules, and sets up the custom `require` loader:
@@ -45,9 +54,20 @@ all modules, and sets up the custom `require` loader:
 let rb = lua.create_table()?;
 fs::register(&lua, &rb)?;
 writer::register(&lua, &rb)?;
-sys::register(&lua, &rb)?;
+sys::register(&rb)?;
+secret::register(&lua, &rb)?;
 lua.globals().set("rootbeer", &rb)?;
 ```
+
+### Codecs
+
+Each format under `lua/writer/` (json, toml, yaml, plist) implements a
+`Codec` trait with two functions: `encode(&mlua::Value) -> String` and
+`decode(&Lua, &str) -> mlua::Value`. mlua's `serialize` feature gives
+`mlua::Value` a `Serialize` impl, so each codec is a thin wrapper around
+the format crate's `to_string` / `from_str` — no per-format walker code.
+A single `register::<C>(lua, parent)` wires the four-function shape onto
+a sub-table on `rb`.
 
 ### Plan/Execute Model
 
@@ -76,13 +96,16 @@ A typical module follows this pattern:
 1. Accept a structured config table from the user.
 2. Transform it into the format the target tool expects.
 3. Call `rootbeer.file()` or a format writer (`rootbeer.json.write()`,
-   `rootbeer.toml.write()`, `rootbeer.ini.write()`, …) to produce output.
+   `rootbeer.toml.write()`, …) to produce output.
 
 For example, `git.lua` takes a `git.Config` table and:
 
-- Builds an INI structure from typed fields (`user`, `signing`, `lfs`, etc.)
-- Optionally writes a `.gitignore` alongside the config via `rootbeer.file()`
-- Serializes and writes the result in one step via `rootbeer.ini.write()`
+- Builds a gitconfig table from typed fields (`user`, `signing`, `lfs`, …).
+- Quotes string values per gitconfig rules and emits the text directly in
+  Lua (gitconfig isn't strictly INI, so it's handled here rather than as
+  a native codec).
+- Writes the result via `rootbeer.file()`, plus an optional
+  `.gitignore` alongside it.
 
 Each module is self-contained with its own `@class` annotations for the
 language server. Users load them via `require("rootbeer.git")`.

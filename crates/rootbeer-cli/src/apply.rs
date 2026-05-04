@@ -71,6 +71,9 @@ impl ExecutionHandler for CliHandler {
                     eprintln!("  {} `{cmd}` (exit {status})", "fail".red());
                 }
             }
+            OpResult::Chmodded { path, mode } => {
+                eprintln!("  {} {} ({:o})", "chmod".green(), path.display(), mode);
+            }
             OpResult::RemoteUpdated { from, to } => {
                 eprintln!("  {} {from} -> {to}", "remote".green());
             }

@@ -42,6 +42,15 @@ pub fn dry_run(ops: &[Op], handler: &mut impl ExecutionHandler) -> ExecutionRepo
                 report.results.push(result);
             }
 
+            Op::Chmod { path, mode } => {
+                let result = OpResult::Chmodded {
+                    path: path.clone(),
+                    mode: *mode,
+                };
+                handler.on_result(&result);
+                report.results.push(result);
+            }
+
             Op::SetRemoteUrl { dir: _, url } => {
                 let result = OpResult::RemoteUpdated {
                     from: String::from("(current origin)"),

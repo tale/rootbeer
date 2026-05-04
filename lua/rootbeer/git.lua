@@ -42,6 +42,51 @@ local function dirname(path)
 	return path:match("(.+)/") or "."
 end
 
+--- Emits a gitconfig-format string from a two-level table. Top-level keys
+--- are sections; inner table values become `[section "subkey"]` blocks;
+--- inner scalars become `\tkey = value` lines. Scalars are emitted
+--- verbatim — callers should pre-quote strings via `quote()`.
+--- @param sections table<string, table<string, string|table<string, string>>>
+--- @return string
+local function emit_gitconfig(sections)
+	local parts = {}
+
+	local function emit_block(header, body)
+		if #parts > 0 then
+			table.insert(parts, "")
+		end
+		table.insert(parts, header)
+		for k, v in pairs(body) do
+			if type(v) ~= "table" then
+				table.insert(parts, "\t" .. k .. " = " .. tostring(v))
+			end
+		end
+	end
+
+	for section, values in pairs(sections) do
+		-- subsections first: any inner key whose value is a table
+		for k, v in pairs(values) do
+			if type(v) == "table" then
+				emit_block(string.format('[%s "%s"]', section, k), v)
+			end
+		end
+
+		-- then the section's own scalars, if any
+		local has_scalars = false
+		for _, v in pairs(values) do
+			if type(v) ~= "table" then
+				has_scalars = true
+				break
+			end
+		end
+		if has_scalars then
+			emit_block("[" .. section .. "]", values)
+		end
+	end
+
+	return table.concat(parts, "\n") .. "\n"
+end
+
 --- Applies `git.Config` to the system. Writes a gitconfig file at `cfg.path`
 --- and optionally a gitignore file next to it.
 --- @param cfg git.Config
@@ -128,7 +173,7 @@ function M.config(cfg)
 		end
 	end
 
-	rb.ini.write(path, quoted)
+	rb.file(path, emit_gitconfig(quoted))
 end
 
 return M

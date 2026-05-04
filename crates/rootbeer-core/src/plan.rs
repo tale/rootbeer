@@ -15,6 +15,10 @@ pub enum Op {
         args: Vec<String>,
         cwd: PathBuf,
     },
+    Chmod {
+        path: PathBuf,
+        mode: u32,
+    },
     SetRemoteUrl {
         dir: PathBuf,
         url: String,

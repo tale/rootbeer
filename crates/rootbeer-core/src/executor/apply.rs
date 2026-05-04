@@ -1,4 +1,5 @@
 use std::io::{self, BufRead, BufReader};
+use std::os::unix::fs::PermissionsExt;
 use std::{fs, os::unix::fs as unix_fs, process, process::Command, thread};
 
 use crate::{
@@ -123,6 +124,17 @@ pub fn apply(
                 let result = OpResult::CommandRan {
                     cmd: display,
                     status: status.code().unwrap_or(1),
+                };
+                handler.on_result(&result);
+                report.results.push(result);
+            }
+
+            Op::Chmod { path, mode } => {
+                let perms = fs::Permissions::from_mode(*mode);
+                fs::set_permissions(path, perms)?;
+                let result = OpResult::Chmodded {
+                    path: path.clone(),
+                    mode: *mode,
                 };
                 handler.on_result(&result);
                 report.results.push(result);
