@@ -94,46 +94,21 @@ impl Pipeline {
             "@{}",
             runtime.script_dir.join(&runtime.script_name).display()
         );
-        let lua = crate::lua::create_vm(runtime)?;
-        if let Err(e) = lua.load(&source).set_name(&chunk_name).exec() {
-            return Err(parse_profile_error(&e).unwrap_or_else(|| e.into()));
+        let vm = crate::lua::Vm::new(runtime)?;
+        if let Err(e) = vm.exec(&source, &chunk_name) {
+            if let Some(pe) = crate::profile::extract(&e) {
+                return Err(pe.into());
+            }
+            return Err(e.into());
         }
 
-        let ops = lua
-            .remove_app_data::<crate::lua::Run>()
-            .unwrap_or_default()
-            .into_ops();
+        let ops = vm.drain_ops();
 
         Ok(PlannedPipeline {
             opts: self.opts,
             ops,
         })
     }
-}
-
-const PROFILE_SENTINEL: &str = "__rb_profile_required:";
-
-/// Check if a Lua error contains a structured profile-required sentinel
-/// and convert it to `Error::ProfileRequired`.
-fn parse_profile_error(e: &mlua::Error) -> Option<Error> {
-    // The sentinel may be wrapped in CallbackError, RuntimeError, etc.
-    // Search the full error string for the sentinel line.
-    let full = e.to_string();
-    let sentinel_start = full.find(PROFILE_SENTINEL)?;
-    let rest = &full[sentinel_start + PROFILE_SENTINEL.len()..];
-    let first_line = rest.split('\n').next()?;
-    let (active, profiles_str) = first_line.split_once(':')?;
-    let active = if active.is_empty() {
-        None
-    } else {
-        Some(active.to_string())
-    };
-    let profiles = profiles_str
-        .split(',')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
-    Some(Error::ProfileRequired { active, profiles })
 }
 
 /// A pipeline that has been planned — ops are collected, ready to execute.
@@ -163,62 +138,5 @@ impl PlannedPipeline {
         };
 
         Ok(report)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_unknown_profile_with_active_name() {
-        let lua_err = mlua::Error::RuntimeError(
-            "__rb_profile_required:work:personal,work\nstack traceback".into(),
-        );
-        let parsed = parse_profile_error(&lua_err).expect("should parse");
-        match parsed {
-            Error::ProfileRequired { active, profiles } => {
-                assert_eq!(active.as_deref(), Some("work"));
-                assert_eq!(profiles, vec!["personal".to_string(), "work".into()]);
-            }
-            _ => panic!("expected ProfileRequired"),
-        }
-    }
-
-    #[test]
-    fn parses_missing_profile_with_no_active_name() {
-        let lua_err = mlua::Error::RuntimeError("__rb_profile_required::personal,work".into());
-        let parsed = parse_profile_error(&lua_err).expect("should parse");
-        match parsed {
-            Error::ProfileRequired { active, profiles } => {
-                assert_eq!(active, None);
-                assert_eq!(profiles, vec!["personal".to_string(), "work".into()]);
-            }
-            _ => panic!("expected ProfileRequired"),
-        }
-    }
-
-    #[test]
-    fn returns_none_when_sentinel_absent() {
-        let lua_err = mlua::Error::RuntimeError("plain error".into());
-        assert!(parse_profile_error(&lua_err).is_none());
-    }
-
-    #[test]
-    fn parses_when_sentinel_is_embedded_in_callback_error() {
-        // The real error is wrapped with a "runtime error: ..." prefix
-        // and a stack traceback; the parser must still find it.
-        let lua_err = mlua::Error::RuntimeError(
-            "runtime error: [string \"@\"]:3: __rb_profile_required:foo:a,b\nstack traceback:\n  ..."
-                .to_string(),
-        );
-        let parsed = parse_profile_error(&lua_err).expect("should parse");
-        match parsed {
-            Error::ProfileRequired { active, profiles } => {
-                assert_eq!(active.as_deref(), Some("foo"));
-                assert_eq!(profiles, vec!["a".to_string(), "b".into()]);
-            }
-            _ => panic!("expected ProfileRequired"),
-        }
     }
 }

@@ -100,8 +100,9 @@ fn json_read_loads_from_disk() {
 #[test]
 fn json_decode_propagates_parse_error() {
     let tmp = tempfile::tempdir().unwrap();
-    let lua = crate::lua::test_support::vm(tmp.path(), None);
-    let err = lua
+    let vm = crate::lua::test_support::vm(tmp.path(), None);
+    let err = vm
+        .lua
         .load(
             r#"
             local rb = require("rootbeer")

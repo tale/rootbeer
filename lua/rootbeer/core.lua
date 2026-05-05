@@ -8,10 +8,10 @@
 --- @type rootbeer.HostInfo
 rootbeer.host = {}
 
---- The active configuration profile, or `nil` when no profile was specified.
---- Set via `rb apply <profile>` on the command line.
---- @type string?
-rootbeer.profile = nil
+--- The first-class profile system. See `profile.lua` for the full type
+--- definition.
+--- @type profile
+rootbeer.profile = {}
 
 --- Absolute path to the rootbeer source directory (the directory containing
 --- the entry-point script). Useful for commands that need to operate on the

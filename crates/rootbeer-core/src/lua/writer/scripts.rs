@@ -11,6 +11,8 @@
 
 use mlua::{Lua, Result as LuaResult, Table};
 
+use crate::lua::ctx::Ctx;
+
 /// Each `(method_name, interpreter)` pair becomes a flat helper on the
 /// `scripts` table that produces the end `rb.scripts.<method_name>` API.
 const NAMED_SCRIPT_WRITERS: &[(&str, &str)] = &[
@@ -27,9 +29,7 @@ const NAMED_SCRIPT_WRITERS: &[(&str, &str)] = &[
 ];
 
 fn write_script(lua: &Lua, interpreter: &str, path: &str, body: &str) -> LuaResult<()> {
-    // If the interpreter looks like an absolute path, use it directly.
-    // Shebang line is followed by a blank line for readability.
-    let mut content = match interpreter.starts_with("/") {
+    let mut content = match interpreter.starts_with('/') {
         true => format!("#!{interpreter}\n\n"),
         false => format!("#!/usr/bin/env {interpreter}\n\n"),
     };
@@ -39,13 +39,10 @@ fn write_script(lua: &Lua, interpreter: &str, path: &str, body: &str) -> LuaResu
         content.push('\n');
     }
 
-    let resolved = {
-        let (runtime, _) = super::super::ctx(lua);
-        super::super::fs::resolve_path(&runtime.script_dir, path)
-    };
-
-    super::super::defer_write(lua, path, content)?;
-    super::super::defer_chmod(lua, &resolved, 0o755)?;
+    let cx = Ctx::from(lua);
+    let resolved = cx.resolve(path);
+    cx.write(path, content);
+    cx.chmod(&resolved, 0o755);
     Ok(())
 }
 

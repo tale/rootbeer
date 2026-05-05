@@ -1,5 +1,7 @@
 use mlua::{IntoLua, Lua, Result as LuaResult, Table, Value};
 
+use super::module::Module;
+
 /// Information about the host system.
 struct HostInfo {
     /// The operating system, e.g. "linux", "windows", "macos".
@@ -95,19 +97,26 @@ impl IntoLua for HostInfo {
     }
 }
 
-pub(crate) fn register(table: &Table) -> LuaResult<()> {
-    let passwd = get_passwd()
-        .ok_or_else(|| mlua::Error::runtime("failed to read passwd entry for current user"))?;
+pub(crate) struct Sys;
 
-    let host_info = HostInfo {
-        os: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(),
-        hostname: get_hostname(),
-        user: passwd.name,
-        home: passwd.dir,
-        shell: passwd.shell,
-    };
+impl Module for Sys {
+    const NAME: &'static str = "";
 
-    table.set("host", host_info)?;
-    Ok(())
+    fn build(_lua: &Lua, t: &Table) -> LuaResult<()> {
+        let passwd = get_passwd()
+            .ok_or_else(|| mlua::Error::runtime("failed to read passwd entry for current user"))?;
+
+        t.set(
+            "host",
+            HostInfo {
+                os: std::env::consts::OS.to_string(),
+                arch: std::env::consts::ARCH.to_string(),
+                hostname: get_hostname(),
+                user: passwd.name,
+                home: passwd.dir,
+                shell: passwd.shell,
+            },
+        )?;
+        Ok(())
+    }
 }

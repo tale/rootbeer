@@ -1,122 +1,73 @@
+--- @meta
+
+--- @class profile.Spec
+--- @field hosts? string[] Hostnames that resolve to this profile under the `"hostname"` strategy.
+--- @field users? string[] Usernames that resolve to this profile under the `"user"` strategy.
+
+--- @class profile.Ctx
+--- @field match_hostname fun(): string?
+--- @field match_user fun(): string?
+
+--- @alias profile.Strategy "cli" | "hostname" | "user" | fun(ctx: profile.Ctx): string|nil
+
+--- @class profile.Setup
+--- @field strategy profile.Strategy How the active profile is chosen when `--profile` is not passed.
+--- @field profiles table<string, profile.Spec> The set of valid profiles.
+
 --- @class profile
-local M = {}
+local profile = {}
 
-local rb = require("rootbeer")
-
---- Collects and sorts the keys of the given map for error messages.
---- @param map table<string, any>
---- @return string[]
-local function sorted_keys(map)
-	local keys = {}
-	for k in pairs(map) do
-		keys[#keys + 1] = k
-	end
-	table.sort(keys)
-	return keys
-end
-
---- Selects and requires a module based on the active profile.
---- Each key in the map is a profile name and its value is a path to a
---- `.lua` file relative to the script directory. All paths are validated
---- upfront before the selected profile is executed.
---- When `rb.profile` is `nil` the call is a no-op.
+--- Declare the set of valid profiles and the resolution strategy. Call once
+--- near the top of your config to enable the profile system.
 ---
 --- ```lua
---- local profile = require("rootbeer.profile")
----
---- profile.config({
----   work = "hosts/work.lua",
----   personal = "hosts/personal.lua",
+--- rb.profile.define({
+---   strategy = "hostname",
+---   profiles = {
+---     personal = { hosts = { "Aarnavs-MBP" } },
+---     work     = { hosts = { "atale-mbp" } },
+---   },
 --- })
 --- ```
---- @param map table<string, string> Profile name → `.lua` file path.
-function M.config(map)
-	for name, path in pairs(map) do
-		if not rb.is_file(path) then
-			error("profile '" .. name .. "': file not found: " .. path)
-		end
-	end
+--- @param spec profile.Setup
+function profile.define(spec) end
 
-	local name = rb.profile
-	if name == nil then
-		return
-	end
+--- Returns the active profile name, or `nil` when none is set.
+--- @return string?
+function profile.current() end
 
-	local path = map[name]
-	if path == nil then
-		error("__rb_profile_required:" .. name .. ":" .. table.concat(sorted_keys(map), ","), 0)
-	end
-
-	require(path:gsub("%.lua$", ""))
-end
-
---- Returns the value from `map` that matches the active profile.
---- If the active profile is not in `map`, falls back to `map.default`.
---- Errors when the profile has no matching entry and no default is set.
---- When `rb.profile` is `nil`, returns the `default` value or errors.
+--- Returns the value from `map` keyed by the active profile, falling back
+--- to `map.default`.
 ---
 --- ```lua
---- local profile = require("rootbeer.profile")
----
---- local email = profile.select({
+--- local email = rb.profile.select({
 ---   default = "aarnav@personal.me",
----   work = "aarnav@company.com",
+---   work    = "aarnav@company.com",
 --- })
 --- ```
 --- @param map table<string, any> Profile name → value. Use `"default"` as the fallback key.
 --- @return any
-function M.select(map)
-	local name = rb.profile
-
-	if name ~= nil and map[name] ~= nil then
-		return map[name]
-	end
-
-	if map.default ~= nil then
-		return map.default
-	end
-
-	local profiles = sorted_keys(map)
-	error("__rb_profile_required:" .. (name or "") .. ":" .. table.concat(profiles, ","), 0)
-end
+function profile.select(map) end
 
 --- Runs `fn` only when the active profile matches.
---- Accepts a single profile name or a list of names.
---- When `rb.profile` is `nil` the call is a no-op.
 ---
 --- ```lua
---- local profile = require("rootbeer.profile")
----
---- profile.when("personal", function()
----   mac.touch_id_sudo()
----   mac.hostname({ name = "Aarnavs-MBP" })
---- end)
----
---- profile.when({"work", "personal"}, function()
----   -- runs for either profile
---- end)
+--- rb.profile.when("personal", function() ... end)
+--- rb.profile.when({ "work", "personal" }, function() ... end)
 --- ```
 --- @param names string|string[] One or more profile names.
---- @param fn fun() The function to execute if the profile matches.
-function M.when(names, fn)
-	local name = rb.profile
-	if name == nil then
-		return
-	end
+--- @param fn fun() The function to execute if the active profile matches.
+function profile.when(names, fn) end
 
-	if type(names) == "string" then
-		if name == names then
-			fn()
-		end
-		return
-	end
+--- Requires a per-profile `.lua` file. Paths are validated upfront.
+---
+--- ```lua
+--- rb.profile.config({
+---   work     = "hosts/work.lua",
+---   personal = "hosts/personal.lua",
+--- })
+--- ```
+--- @param map table<string, string> Profile name → `.lua` file path.
+function profile.config(map) end
 
-	for _, n in ipairs(names) do
-		if name == n then
-			fn()
-			return
-		end
-	end
-end
-
-return M
+return profile

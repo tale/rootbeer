@@ -9,6 +9,8 @@
 
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
+use crate::lua::ctx::Ctx;
+
 pub(super) trait Codec: 'static {
     const NAME: &'static str;
 
@@ -30,7 +32,7 @@ pub(super) fn register<C: Codec>(lua: &Lua, parent: &Table) -> LuaResult<()> {
     t.set(
         "read",
         lua.create_function(|lua, path: String| {
-            let s = super::super::slurp(lua, &path)?;
+            let s = Ctx::from(lua).slurp(&path)?;
             C::decode(lua, &s)
         })?,
     )?;
@@ -41,8 +43,8 @@ pub(super) fn register<C: Codec>(lua: &Lua, parent: &Table) -> LuaResult<()> {
             if !repr.ends_with('\n') {
                 repr.push('\n');
             }
-
-            super::super::defer_write(lua, &path, repr)
+            Ctx::from(lua).write(&path, repr);
+            Ok(())
         })?,
     )?;
 

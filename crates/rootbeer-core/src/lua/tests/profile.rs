@@ -1,12 +1,437 @@
-//! Tests for `lua/rootbeer/profile.lua`.
+//! Tests for the `rb.profile` module (`crates/rootbeer-core/src/profile/`).
 
 use std::fs;
 use std::path::Path;
 
 use crate::lua::test_support::{drain, vm_in_with_profile};
 use crate::plan::Op;
+use crate::profile::{self, NameError, ProfileError};
 
-fn setup_fixture(dir: &Path) {
+/// Run a snippet against a fresh VM, returning either the planned ops or
+/// the structured `ProfileError` raised during exec.
+fn run(source: &str, profile: Option<&str>) -> Result<Vec<Op>, ProfileError> {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().to_path_buf();
+    let script_path = path.join("test.lua");
+    let wrapped = format!("local rb = require(\"rootbeer\")\n{source}");
+    fs::write(&script_path, &wrapped).unwrap();
+
+    let runtime = crate::Runtime {
+        script_dir: path.clone(),
+        script_name: "test.lua".into(),
+        lua_dir: std::path::PathBuf::from(env!("ROOTBEER_LUA_DIR")),
+        profile: profile.map(str::to_owned),
+    };
+    let vm = crate::lua::Vm::new(runtime).unwrap();
+    let chunk = format!("@{}", script_path.display());
+    match vm.exec(&wrapped, &chunk) {
+        Ok(()) => {
+            std::mem::forget(tmp);
+            Ok(drain(vm))
+        }
+        Err(e) => match profile::extract(&e) {
+            Some(pe) => Err(pe),
+            None => panic!("expected ProfileError, got: {e}"),
+        },
+    }
+}
+
+fn err(source: &str, profile: Option<&str>) -> ProfileError {
+    run(source, profile).expect_err("expected ProfileError")
+}
+
+// ───────────────────────── module setup ──────────────────────────
+
+#[test]
+fn rb_profile_is_a_table() {
+    let vm = vm_in_with_profile("assert(type(rb.profile) == 'table')", &tempdir(), None);
+    drop(vm);
+}
+
+// ───────────────────────────── current ───────────────────────────
+
+#[test]
+fn current_is_nil_before_define() {
+    let vm = vm_in_with_profile("result = rb.profile.current()", &tempdir(), None);
+    let result: Option<String> = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, None);
+}
+
+#[test]
+fn current_returns_cli_profile_before_define() {
+    let vm = vm_in_with_profile(
+        "result = rb.profile.current()",
+        &tempdir(),
+        Some("personal"),
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "personal");
+}
+
+// ─────────────────────────── define shape ────────────────────────
+
+#[test]
+fn define_requires_strategy() {
+    assert!(matches!(
+        err(r#"rb.profile.define({ profiles = { work = {} } })"#, None),
+        ProfileError::MissingField("strategy")
+    ));
+}
+
+#[test]
+fn define_requires_profiles() {
+    assert!(matches!(
+        err(r#"rb.profile.define({ strategy = "cli" })"#, Some("work")),
+        ProfileError::MissingField("profiles")
+    ));
+}
+
+#[test]
+fn define_rejects_empty_profiles() {
+    assert!(matches!(
+        err(
+            r#"rb.profile.define({ strategy = "cli", profiles = {} })"#,
+            Some("work")
+        ),
+        ProfileError::EmptyProfiles
+    ));
+}
+
+#[test]
+fn define_rejects_unknown_strategy_string() {
+    assert!(matches!(
+        err(
+            r#"rb.profile.define({ strategy = "magic", profiles = { work = {} } })"#,
+            Some("work")
+        ),
+        ProfileError::InvalidStrategy(_)
+    ));
+}
+
+#[test]
+fn second_define_errors() {
+    assert!(matches!(
+        err(
+            r#"
+            rb.profile.define({ strategy = "cli", profiles = { work = {} } })
+            rb.profile.define({ strategy = "cli", profiles = { other = {} } })
+            "#,
+            Some("work")
+        ),
+        ProfileError::AlreadyConfigured
+    ));
+}
+
+// ─────────────────────────── name validation ─────────────────────
+
+#[test]
+fn rejects_hyphenated_name() {
+    assert!(matches!(
+        err(
+            r#"rb.profile.define({ strategy = "cli", profiles = { ["my-profile"] = {} } })"#,
+            None,
+        ),
+        ProfileError::InvalidName {
+            reason: NameError::NotIdentifier,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn rejects_leading_digit_name() {
+    assert!(matches!(
+        err(
+            r#"rb.profile.define({ strategy = "cli", profiles = { ["1prod"] = {} } })"#,
+            None,
+        ),
+        ProfileError::InvalidName {
+            reason: NameError::NotIdentifier,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn rejects_reserved_keyword_name() {
+    assert!(matches!(
+        err(
+            r#"rb.profile.define({ strategy = "cli", profiles = { ["if"] = {} } })"#,
+            None,
+        ),
+        ProfileError::InvalidName {
+            reason: NameError::ReservedKeyword,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn rejects_default_as_profile_name() {
+    assert!(matches!(
+        err(
+            r#"rb.profile.define({ strategy = "cli", profiles = { default = {} } })"#,
+            None,
+        ),
+        ProfileError::InvalidName {
+            reason: NameError::ReservedKeyword,
+            ..
+        }
+    ));
+}
+
+// ────────────────────── strategy = "cli" enforces flag ───────────
+
+#[test]
+fn cli_strategy_without_flag_errors() {
+    assert!(matches!(
+        err(
+            r#"rb.profile.define({
+                strategy = "cli",
+                profiles = { work = {}, personal = {} },
+            })"#,
+            None,
+        ),
+        ProfileError::Required { active: None, .. }
+    ));
+}
+
+#[test]
+fn cli_flag_overrides_strategy() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = function() return "personal" end,
+            profiles = { work = {}, personal = {} },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        Some("work"),
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "work");
+}
+
+#[test]
+fn cli_flag_validated_against_schema() {
+    match err(
+        r#"rb.profile.define({
+            strategy = "hostname",
+            profiles = { work = { hosts = {"x"} }, personal = { hosts = {"y"} } },
+        })"#,
+        Some("wrok"),
+    ) {
+        ProfileError::Required { active, .. } => assert_eq!(active.as_deref(), Some("wrok")),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+// ────────────────────────── strategy = "hostname" ────────────────
+
+#[test]
+fn hostname_strategy_no_match_errors() {
+    match err(
+        r#"rb.profile.define({
+            strategy = "hostname",
+            profiles = {
+                work = { hosts = { "definitely-not-this-host" } },
+                personal = { hosts = { "also-not-this-host" } },
+            },
+        })"#,
+        None,
+    ) {
+        ProfileError::NoMatch { strategy, .. } => assert_eq!(strategy, "hostname"),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+// ───────────────────────────── strategy = "user" ─────────────────
+
+#[test]
+fn user_strategy_no_match_errors() {
+    match err(
+        r#"rb.profile.define({
+            strategy = "user",
+            profiles = {
+                work = { users = { "nobody" } },
+                personal = { users = { "alsonobody" } },
+            },
+        })"#,
+        None,
+    ) {
+        ProfileError::NoMatch { strategy, .. } => assert_eq!(strategy, "user"),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+// ─────────────────────── function strategy + ctx ─────────────────
+
+#[test]
+fn function_strategy_resolves() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = function() return "server" end,
+            profiles = { server = {}, dev = {} },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        None,
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "server");
+}
+
+#[test]
+fn function_strategy_returning_nil_yields_nil_active() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = function() return nil end,
+            profiles = { server = {} },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        None,
+    );
+    let result: Option<String> = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, None);
+}
+
+#[test]
+fn function_strategy_validates_returned_name() {
+    match err(
+        r#"rb.profile.define({
+            strategy = function() return "wrok" end,
+            profiles = { work = {}, personal = {} },
+        })"#,
+        None,
+    ) {
+        ProfileError::Required { active, .. } => assert_eq!(active.as_deref(), Some("wrok")),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[test]
+fn ctx_match_helpers_compose_into_a_chain() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = function(ctx)
+                return ctx.match_hostname()
+                    or ctx.match_user()
+                    or "fallback"
+            end,
+            profiles = {
+                work = { hosts = { "x" } },
+                personal = { hosts = { "y" } },
+                fallback = {},
+            },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        None,
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "fallback");
+}
+
+// ───────────────────────────── select / when ─────────────────────
+
+#[test]
+fn select_returns_value_for_active_profile() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({ strategy = "cli", profiles = { work = {}, personal = {} } })
+        result = rb.profile.select({ default = "fallback", work = "yes" })
+        "#,
+        &tempdir(),
+        Some("work"),
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "yes");
+}
+
+#[test]
+fn select_falls_back_to_default() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({ strategy = "cli", profiles = { work = {}, personal = {} } })
+        result = rb.profile.select({ default = "fallback", work = "yes" })
+        "#,
+        &tempdir(),
+        Some("personal"),
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "fallback");
+}
+
+#[test]
+fn select_requires_define_first() {
+    assert!(matches!(
+        err(r#"rb.profile.select({ default = "x" })"#, None),
+        ProfileError::NotConfigured
+    ));
+}
+
+#[test]
+fn select_validates_keys_against_schema() {
+    match err(
+        r#"
+        rb.profile.define({ strategy = "cli", profiles = { work = {}, personal = {} } })
+        rb.profile.select({ work = 1, wrok = 2 })
+        "#,
+        Some("work"),
+    ) {
+        ProfileError::Required { active, .. } => assert_eq!(active.as_deref(), Some("wrok")),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[test]
+fn when_runs_for_matching_profile() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({ strategy = "cli", profiles = { work = {}, personal = {} } })
+        ran = false
+        rb.profile.when("work", function() ran = true end)
+        "#,
+        &tempdir(),
+        Some("work"),
+    );
+    let ran: bool = vm.lua.globals().get("ran").unwrap();
+    assert!(ran);
+}
+
+#[test]
+fn when_validates_name_against_schema() {
+    match err(
+        r#"
+        rb.profile.define({ strategy = "cli", profiles = { work = {}, personal = {} } })
+        rb.profile.when("wrok", function() end)
+        "#,
+        Some("work"),
+    ) {
+        ProfileError::Required { active, .. } => assert_eq!(active.as_deref(), Some("wrok")),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[test]
+fn when_requires_define_first() {
+    assert!(matches!(
+        err(r#"rb.profile.when("any", function() end)"#, None),
+        ProfileError::NotConfigured
+    ));
+}
+
+// ──────────────────────────────── config ─────────────────────────
+
+fn setup_host_files(dir: &Path) {
     fs::create_dir_all(dir.join("hosts")).unwrap();
     fs::write(
         dir.join("hosts/work.lua"),
@@ -20,32 +445,24 @@ fn setup_fixture(dir: &Path) {
     .unwrap();
 }
 
-const SNIPPET: &str = r#"
-    local profile = require("rootbeer.profile")
-    profile.config({
-        work = "hosts/work.lua",
-        personal = "hosts/personal.lua",
-    })
-"#;
-
 #[test]
-fn profile_config_no_profile_is_noop() {
+fn config_dispatches_to_active_profile() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_fixture(tmp.path());
+    setup_host_files(tmp.path());
 
-    let lua = vm_in_with_profile(SNIPPET, tmp.path(), None);
-    let ops = drain(lua);
-    assert_eq!(ops, vec![], "expected no ops, got {ops:?}");
-}
-
-#[test]
-fn profile_config_dispatches_to_selected_profile() {
-    let tmp = tempfile::tempdir().unwrap();
-    setup_fixture(tmp.path());
-
-    let lua = vm_in_with_profile(SNIPPET, tmp.path(), Some("work"));
-    let ops = drain(lua);
-    assert_eq!(ops.len(), 1, "got: {ops:?}");
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({ strategy = "cli", profiles = { work = {}, personal = {} } })
+        rb.profile.config({
+            work     = "hosts/work.lua",
+            personal = "hosts/personal.lua",
+        })
+        "#,
+        tmp.path(),
+        Some("work"),
+    );
+    let ops = drain(vm);
+    assert_eq!(ops.len(), 1);
     assert!(matches!(
         &ops[0],
         Op::WriteFile { path, .. } if path.ends_with("work.txt")
@@ -53,66 +470,19 @@ fn profile_config_dispatches_to_selected_profile() {
 }
 
 #[test]
-fn profile_config_unknown_profile_emits_sentinel_error() {
-    let tmp = tempfile::tempdir().unwrap();
-    setup_fixture(tmp.path());
-
-    // We can't use `vm_in_with_profile` here because it `expect`s exec to
-    // succeed. Build the VM manually and inspect the error.
-    let script_path = tmp.path().join("test.lua");
-    fs::write(
-        &script_path,
-        format!("local rb = require(\"rootbeer\")\n{SNIPPET}"),
-    )
-    .unwrap();
-
-    let runtime = crate::Runtime {
-        script_dir: tmp.path().to_path_buf(),
-        script_name: "test.lua".into(),
-        lua_dir: std::path::PathBuf::from(env!("ROOTBEER_LUA_DIR")),
-        profile: Some("oops".into()),
-    };
-    let lua = crate::lua::create_vm(runtime).unwrap();
-    let chunk_name = format!("@{}", script_path.display());
-    let src = fs::read_to_string(&script_path).unwrap();
-    let err = lua
-        .load(&src)
-        .set_name(&chunk_name)
-        .exec()
-        .expect_err("expected error");
-
-    let s = err.to_string();
-    assert!(s.contains("__rb_profile_required:oops:"), "got: {s}");
-    assert!(s.contains("personal,work"), "got: {s}");
+fn config_requires_define_first() {
+    assert!(matches!(
+        err(
+            r#"rb.profile.config({ work = "hosts/work.lua" })"#,
+            Some("work")
+        ),
+        ProfileError::NotConfigured
+    ));
 }
 
-#[test]
-fn profile_config_missing_file_errors_eagerly() {
+fn tempdir() -> std::path::PathBuf {
     let tmp = tempfile::tempdir().unwrap();
-    // Don't create the file.
-
-    let script_path = tmp.path().join("test.lua");
-    let body = r#"
-        local rb = require("rootbeer")
-        local profile = require("rootbeer.profile")
-        profile.config({ work = "hosts/missing.lua" })
-    "#;
-    fs::write(&script_path, body).unwrap();
-
-    let runtime = crate::Runtime {
-        script_dir: tmp.path().to_path_buf(),
-        script_name: "test.lua".into(),
-        lua_dir: std::path::PathBuf::from(env!("ROOTBEER_LUA_DIR")),
-        profile: Some("work".into()),
-    };
-    let lua = crate::lua::create_vm(runtime).unwrap();
-    let chunk_name = format!("@{}", script_path.display());
-    let err = lua
-        .load(body)
-        .set_name(&chunk_name)
-        .exec()
-        .expect_err("expected error");
-
-    let s = err.to_string();
-    assert!(s.contains("file not found"), "got: {s}");
+    let path = tmp.path().to_path_buf();
+    std::mem::forget(tmp);
+    path
 }

@@ -1,6 +1,8 @@
 use mlua::{Lua, Result as LuaResult, Table};
 use std::process::Command;
 
+use super::module::Module;
+
 /// Reads a secret from 1Password via the `op` CLI.
 /// The reference should be in `op://` format (e.g. `op://vault/item/field`).
 fn read_op_secret(reference: &str) -> Result<String, mlua::Error> {
@@ -21,14 +23,16 @@ fn read_op_secret(reference: &str) -> Result<String, mlua::Error> {
         .map_err(|e| mlua::Error::RuntimeError(format!("op returned invalid UTF-8: {e}")))
 }
 
-pub(crate) fn register(lua: &Lua, table: &Table) -> LuaResult<()> {
-    let secret = lua.create_table()?;
+pub(crate) struct Secret;
 
-    secret.set(
-        "op",
-        lua.create_function(|_, reference: String| read_op_secret(&reference))?,
-    )?;
+impl Module for Secret {
+    const NAME: &'static str = "secret";
 
-    table.set("secret", secret)?;
-    Ok(())
+    fn build(lua: &Lua, t: &Table) -> LuaResult<()> {
+        t.set(
+            "op",
+            lua.create_function(|_, reference: String| read_op_secret(&reference))?,
+        )?;
+        Ok(())
+    }
 }

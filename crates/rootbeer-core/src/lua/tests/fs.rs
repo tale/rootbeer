@@ -110,8 +110,9 @@ fn rb_link_pushes_symlink_op() {
 #[test]
 fn rb_link_errors_on_missing_source() {
     let tmp = tempfile::tempdir().unwrap();
-    let lua = crate::lua::test_support::vm(tmp.path(), None);
-    let err = lua
+    let vm = crate::lua::test_support::vm(tmp.path(), None);
+    let err = vm
+        .lua
         .load(
             r#"
             local rb = require("rootbeer")
@@ -168,8 +169,9 @@ fn rb_copy_file_pushes_copy_op_with_canonical_source() {
 #[test]
 fn rb_copy_file_errors_on_missing_source() {
     let tmp = tempfile::tempdir().unwrap();
-    let lua = crate::lua::test_support::vm(tmp.path(), None);
-    let err = lua
+    let vm = crate::lua::test_support::vm(tmp.path(), None);
+    let err = vm
+        .lua
         .load(
             r#"
             local rb = require("rootbeer")

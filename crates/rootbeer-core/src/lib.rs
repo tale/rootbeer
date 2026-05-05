@@ -2,10 +2,12 @@ mod executor;
 mod lua;
 mod pipeline;
 mod plan;
+pub mod profile;
 
 pub use executor::{ExecutionHandler, ExecutionReport, OpResult};
 pub use pipeline::{Mode, Options, Pipeline, PlannedPipeline};
 pub use plan::Op;
+pub use profile::ProfileError;
 
 #[cfg(feature = "embedded-stdlib")]
 pub use lua::require::embedded_modules;
@@ -62,23 +64,17 @@ pub fn script_path() -> PathBuf {
 
 #[derive(Debug)]
 pub enum Error {
-    Io(std::io::Error),
+    Io(io::Error),
     Lua(mlua::Error),
-    /// The Lua script requires a profile but none was provided (or the
-    /// provided profile didn't match any entry).
-    ProfileRequired {
-        active: Option<String>,
-        profiles: Vec<String>,
-    },
+    Profile(ProfileError),
 }
 
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Io(e) => write!(f, "{e}"),
+            Error::Profile(e) => write!(f, "{e}"),
             Error::Lua(e) => {
-                // Extract just the first meaningful line from Lua runtime
-                // errors, dropping the "runtime error:" prefix and stack trace.
                 let msg = e.to_string();
                 let msg = msg
                     .strip_prefix("runtime error: ")
@@ -90,26 +86,12 @@ impl Display for Error {
                     .replace("@rootbeer/", "rootbeer.");
                 write!(f, "{msg}")
             }
-            Error::ProfileRequired { active, profiles } => {
-                if let Some(name) = active {
-                    write!(
-                        f,
-                        "unknown profile '{name}', expected one of: {}",
-                        profiles.join(", ")
-                    )
-                } else {
-                    write!(
-                        f,
-                        "a profile is required, expected one of: {}",
-                        profiles.join(", ")
-                    )
-                }
-            }
         }
     }
 }
 
 impl error::Error for Error {}
+
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Error::Io(e)
@@ -119,5 +101,11 @@ impl From<io::Error> for Error {
 impl From<mlua::Error> for Error {
     fn from(e: mlua::Error) -> Self {
         Error::Lua(e)
+    }
+}
+
+impl From<ProfileError> for Error {
+    fn from(e: ProfileError) -> Self {
+        Error::Profile(e)
     }
 }

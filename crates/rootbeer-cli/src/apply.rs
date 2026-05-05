@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use owo_colors::OwoColorize;
+use rootbeer_core::profile::ProfileError;
 use rootbeer_core::{ExecutionHandler, Op, OpResult};
 
 /// Apply the rootbeer configuration
@@ -18,7 +19,9 @@ pub struct Args {
     #[arg(short, long)]
     pub script: Option<PathBuf>,
 
-    /// Configuration profile name, exposed as `rb.profile` in Lua
+    /// Configuration profile name; overrides the strategy declared in
+    /// `rb.profile.define`.
+    #[arg(short = 'p', long)]
     pub profile: Option<String>,
 }
 
@@ -129,25 +132,14 @@ pub fn run(args: Args, lua_dir: Option<&PathBuf>) {
     );
 
     let planned = pipeline.plan().unwrap_or_else(|e| {
-        if let rootbeer_core::Error::ProfileRequired { active, profiles } = &e {
-            match active {
-                Some(name) => eprintln!(
-                    "{} unknown profile '{}', expected one of: {}",
-                    "✗".red().bold(),
-                    name,
-                    profiles.join(", ")
-                ),
-                None => eprintln!(
-                    "{} a profile is required for this configuration",
-                    "✗".red().bold(),
-                ),
+        match &e {
+            rootbeer_core::Error::Profile(pe) => {
+                eprintln!("{} {pe}", "✗".red().bold());
+                if let Some(hint) = profile_hint(pe) {
+                    eprintln!("{hint}");
+                }
             }
-            eprintln!(
-                "hint: run {} with a profile name",
-                format!("rb apply <{}>", profiles.join("|")).cyan()
-            );
-        } else {
-            eprintln!("{} error: {e}", "✗".red().bold());
+            _ => eprintln!("{} error: {e}", "✗".red().bold()),
         }
         std::process::exit(1);
     });
@@ -169,4 +161,55 @@ pub fn run(args: Args, lua_dir: Option<&PathBuf>) {
             std::process::exit(1);
         }
     }
+}
+
+fn profile_hint(err: &ProfileError) -> Option<String> {
+    match err {
+        ProfileError::Required { active, profiles } if !profiles.is_empty() => {
+            let mut out = format!(
+                "  {} {}",
+                "hint:".dimmed(),
+                format!("rb apply --profile <{}>", profiles.join("|")).cyan()
+            );
+            if let Some(name) = active {
+                if let Some(suggestion) = closest_match(name, profiles) {
+                    out.push_str(&format!(" (did you mean '{}'?)", suggestion.cyan()));
+                }
+            }
+            Some(out)
+        }
+        ProfileError::NoMatch { profiles, .. } if !profiles.is_empty() => Some(format!(
+            "  {} pass {} or extend {}",
+            "hint:".dimmed(),
+            format!("--profile <{}>", profiles.join("|")).cyan(),
+            "rb.profile.define(...)".cyan()
+        )),
+        _ => None,
+    }
+}
+
+fn closest_match<'a>(name: &str, candidates: &'a [String]) -> Option<&'a str> {
+    let target = name.to_lowercase();
+    candidates
+        .iter()
+        .map(|c| (levenshtein(&target, &c.to_lowercase()), c.as_str()))
+        .filter(|(d, c)| *d <= (c.len() / 2).max(2))
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, c)| c)
+}
+
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        curr[0] = i;
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
 }

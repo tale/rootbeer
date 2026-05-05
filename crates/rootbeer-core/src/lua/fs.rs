@@ -1,161 +1,111 @@
-use crate::plan::Op;
 use mlua::{Error as LuaError, Lua, Result as LuaResult, Table};
-use std::path::{Path, PathBuf};
 
-/// Resolves a path, while handling '~' for the home directory otherwise
-/// falling back to the script directory for relative paths.
-pub(super) fn resolve_path(script_dir: &Path, path: &str) -> PathBuf {
-    let expanded = if let Some(rest) = path.strip_prefix('~') {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-        if rest.is_empty() {
-            PathBuf::from(home)
-        } else {
-            PathBuf::from(home).join(rest.strip_prefix('/').unwrap_or(rest))
-        }
-    } else {
-        PathBuf::from(path)
-    };
+use super::ctx::Ctx;
+use super::module::Module;
+use crate::plan::Op;
 
-    if expanded.is_relative() {
-        script_dir.join(expanded)
-    } else {
-        expanded
+pub(crate) struct Fs;
+
+impl Module for Fs {
+    const NAME: &'static str = "";
+
+    fn build(lua: &Lua, t: &Table) -> LuaResult<()> {
+        t.set(
+            "file",
+            lua.create_function(|lua, (path, content): (String, String)| {
+                Ctx::from(lua).write(&path, content);
+                Ok(())
+            })?,
+        )?;
+
+        t.set(
+            "link_file",
+            lua.create_function(|lua, (src, dest): (String, String)| {
+                let cx = Ctx::from(lua);
+                let resolved = cx.source(&src);
+                let canonical = cx.canonicalize("link_file source", &src, &resolved)?;
+                cx.push(Op::Symlink {
+                    src: canonical,
+                    dst: cx.resolve(&dest),
+                });
+                Ok(())
+            })?,
+        )?;
+
+        t.set(
+            "copy_file",
+            lua.create_function(|lua, (src, dest): (String, String)| {
+                let cx = Ctx::from(lua);
+                let resolved = cx.source(&src);
+                let canonical = cx.canonicalize("copy_file source", &src, &resolved)?;
+                cx.push(Op::CopyFileIfMissing {
+                    src: canonical,
+                    dst: cx.resolve(&dest),
+                });
+                Ok(())
+            })?,
+        )?;
+
+        t.set(
+            "link",
+            lua.create_function(|lua, (src, dest): (String, String)| {
+                let cx = Ctx::from(lua);
+                let resolved_src = cx.resolve(&src);
+                if !resolved_src.exists() {
+                    return Err(LuaError::RuntimeError(format!(
+                        "link source '{}' (resolved to '{}'): not found",
+                        src,
+                        resolved_src.display(),
+                    )));
+                }
+                cx.push(Op::Symlink {
+                    src: resolved_src,
+                    dst: cx.resolve(&dest),
+                });
+                Ok(())
+            })?,
+        )?;
+
+        t.set(
+            "path_exists",
+            lua.create_function(|lua, path: String| Ok(Ctx::from(lua).resolve(&path).exists()))?,
+        )?;
+
+        t.set(
+            "is_file",
+            lua.create_function(|lua, path: String| Ok(Ctx::from(lua).resolve(&path).is_file()))?,
+        )?;
+
+        t.set(
+            "is_dir",
+            lua.create_function(|lua, path: String| Ok(Ctx::from(lua).resolve(&path).is_dir()))?,
+        )?;
+
+        t.set(
+            "exec",
+            lua.create_function(|lua, (cmd, args): (String, Option<Vec<String>>)| {
+                let cx = Ctx::from(lua);
+                cx.push(Op::Exec {
+                    cmd,
+                    args: args.unwrap_or_default(),
+                    cwd: cx.runtime.script_dir.clone(),
+                });
+                Ok(())
+            })?,
+        )?;
+
+        t.set(
+            "remote",
+            lua.create_function(|lua, url: String| {
+                let cx = Ctx::from(lua);
+                cx.push(Op::SetRemoteUrl {
+                    dir: cx.runtime.script_dir.clone(),
+                    url,
+                });
+                Ok(())
+            })?,
+        )?;
+
+        Ok(())
     }
-}
-
-pub(crate) fn register(lua: &Lua, table: &Table) -> LuaResult<()> {
-    table.set(
-        "file",
-        lua.create_function(|lua, (path, content): (String, String)| {
-            super::defer_write(lua, &path, content)
-        })?,
-    )?;
-
-    table.set(
-        "link_file",
-        lua.create_function(|lua, (src, dest): (String, String)| {
-            let (runtime, run) = super::ctx(lua);
-            let resolved_src = runtime.script_dir.join(&src);
-            let resolved_dst = resolve_path(&runtime.script_dir, &dest);
-
-            let canonical_src = resolved_src.canonicalize().map_err(|e| {
-                LuaError::RuntimeError(format!(
-                    "link_file source '{}' (resolved to '{}'): {}",
-                    src,
-                    resolved_src.display(),
-                    e
-                ))
-            })?;
-
-            run.lock().push(Op::Symlink {
-                src: canonical_src,
-                dst: resolved_dst,
-            });
-
-            Ok(())
-        })?,
-    )?;
-
-    table.set(
-        "copy_file",
-        lua.create_function(|lua, (src, dest): (String, String)| {
-            let (runtime, run) = super::ctx(lua);
-            let resolved_src = runtime.script_dir.join(&src);
-            let resolved_dst = resolve_path(&runtime.script_dir, &dest);
-
-            let canonical_src = resolved_src.canonicalize().map_err(|e| {
-                LuaError::RuntimeError(format!(
-                    "copy_file source '{}' (resolved to '{}'): {}",
-                    src,
-                    resolved_src.display(),
-                    e
-                ))
-            })?;
-
-            run.lock().push(Op::CopyFileIfMissing {
-                src: canonical_src,
-                dst: resolved_dst,
-            });
-
-            Ok(())
-        })?,
-    )?;
-
-    table.set(
-        "link",
-        lua.create_function(|lua, (src, dest): (String, String)| {
-            let (runtime, run) = super::ctx(lua);
-            let resolved_src = resolve_path(&runtime.script_dir, &src);
-            let resolved_dst = resolve_path(&runtime.script_dir, &dest);
-
-            if !resolved_src.exists() {
-                return Err(LuaError::RuntimeError(format!(
-                    "link source '{}' (resolved to '{}'): not found",
-                    src,
-                    resolved_src.display(),
-                )));
-            }
-
-            run.lock().push(Op::Symlink {
-                src: resolved_src,
-                dst: resolved_dst,
-            });
-
-            Ok(())
-        })?,
-    )?;
-
-    table.set(
-        "path_exists",
-        lua.create_function(|lua, path: String| {
-            let (runtime, _) = super::ctx(lua);
-            let resolved = resolve_path(&runtime.script_dir, &path);
-            Ok(resolved.exists())
-        })?,
-    )?;
-
-    table.set(
-        "is_file",
-        lua.create_function(|lua, path: String| {
-            let (runtime, _) = super::ctx(lua);
-            let resolved = resolve_path(&runtime.script_dir, &path);
-            Ok(resolved.is_file())
-        })?,
-    )?;
-
-    table.set(
-        "is_dir",
-        lua.create_function(|lua, path: String| {
-            let (runtime, _) = super::ctx(lua);
-            let resolved = resolve_path(&runtime.script_dir, &path);
-            Ok(resolved.is_dir())
-        })?,
-    )?;
-
-    table.set(
-        "exec",
-        lua.create_function(|lua, (cmd, args): (String, Option<Vec<String>>)| {
-            let (runtime, run) = super::ctx(lua);
-            run.lock().push(Op::Exec {
-                cmd,
-                args: args.unwrap_or_default(),
-                cwd: runtime.script_dir.clone(),
-            });
-            Ok(())
-        })?,
-    )?;
-
-    table.set(
-        "remote",
-        lua.create_function(|lua, url: String| {
-            let (runtime, run) = super::ctx(lua);
-            run.lock().push(Op::SetRemoteUrl {
-                dir: runtime.script_dir.clone(),
-                url,
-            });
-            Ok(())
-        })?,
-    )?;
-
-    Ok(())
 }
