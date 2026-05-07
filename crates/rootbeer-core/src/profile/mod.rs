@@ -1,19 +1,8 @@
-//! Writer utilities for data formats and scripts.
+//! Profile resolution and branching helpers.
 //!
-//! Each format implements a `Codec` trait by providing `encode`/`decode`
-//! over a Serde Value (makes it easy to implement new formats). The codec
-//! exposes a register method to easily wire it up to the `rb` table.
-//!
-//! ```text
-//! rb.<fmt>.encode(t)        — table -> string
-//! rb.<fmt>.decode(s)        — string -> table
-//! rb.<fmt>.read(path)       — path  -> table (consume and decode)
-//! rb.<fmt>.write(path, t)   — path, table -> (encode and write)
-//! ```
-//!
-//! `read` is synchronous (the script needs the value immediately). `write`
-//! defers via to the planning architecture of Rootbeer and only runs during
-//! the execution phase.
+//! The user declares valid profile names and the string matchers that resolve
+//! to each profile. Strategies decide which runtime string should be matched
+//! against that schema when the CLI did not provide an explicit profile.
 //!
 
 mod error;
@@ -62,22 +51,21 @@ impl ProfileContext {
             .unwrap_or_default()
     }
 
-    pub fn match_hostname(&self, hostname: &str) -> Option<String> {
+    pub fn match_value(&self, value: &str) -> Option<String> {
         self.schema.as_ref().and_then(|schema| {
             schema
                 .iter()
-                .find(|(_, spec)| spec.hosts.iter().any(|h| h == hostname))
+                .find(|(_, spec)| spec.matches.iter().any(|m| m == value))
                 .map(|(name, _)| name.clone())
         })
     }
 
+    pub fn match_hostname(&self, hostname: &str) -> Option<String> {
+        self.match_value(hostname)
+    }
+
     pub fn match_user(&self, user: &str) -> Option<String> {
-        self.schema.as_ref().and_then(|schema| {
-            schema
-                .iter()
-                .find(|(_, spec)| spec.users.iter().any(|u| u == user))
-                .map(|(name, _)| name.clone())
-        })
+        self.match_value(user)
     }
 }
 

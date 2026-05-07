@@ -22,6 +22,40 @@ impl Module for Profile {
     }
 }
 
+#[derive(Clone)]
+struct StrategyFacts {
+    hostname: Option<String>,
+    user: String,
+}
+
+struct BuiltinStrategy {
+    name: &'static str,
+    aliases: &'static [&'static str],
+    resolve: fn(&Lua, &StrategyFacts) -> mlua::Result<Option<String>>,
+    missing: fn(&Lua, &StrategyFacts) -> ProfileError,
+}
+
+const BUILTIN_STRATEGIES: &[BuiltinStrategy] = &[
+    BuiltinStrategy {
+        name: "cli",
+        aliases: &[],
+        resolve: resolve_cli,
+        missing: missing_cli,
+    },
+    BuiltinStrategy {
+        name: "hostname",
+        aliases: &["match_hostname"],
+        resolve: resolve_hostname,
+        missing: missing_hostname,
+    },
+    BuiltinStrategy {
+        name: "user",
+        aliases: &["match_user"],
+        resolve: resolve_user,
+        missing: missing_user,
+    },
+];
+
 fn define(lua: &Lua, spec_table: Table) -> mlua::Result<()> {
     if state(lua).schema().is_some() {
         return Err(ProfileError::AlreadyConfigured.into());
@@ -31,103 +65,164 @@ fn define(lua: &Lua, spec_table: Table) -> mlua::Result<()> {
     let schema: BTreeMap<String, Spec> = profiles.into_iter().collect();
     state_mut(lua).schema = Some(schema);
 
-    let cli = state(lua).cli().map(String::from);
-    if let Some(cli) = cli {
-        let known = state(lua).schema_keys();
-        if !state(lua).schema().unwrap().contains_key(&cli) {
-            return Err(ProfileError::Required {
-                active: Some(cli),
-                profiles: known,
-            }
-            .into());
-        }
-        state_mut(lua).active = Some(cli);
-        return Ok(());
-    }
-
     state_mut(lua).active = resolve(lua, strategy)?;
     Ok(())
 }
 
 fn resolve(lua: &Lua, strategy: Strategy) -> mlua::Result<Option<String>> {
-    let host: Table = lua.globals().get::<Table>("rootbeer")?.get("host")?;
-    let hostname: Option<String> = host.get("hostname")?;
-    let user: String = host.get("user")?;
+    let facts = strategy_facts(lua)?;
 
     match strategy {
-        Strategy::Cli => Err(ProfileError::Required {
-            active: None,
-            profiles: state(lua).schema_keys(),
-        }
-        .into()),
-
-        Strategy::Hostname => {
-            let matched = hostname
-                .as_deref()
-                .and_then(|h| state(lua).match_hostname(h));
-            matched.map(Some).ok_or_else(|| {
-                ProfileError::NoMatch {
-                    strategy: "hostname",
-                    value: hostname,
-                    profiles: state(lua).schema_keys(),
-                }
-                .into()
-            })
+        Strategy::Builtin(name) => {
+            let builtin = builtin_strategy(&name)
+                .ok_or_else(|| ProfileError::InvalidStrategy(name.clone()))?;
+            resolve_builtin(lua, &facts, builtin, true)
         }
 
-        Strategy::User => state(lua).match_user(&user).map(Some).ok_or_else(|| {
-            ProfileError::NoMatch {
-                strategy: "user",
-                value: Some(user),
-                profiles: state(lua).schema_keys(),
-            }
-            .into()
-        }),
-
-        Strategy::Custom(f) => {
-            let ctx = build_ctx(lua, hostname, user)?;
-            match f.call::<Value>(ctx)? {
-                Value::Nil => Ok(None),
-                Value::String(s) => {
-                    let name = s.to_str()?.to_string();
-                    if !state(lua).schema().unwrap().contains_key(&name) {
-                        return Err(ProfileError::Required {
-                            active: Some(name),
-                            profiles: state(lua).schema_keys(),
-                        }
-                        .into());
-                    }
-                    Ok(Some(name))
-                }
-                v => Err(ProfileError::StrategyReturnedNonString(v.type_name()).into()),
-            }
-        }
+        Strategy::Custom(f) => resolve_custom(lua, f, facts),
     }
 }
 
-fn build_ctx(lua: &Lua, hostname: Option<String>, user: String) -> mlua::Result<Table> {
+fn strategy_facts(lua: &Lua) -> mlua::Result<StrategyFacts> {
+    let host: Table = lua.globals().get::<Table>("rootbeer")?.get("host")?;
+
+    Ok(StrategyFacts {
+        hostname: host.get("hostname")?,
+        user: host.get("user")?,
+    })
+}
+
+fn builtin_strategy(name: &str) -> Option<&'static BuiltinStrategy> {
+    BUILTIN_STRATEGIES
+        .iter()
+        .find(|strategy| strategy.name == name)
+}
+
+fn resolve_builtin(
+    lua: &Lua,
+    facts: &StrategyFacts,
+    builtin: &'static BuiltinStrategy,
+    require_match: bool,
+) -> mlua::Result<Option<String>> {
+    let matched = (builtin.resolve)(lua, facts)?;
+    if matched.is_none() && require_match {
+        return Err((builtin.missing)(lua, facts).into());
+    }
+
+    Ok(matched)
+}
+
+fn resolve_cli(lua: &Lua, _: &StrategyFacts) -> mlua::Result<Option<String>> {
+    let s = state(lua);
+    let Some(cli) = s.cli() else {
+        return Ok(None);
+    };
+
+    if !s.schema().unwrap().contains_key(cli) {
+        return Err(ProfileError::Required {
+            active: Some(cli.to_string()),
+            profiles: s.schema_keys(),
+        }
+        .into());
+    }
+
+    Ok(Some(cli.to_string()))
+}
+
+fn missing_cli(lua: &Lua, _: &StrategyFacts) -> ProfileError {
+    ProfileError::Required {
+        active: None,
+        profiles: state(lua).schema_keys(),
+    }
+}
+
+fn resolve_hostname(lua: &Lua, facts: &StrategyFacts) -> mlua::Result<Option<String>> {
+    Ok(facts
+        .hostname
+        .as_deref()
+        .and_then(|h| state(lua).match_hostname(h)))
+}
+
+fn missing_hostname(lua: &Lua, facts: &StrategyFacts) -> ProfileError {
+    ProfileError::NoMatch {
+        strategy: "hostname",
+        value: facts.hostname.clone(),
+        profiles: state(lua).schema_keys(),
+    }
+}
+
+fn resolve_user(lua: &Lua, facts: &StrategyFacts) -> mlua::Result<Option<String>> {
+    Ok(state(lua).match_user(&facts.user))
+}
+
+fn missing_user(lua: &Lua, facts: &StrategyFacts) -> ProfileError {
+    ProfileError::NoMatch {
+        strategy: "user",
+        value: Some(facts.user.clone()),
+        profiles: state(lua).schema_keys(),
+    }
+}
+
+fn resolve_custom(lua: &Lua, f: Function, facts: StrategyFacts) -> mlua::Result<Option<String>> {
+    let ctx = build_ctx(lua, facts)?;
+    match f.call::<Value>(ctx)? {
+        Value::Nil => Ok(None),
+        Value::String(s) => {
+            let name = s.to_str()?.to_string();
+            if !state(lua).schema().unwrap().contains_key(&name) {
+                return Err(ProfileError::Required {
+                    active: Some(name),
+                    profiles: state(lua).schema_keys(),
+                }
+                .into());
+            }
+            Ok(Some(name))
+        }
+        v => Err(ProfileError::StrategyReturnedNonString(v.type_name()).into()),
+    }
+}
+
+fn build_ctx(lua: &Lua, facts: StrategyFacts) -> mlua::Result<Table> {
     let ctx = lua.create_table()?;
 
-    let h = hostname;
     ctx.set(
-        "match_hostname",
-        lua.create_function(move |lua, ()| {
-            Ok(h.as_deref().and_then(|hn| state(lua).match_hostname(hn)))
+        "match",
+        lua.create_function(|lua, value: Option<String>| {
+            Ok(value.as_deref().and_then(|v| state(lua).match_value(v)))
         })?,
     )?;
 
-    let u = user;
-    ctx.set(
-        "match_user",
-        lua.create_function(move |lua, ()| Ok(state(lua).match_user(&u)))?,
-    )?;
+    for builtin in BUILTIN_STRATEGIES {
+        install_ctx_strategy(lua, &ctx, builtin.name, builtin, &facts)?;
+        for alias in builtin.aliases {
+            install_ctx_strategy(lua, &ctx, alias, builtin, &facts)?;
+        }
+    }
 
     Ok(ctx)
 }
 
+fn install_ctx_strategy(
+    lua: &Lua,
+    ctx: &Table,
+    name: &'static str,
+    builtin: &'static BuiltinStrategy,
+    facts: &StrategyFacts,
+) -> mlua::Result<()> {
+    let facts = facts.clone();
+    ctx.set(
+        name,
+        lua.create_function(move |lua, ()| resolve_builtin(lua, &facts, builtin, false))?,
+    )
+}
+
 fn current(lua: &Lua, _: ()) -> mlua::Result<Option<String>> {
     let s = state(lua);
-    Ok(s.active().or_else(|| s.cli()).map(String::from))
+    if s.schema().is_some() {
+        Ok(s.active().map(String::from))
+    } else {
+        Ok(s.cli().map(String::from))
+    }
 }
 
 fn select(lua: &Lua, map: Table) -> mlua::Result<Value> {

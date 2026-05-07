@@ -1,18 +1,22 @@
 --- @meta
 
---- @class profile.Spec
---- @field hosts? string[] Hostnames that resolve to this profile under the `"hostname"` strategy.
---- @field users? string[] Usernames that resolve to this profile under the `"user"` strategy.
+--- Strings that resolve to a profile when matched by the active strategy.
+--- `"hostname"` matches against `rb.host.hostname`; `"user"` matches
+--- against `rb.host.user`; custom strategies can call `ctx.match(value)` or
+--- compose built-in strategy helpers such as `ctx.cli()` and `ctx.hostname()`.
+--- @alias profile.Matchers string[]
 
 --- @class profile.Ctx
---- @field match_hostname fun(): string?
---- @field match_user fun(): string?
+--- @field match fun(value: string?): string? Match an arbitrary string against the profile matcher table.
+--- @field cli fun(): string? Return and validate the `--profile` value, or `nil` when omitted.
+--- @field hostname fun(): string? Match `rb.host.hostname` against the profile matcher table.
+--- @field user fun(): string? Match `rb.host.user` against the profile matcher table.
 
---- @alias profile.Strategy "cli" | "hostname" | "user" | fun(ctx: profile.Ctx): string|nil
+--- @alias profile.Strategy "cli" | "hostname" | "user" | fun(ctx: profile.Ctx): string?
 
 --- @class profile.Setup
---- @field strategy profile.Strategy How the active profile is chosen when `--profile` is not passed.
---- @field profiles table<string, profile.Spec> The set of valid profiles.
+--- @field strategy profile.Strategy How the active profile is chosen.
+--- @field profiles table<string, profile.Matchers> Profile name → exact strings that resolve to that profile.
 
 --- @class profile
 local profile = {}
@@ -24,8 +28,8 @@ local profile = {}
 --- rb.profile.define({
 ---   strategy = "hostname",
 ---   profiles = {
----     personal = { hosts = { "Aarnavs-MBP" } },
----     work     = { hosts = { "atale-mbp" } },
+---     personal = { "Aarnavs-MBP" },
+---     work     = { "atale-mbp" },
 ---   },
 --- })
 --- ```

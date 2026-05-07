@@ -197,7 +197,7 @@ fn cli_strategy_without_flag_errors() {
 }
 
 #[test]
-fn cli_flag_overrides_strategy() {
+fn cli_flag_does_not_override_strategy() {
     let vm = vm_in_with_profile(
         r#"
         rb.profile.define({
@@ -210,21 +210,55 @@ fn cli_flag_overrides_strategy() {
         Some("work"),
     );
     let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "personal");
+}
+
+#[test]
+fn cli_strategy_uses_flag() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = "cli",
+            profiles = { work = {}, personal = {} },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        Some("work"),
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
     assert_eq!(result, "work");
 }
 
 #[test]
-fn cli_flag_validated_against_schema() {
+fn cli_strategy_validates_flag_against_schema() {
     match err(
         r#"rb.profile.define({
-            strategy = "hostname",
-            profiles = { work = { hosts = {"x"} }, personal = { hosts = {"y"} } },
+            strategy = "cli",
+            profiles = { work = {}, personal = {} },
         })"#,
         Some("wrok"),
     ) {
         ProfileError::Required { active, .. } => assert_eq!(active.as_deref(), Some("wrok")),
         other => panic!("unexpected: {other:?}"),
     }
+}
+
+#[test]
+fn ignored_cli_flag_is_not_validated_against_schema() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = function() return "personal" end,
+            profiles = { work = {}, personal = {} },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        Some("wrok"),
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "personal");
 }
 
 // ────────────────────────── strategy = "hostname" ────────────────
@@ -235,8 +269,8 @@ fn hostname_strategy_no_match_errors() {
         r#"rb.profile.define({
             strategy = "hostname",
             profiles = {
-                work = { hosts = { "definitely-not-this-host" } },
-                personal = { hosts = { "also-not-this-host" } },
+                work = { "definitely-not-this-host" },
+                personal = { "also-not-this-host" },
             },
         })"#,
         None,
@@ -254,8 +288,8 @@ fn user_strategy_no_match_errors() {
         r#"rb.profile.define({
             strategy = "user",
             profiles = {
-                work = { users = { "nobody" } },
-                personal = { users = { "alsonobody" } },
+                work = { "nobody" },
+                personal = { "alsonobody" },
             },
         })"#,
         None,
@@ -263,6 +297,23 @@ fn user_strategy_no_match_errors() {
         ProfileError::NoMatch { strategy, .. } => assert_eq!(strategy, "user"),
         other => panic!("unexpected: {other:?}"),
     }
+}
+
+#[test]
+fn user_strategy_matches_profile_strings() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = "user",
+            profiles = { current = { rb.host.user }, other = { "nobody" } },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        None,
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "current");
 }
 
 // ─────────────────────── function strategy + ctx ─────────────────
@@ -302,6 +353,23 @@ fn function_strategy_returning_nil_yields_nil_active() {
 }
 
 #[test]
+fn function_strategy_returning_nil_does_not_fall_back_to_cli() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = function() return nil end,
+            profiles = { server = {} },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        Some("server"),
+    );
+    let result: Option<String> = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, None);
+}
+
+#[test]
 fn function_strategy_validates_returned_name() {
     match err(
         r#"rb.profile.define({
@@ -321,13 +389,13 @@ fn ctx_match_helpers_compose_into_a_chain() {
         r#"
         rb.profile.define({
             strategy = function(ctx)
-                return ctx.match_hostname()
-                    or ctx.match_user()
+                return ctx.hostname()
+                    or ctx.user()
                     or "fallback"
             end,
             profiles = {
-                work = { hosts = { "x" } },
-                personal = { hosts = { "y" } },
+                work = { "x" },
+                personal = { "y" },
                 fallback = {},
             },
         })
@@ -338,6 +406,54 @@ fn ctx_match_helpers_compose_into_a_chain() {
     );
     let result: String = vm.lua.globals().get("result").unwrap();
     assert_eq!(result, "fallback");
+}
+
+#[test]
+fn ctx_can_use_cli_strategy_explicitly() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = function(ctx) return ctx.cli() or "personal" end,
+            profiles = { work = {}, personal = {} },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        Some("work"),
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "work");
+}
+
+#[test]
+fn ctx_cli_validates_flag_when_used() {
+    match err(
+        r#"rb.profile.define({
+            strategy = function(ctx) return ctx.cli() or "personal" end,
+            profiles = { work = {}, personal = {} },
+        })"#,
+        Some("wrok"),
+    ) {
+        ProfileError::Required { active, .. } => assert_eq!(active.as_deref(), Some("wrok")),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[test]
+fn ctx_match_checks_arbitrary_strings() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = function(ctx) return ctx.match("token") end,
+            profiles = { work = { "token" }, personal = {} },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        None,
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "work");
 }
 
 // ───────────────────────────── select / when ─────────────────────

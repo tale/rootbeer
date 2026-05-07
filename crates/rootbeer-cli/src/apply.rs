@@ -19,8 +19,8 @@ pub struct Args {
     #[arg(short, long)]
     pub script: Option<PathBuf>,
 
-    /// Configuration profile name; overrides the strategy declared in
-    /// `rb.profile.define`.
+    /// Configuration profile input; used by `strategy = "cli"` or custom
+    /// strategies that call `ctx.cli()`.
     #[arg(short = 'p', long)]
     pub profile: Option<String>,
 }
@@ -179,10 +179,10 @@ fn profile_hint(err: &ProfileError) -> Option<String> {
             Some(out)
         }
         ProfileError::NoMatch { profiles, .. } if !profiles.is_empty() => Some(format!(
-            "  {} pass {} or extend {}",
+            "  {} extend {} or compose {} into your strategy",
             "hint:".dimmed(),
-            format!("--profile <{}>", profiles.join("|")).cyan(),
-            "rb.profile.define(...)".cyan()
+            "rb.profile.define(...)".cyan(),
+            "ctx.cli()".cyan()
         )),
         _ => None,
     }
