@@ -1,0 +1,8 @@
+---
+base: luau
+name: rootbeer
+globals:
+  rootbeer:
+    any: true
+  rb:
+    any: true

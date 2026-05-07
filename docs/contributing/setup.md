@@ -79,6 +79,30 @@ pnpm dev
 pnpm build
 ```
 
+### Writing Docs
+
+The north-star pages for documentation style are
+[What is Rootbeer?](../guide/what-is-rootbeer) and
+[Getting Started](../guide/getting-started). New pages should feel like they
+belong next to those: direct, practical, and oriented around what the user is
+trying to do.
+
+Guidelines:
+
+- Keep the table of contents useful. Prefer a small number of substantial
+  sections over many thin headings.
+- Write for the ideal path first. Show the recommended way to use a feature,
+  and mention deviations only when they add useful context.
+- Be concise. Short paragraphs and focused examples are better than exhaustive
+  explanation.
+- Let layout carry meaning. Use headings, tips, and code blocks to make pages
+  scannable without turning them into API inventories.
+- If a section is too thin, either merge it with a nearby section or add enough
+  explanation and examples to make it worth scanning to.
+- Keep API details in generated references. Guide pages should explain why and
+  how to use a feature; the include at the bottom can carry function-level
+  detail.
+
 ## Git Hooks
 
 Install the pre-commit and pre-push hooks with:

@@ -66,7 +66,9 @@ end
 --- @param lines string[]
 --- @param new string[]
 local function add_block(lines, new)
-	if #new == 0 then return end
+	if #new == 0 then
+		return
+	end
 	if #lines > 0 then
 		lines[#lines + 1] = ""
 	end
@@ -79,7 +81,9 @@ end
 --- @param lines string[]
 --- @param extra string|string[]|nil
 local function add_extra(lines, extra)
-	if not extra then return end
+	if not extra then
+		return
+	end
 	if type(extra) == "string" then
 		add(lines, extra, true)
 	elseif type(extra) == "table" then
@@ -109,7 +113,7 @@ end
 local function build_zshenv(dir, env)
 	local lines = {}
 	for key, value in pairs(env) do
-		lines[#lines + 1] = 'export ' .. key .. '="' .. value .. '"'
+		lines[#lines + 1] = "export " .. key .. '="' .. value .. '"'
 	end
 	write(dir .. "/.zshenv", lines)
 end
@@ -178,9 +182,12 @@ local function build_zshrc(dir, cfg)
 		local block = {}
 		block[#block + 1] = "autoload -Uz vcs_info"
 		if check then
-			block[#block + 1] = 'zstyle ":vcs_info:git:*" check-for-changes true'
+			block[#block + 1] =
+				'zstyle ":vcs_info:git:*" check-for-changes true'
 		end
-		block[#block + 1] = 'zstyle ":vcs_info:git:*" formats "' .. formats .. '"'
+		block[#block + 1] = 'zstyle ":vcs_info:git:*" formats "'
+			.. formats
+			.. '"'
 		block[#block + 1] = "autoload -Uz add-zsh-hook"
 		block[#block + 1] = "add-zsh-hook precmd vcs_info"
 		block[#block + 1] = "setopt PROMPT_SUBST"
@@ -245,8 +252,10 @@ local function build_zshrc(dir, cfg)
 		if c.vi_nav then
 			block[#block + 1] = "zmodload zsh/complist"
 			block[#block + 1] = "bindkey -M menuselect 'h' vi-backward-char"
-			block[#block + 1] = "bindkey -M menuselect 'k' vi-up-line-or-history"
-			block[#block + 1] = "bindkey -M menuselect 'j' vi-down-line-or-history"
+			block[#block + 1] =
+				"bindkey -M menuselect 'k' vi-up-line-or-history"
+			block[#block + 1] =
+				"bindkey -M menuselect 'j' vi-down-line-or-history"
 			block[#block + 1] = "bindkey -M menuselect 'l' vi-forward-char"
 			block[#block + 1] = ""
 		end
@@ -263,7 +272,9 @@ local function build_zshrc(dir, cfg)
 
 		if c.cache then
 			block[#block + 1] = "zstyle ':completion:*' use-cache on"
-			block[#block + 1] = 'zstyle \':completion:*\' cache-path "' .. c.cache .. '"'
+			block[#block + 1] = "zstyle ':completion:*' cache-path \""
+				.. c.cache
+				.. '"'
 		end
 
 		if c.styles then

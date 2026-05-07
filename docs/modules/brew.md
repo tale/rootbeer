@@ -20,7 +20,7 @@ brew.config({
 })
 ```
 
-For conditional packages per machine, see [Multi-Device Config](/guide/multi-device).
+For conditional packages per machine, see [Profiles](/guide/profiles).
 
 ## API Reference
 

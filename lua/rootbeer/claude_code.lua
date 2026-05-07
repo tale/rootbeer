@@ -79,11 +79,21 @@ function M.config(cfg)
 	end
 
 	settings.env = cfg.env or {}
-	if cfg.hooks then settings.hooks = cfg.hooks end
-	if cfg.model then settings.model = cfg.model end
-	if cfg.language then settings.language = cfg.language end
-	if cfg.cleanup_period_days then settings.cleanupPeriodDays = cfg.cleanup_period_days end
-	if cfg.auto_updates_channel then settings.autoUpdatesChannel = cfg.auto_updates_channel end
+	if cfg.hooks then
+		settings.hooks = cfg.hooks
+	end
+	if cfg.model then
+		settings.model = cfg.model
+	end
+	if cfg.language then
+		settings.language = cfg.language
+	end
+	if cfg.cleanup_period_days then
+		settings.cleanupPeriodDays = cfg.cleanup_period_days
+	end
+	if cfg.auto_updates_channel then
+		settings.autoUpdatesChannel = cfg.auto_updates_channel
+	end
 
 	-- LSP: enable the tool flag and register plugins
 	if cfg.lsp then
@@ -103,7 +113,9 @@ function M.config(cfg)
 	end
 
 	-- Drop empty env table to keep output clean
-	if next(settings.env) == nil then settings.env = nil end
+	if next(settings.env) == nil then
+		settings.env = nil
+	end
 
 	rb.json.write(path, settings)
 end

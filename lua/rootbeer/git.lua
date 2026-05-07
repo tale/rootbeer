@@ -102,8 +102,12 @@ function M.config(cfg)
 
 	-- [core]
 	local core = {}
-	if cfg.editor then core.editor = cfg.editor end
-	if cfg.pager then core.pager = cfg.pager end
+	if cfg.editor then
+		core.editor = cfg.editor
+	end
+	if cfg.pager then
+		core.pager = cfg.pager
+	end
 
 	-- [commit], [tag], [gpg] via signing shortcut
 	if cfg.signing then
@@ -115,7 +119,8 @@ function M.config(cfg)
 
 	-- ignores
 	if cfg.ignores then
-		local ignores_path = cfg.ignores_path or (dirname(path) .. "/.gitignore")
+		local ignores_path = cfg.ignores_path
+			or (dirname(path) .. "/.gitignore")
 		core.excludesfile = ignores_path
 		rb.file(ignores_path, table.concat(cfg.ignores, "\n") .. "\n")
 	end

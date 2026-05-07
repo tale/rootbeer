@@ -14,8 +14,11 @@ local rb = require("rootbeer")
 function M.defaults(entries)
 	for _, entry in ipairs(entries) do
 		rb.exec("defaults", {
-			"write", entry.domain, entry.key,
-			"-" .. entry.type, tostring(entry.value),
+			"write",
+			entry.domain,
+			entry.key,
+			"-" .. entry.type,
+			tostring(entry.value),
 		})
 	end
 end
@@ -37,31 +40,46 @@ function M.dock(cfg)
 	local entries = {}
 
 	if cfg.autohide ~= nil then
-		entries[#entries + 1] = { key = "autohide", type = "bool", value = cfg.autohide }
+		entries[#entries + 1] =
+			{ key = "autohide", type = "bool", value = cfg.autohide }
 	end
 	if cfg.autohide_delay ~= nil then
-		entries[#entries + 1] = { key = "autohide-delay", type = "float", value = cfg.autohide_delay }
+		entries[#entries + 1] = {
+			key = "autohide-delay",
+			type = "float",
+			value = cfg.autohide_delay,
+		}
 	end
 	if cfg.magnification ~= nil then
-		entries[#entries + 1] = { key = "magnification", type = "bool", value = cfg.magnification }
+		entries[#entries + 1] =
+			{ key = "magnification", type = "bool", value = cfg.magnification }
 	end
 	if cfg.tile_size then
-		entries[#entries + 1] = { key = "tilesize", type = "int", value = cfg.tile_size }
+		entries[#entries + 1] =
+			{ key = "tilesize", type = "int", value = cfg.tile_size }
 	end
 	if cfg.large_size then
-		entries[#entries + 1] = { key = "largesize", type = "int", value = cfg.large_size }
+		entries[#entries + 1] =
+			{ key = "largesize", type = "int", value = cfg.large_size }
 	end
 	if cfg.position then
-		entries[#entries + 1] = { key = "orientation", type = "string", value = cfg.position }
+		entries[#entries + 1] =
+			{ key = "orientation", type = "string", value = cfg.position }
 	end
 	if cfg.minimize_effect then
-		entries[#entries + 1] = { key = "mineffect", type = "string", value = cfg.minimize_effect }
+		entries[#entries + 1] =
+			{ key = "mineffect", type = "string", value = cfg.minimize_effect }
 	end
 	if cfg.show_recents ~= nil then
-		entries[#entries + 1] = { key = "show-recents", type = "bool", value = cfg.show_recents }
+		entries[#entries + 1] =
+			{ key = "show-recents", type = "bool", value = cfg.show_recents }
 	end
 	if cfg.minimize_to_app ~= nil then
-		entries[#entries + 1] = { key = "minimize-to-application", type = "bool", value = cfg.minimize_to_app }
+		entries[#entries + 1] = {
+			key = "minimize-to-application",
+			type = "bool",
+			value = cfg.minimize_to_app,
+		}
 	end
 
 	for _, e in ipairs(entries) do
@@ -89,7 +107,8 @@ function M.finder(cfg)
 		entries[#entries + 1] = {
 			domain = "NSGlobalDomain",
 			key = "AppleShowAllExtensions",
-			type = "bool", value = cfg.show_extensions,
+			type = "bool",
+			value = cfg.show_extensions,
 		}
 	end
 
@@ -97,7 +116,8 @@ function M.finder(cfg)
 		entries[#entries + 1] = {
 			domain = "com.apple.finder",
 			key = "AppleShowAllFiles",
-			type = "bool", value = cfg.show_hidden,
+			type = "bool",
+			value = cfg.show_hidden,
 		}
 	end
 
@@ -105,7 +125,8 @@ function M.finder(cfg)
 		entries[#entries + 1] = {
 			domain = "com.apple.finder",
 			key = "ShowPathbar",
-			type = "bool", value = cfg.show_path_bar,
+			type = "bool",
+			value = cfg.show_path_bar,
 		}
 	end
 
@@ -113,7 +134,8 @@ function M.finder(cfg)
 		entries[#entries + 1] = {
 			domain = "com.apple.finder",
 			key = "ShowStatusBar",
-			type = "bool", value = cfg.show_status_bar,
+			type = "bool",
+			value = cfg.show_status_bar,
 		}
 	end
 
@@ -127,7 +149,8 @@ function M.finder(cfg)
 		entries[#entries + 1] = {
 			domain = "com.apple.finder",
 			key = "FXPreferredViewStyle",
-			type = "string", value = views[cfg.default_view] or cfg.default_view,
+			type = "string",
+			value = views[cfg.default_view] or cfg.default_view,
 		}
 	end
 
@@ -140,7 +163,8 @@ function M.finder(cfg)
 		entries[#entries + 1] = {
 			domain = "com.apple.finder",
 			key = "FXDefaultSearchScope",
-			type = "string", value = scopes[cfg.search_scope] or cfg.search_scope,
+			type = "string",
+			value = scopes[cfg.search_scope] or cfg.search_scope,
 		}
 	end
 
@@ -199,12 +223,14 @@ function M.hot_corners(cfg)
 				entries[#entries + 1] = {
 					domain = "com.apple.dock",
 					key = "wvous-" .. c.corner .. "-corner",
-					type = "int", value = id,
+					type = "int",
+					value = id,
 				}
 				entries[#entries + 1] = {
 					domain = "com.apple.dock",
 					key = "wvous-" .. c.corner .. "-modifier",
-					type = "int", value = 0,
+					type = "int",
+					value = 0,
 				}
 			end
 		end
@@ -230,8 +256,9 @@ end
 --- Requires `sudo` to take effect.
 function M.touch_id_sudo()
 	rb.exec("sudo", {
-		"sh", "-c",
-		'grep -q pam_tid /etc/pam.d/sudo_local 2>/dev/null || '
+		"sh",
+		"-c",
+		"grep -q pam_tid /etc/pam.d/sudo_local 2>/dev/null || "
 			.. 'echo "auth       sufficient     pam_tid.so" | sudo tee -a /etc/pam.d/sudo_local > /dev/null',
 	})
 end
@@ -251,7 +278,8 @@ function M.input(cfg)
 		entries[#entries + 1] = {
 			domain = "NSGlobalDomain",
 			key = "com.apple.swipescrolldirection",
-			type = "bool", value = cfg.natural_scrolling,
+			type = "bool",
+			value = cfg.natural_scrolling,
 		}
 	end
 
@@ -259,12 +287,14 @@ function M.input(cfg)
 		entries[#entries + 1] = {
 			domain = "com.apple.AppleMultitouchTrackpad",
 			key = "Clicking",
-			type = "bool", value = cfg.tap_to_click,
+			type = "bool",
+			value = cfg.tap_to_click,
 		}
 		entries[#entries + 1] = {
 			domain = "com.apple.driver.AppleBluetoothMultitouch.trackpad",
 			key = "Clicking",
-			type = "bool", value = cfg.tap_to_click,
+			type = "bool",
+			value = cfg.tap_to_click,
 		}
 	end
 
@@ -272,7 +302,8 @@ function M.input(cfg)
 		entries[#entries + 1] = {
 			domain = "NSGlobalDomain",
 			key = "KeyRepeat",
-			type = "int", value = cfg.key_repeat_rate,
+			type = "int",
+			value = cfg.key_repeat_rate,
 		}
 	end
 
@@ -280,7 +311,8 @@ function M.input(cfg)
 		entries[#entries + 1] = {
 			domain = "NSGlobalDomain",
 			key = "InitialKeyRepeat",
-			type = "int", value = cfg.initial_key_repeat,
+			type = "int",
+			value = cfg.initial_key_repeat,
 		}
 	end
 

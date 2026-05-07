@@ -3,9 +3,12 @@ layout: home
 
 hero:
   name: "ROOTBEER"
-  tagline: Define your system in Lua. One repo, every machine.
+  tagline: Deterministically manage your system with Lua!
   actions:
     - theme: brand
+      text: What is Rootbeer?
+      link: /guide/what-is-rootbeer
+    - theme: alt
       text: Get Started
       link: /guide/getting-started
     - theme: alt
@@ -30,9 +33,9 @@ features:
     linkText: Browse modules
   - icon: 🌐
     title: One Repo, Every Machine
-    details: Profiles and host detection let you branch config per machine from a single dotfiles repo.
-    link: /guide/multi-device
-    linkText: Multi-device setup
+    details: First-class profiles map simple strings to roles. Branch config inline, in blocks, or in dedicated files.
+    link: /guide/profiles
+    linkText: Profile system
 ---
 
 <div class="home-code-preview">

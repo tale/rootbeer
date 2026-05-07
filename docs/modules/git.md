@@ -33,7 +33,7 @@ git.config({
 })
 ```
 
-For per-machine overrides, see [Multi-Device Config](/guide/multi-device).
+For per-machine overrides, see [Profiles](/guide/profiles).
 
 ## API Reference
 

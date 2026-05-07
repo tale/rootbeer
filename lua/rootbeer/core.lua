@@ -82,7 +82,6 @@ function rootbeer.is_dir(path) end
 --- @param url string The desired remote URL (any git URL).
 function rootbeer.remote(url) end
 
-
 --- @class rootbeer.Secret
 rootbeer.secret = {}
 

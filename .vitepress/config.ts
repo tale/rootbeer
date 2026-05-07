@@ -1,4 +1,5 @@
 import { defineConfig } from "vitepress";
+import { modulesSection, referenceSection, sidebarFromSection } from "./nav";
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
@@ -9,79 +10,28 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: "Guide", link: "/guide/getting-started" },
-      { text: "Modules", link: "/modules/zsh" },
-      { text: "Reference", link: "/reference/core" },
+      { text: "Modules", link: modulesSection.root },
+      { text: "Reference", link: referenceSection.root },
     ],
 
     sidebar: [
       {
-        text: "Guide",
+        text: "Introduction",
+        collapsed: false,
         items: [
+          { text: "What is Rootbeer?", link: "/guide/what-is-rootbeer" },
           { text: "Getting Started", link: "/guide/getting-started" },
-          { text: "Core Concepts", link: "/guide/core-concepts" },
-          { text: "Multi-Device Config", link: "/guide/multi-device" },
+          { text: "Profiles", link: "/guide/profiles" },
         ],
       },
       {
         text: "Modules",
-        items: [
-          {
-            text: "Shell",
-            collapsed: true,
-            items: [{ text: "zsh", link: "/modules/zsh" }],
-          },
-          {
-            text: "Developer Tools",
-            collapsed: true,
-            items: [
-              { text: "git", link: "/modules/git" },
-              { text: "ssh", link: "/modules/ssh" },
-            ],
-          },
-          {
-            text: "AI Coding",
-            collapsed: true,
-            items: [
-              { text: "amp", link: "/modules/amp" },
-              { text: "claude_code", link: "/modules/claude-code" },
-            ],
-          },
-          {
-            text: "Package Managers",
-            collapsed: true,
-            items: [{ text: "brew", link: "/modules/brew" }],
-          },
-          {
-            text: "System",
-            collapsed: true,
-            items: [{ text: "mac", link: "/modules/mac" }],
-          },
-        ],
-      },
-      {
-        text: "Data Formats",
-        items: [
-          {
-            text: "Overview",
-            link: "/formats/",
-            collapsed: true,
-            items: [
-              { text: "json", link: "/formats/json" },
-              { text: "toml", link: "/formats/toml" },
-              { text: "yaml", link: "/formats/yaml" },
-              { text: "plist", link: "/formats/plist" },
-            ],
-          },
-          { text: "Script Writers", link: "/scripts/" },
-        ],
+        items: sidebarFromSection(modulesSection),
       },
       {
         text: "Reference",
         collapsed: true,
-        items: [
-          { text: "Core API", link: "/reference/core" },
-          { text: "Host", link: "/reference/host" },
-        ],
+        items: sidebarFromSection(referenceSection),
       },
       {
         text: "Contributing",

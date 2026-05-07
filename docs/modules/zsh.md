@@ -29,7 +29,7 @@ zsh.config({
 })
 ```
 
-For per-machine overrides, see [Multi-Device Config](/guide/multi-device).
+For per-machine overrides, see [Profiles](/guide/profiles).
 For the conditionals pattern, see [Core Concepts](/guide/core-concepts#conditionals).
 
 ## API Reference

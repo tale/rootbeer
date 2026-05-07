@@ -16,3 +16,14 @@ pre-commit:
       glob: "*.{js,ts}"
       run: pnpm oxfmt --write {staged_files}
       stage_fixed: true
+    stylua:
+      glob: "*.lua"
+      run: stylua {staged_files}
+      stage_fixed: true
+    selene:
+      glob: "*.lua"
+      run: selene {staged_files}
+    lua2md:
+      glob: "{lua/rootbeer/*.lua,scripts/lua2md.ts,.vitepress/nav.ts}"
+      run: pnpm lua2md
+      stage_fixed: true

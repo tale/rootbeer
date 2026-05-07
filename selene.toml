@@ -1,0 +1,6 @@
+std = "rootbeer"
+
+[lints]
+multiple_statements = "allow"
+mixed_table = "allow"
+unused_variable = "allow"
