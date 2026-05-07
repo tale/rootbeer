@@ -27,8 +27,8 @@ Then apply your configuration:
 
 ```bash
 rb apply              # apply configuration
-rb apply -n           # dry run (preview without writing)
-rb apply personal     # apply with a profile
+rb apply -n              # dry run (preview without writing)
+rb apply -p personal     # provide a CLI profile input
 ```
 
 ## What It Looks Like
@@ -37,14 +37,21 @@ rb apply personal     # apply with a profile
 local rb = require("rootbeer")
 local git = require("rootbeer.git")
 local zsh = require("rootbeer.zsh")
-local profile = require("rootbeer.profile")
+
+rb.profile.define({
+    strategy = "hostname",
+    profiles = {
+        personal = { "Aarnavs-MBP" },
+        work     = { "atale-mbp" },
+    },
+})
 
 git.config({
     user = {
         name = "Aarnav Tale",
-        email = profile.select({
+        email = rb.profile.select({
             default = "aarnav@personal.me",
-            work = "aarnav@company.com",
+            work    = "aarnav@company.com",
         }),
     },
     editor = "nvim",
@@ -76,7 +83,7 @@ end
 - **Config is code** — Lua, not templates. Loops, conditionals, functions, and modules.
 - **Plan & apply** — `rb.file()`, `rb.link_file()`, and module calls queue operations. Nothing touches the filesystem until `rb apply`.
 - **Declarative modules** — zsh, git, SSH, Homebrew, macOS, and more. Describe the end state as a table, rootbeer generates the files.
-- **Profiles** — Manage multiple machines from one repo with `profile.select`, `profile.when`, and `profile.config`.
+- **First-class profiles** — Declare valid profiles, resolve them from simple string matchers, and branch with `rb.profile.select`, `rb.profile.when`, and `rb.profile.config`. CLI typos get suggestions.
 - **Editor support** — `rb lsp` sets up lua-language-server for full autocomplete and type checking.
 
 ## Building
