@@ -1,14 +1,14 @@
 # ssh
 
-Declarative SSH configuration. Define your includes, host blocks, and global
-options as a Lua table — rootbeer generates the `~/.ssh/config` file for you.
-Booleans are automatically rendered as `yes`/`no`.
+The ssh module manages `~/.ssh/config` from Lua. Define includes, global
+options, and host blocks in one place; Rootbeer renders the OpenSSH config for
+you.
 
 ```lua
 local ssh = require("rootbeer.ssh")
 ```
 
-## Example
+## Configure SSH
 
 ```lua
 ssh.config({
@@ -24,6 +24,8 @@ ssh.config({
     },
 })
 ```
+
+Boolean values are rendered as the `yes`/`no` strings OpenSSH expects.
 
 ## API Reference
 

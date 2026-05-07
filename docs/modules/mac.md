@@ -1,10 +1,15 @@
 # mac
 
-Configure macOS system preferences, Dock, Finder, hot corners, and more.
+The mac module manages common macOS preferences from Lua: Dock, Finder, input,
+hot corners, hostname, Touch ID for sudo, and lower-level `defaults` writes.
 
 ```lua
 local mac = require("rootbeer.mac")
+```
 
+## Configure macOS
+
+```lua
 mac.dock({
     autohide = true,
     tile_size = 48,
@@ -36,8 +41,9 @@ mac.hostname({ name = "my-mac" })
 mac.touch_id_sudo()
 ```
 
-For one-off preferences not covered by the helpers above, use `mac.defaults()`
-directly:
+## Write Custom Defaults
+
+For preferences that don't have a helper yet, use `mac.defaults()` directly:
 
 ```lua
 mac.defaults({
@@ -45,5 +51,7 @@ mac.defaults({
     { domain = "NSGlobalDomain", key = "NSAutomaticSpellingCorrectionEnabled", type = "bool", value = false },
 })
 ```
+
+## API Reference
 
 <!--@include: ../api/_generated/mac.md-->

@@ -1,14 +1,14 @@
 # brew
 
-Declarative Homebrew package management. Define your formulae, casks, and Mac
-App Store apps as a Lua table — rootbeer generates a Brewfile and runs
-`brew bundle` to apply it.
+The brew module manages Homebrew packages from Lua. Declare your formulae,
+casks, and Mac App Store apps; Rootbeer generates a Brewfile and applies it with
+`brew bundle`.
 
 ```lua
 local brew = require("rootbeer.brew")
 ```
 
-## Example
+## Configure Homebrew
 
 ```lua
 brew.config({
@@ -20,7 +20,7 @@ brew.config({
 })
 ```
 
-For conditional packages per machine, see [Profiles](/guide/profiles).
+For packages that only belong on some machines, use [Profiles](/guide/profiles).
 
 ## API Reference
 

@@ -1,13 +1,14 @@
 # amp
 
-Declarative Amp configuration. Manage your `~/.config/amp/settings.json`
-from a Lua table — MCP servers, permissions, thinking mode, and more.
+The amp module manages Amp settings and project instructions from Lua. Use it
+for `~/.config/amp/settings.json`, MCP servers, permissions, update behavior,
+and `AGENTS.md` content.
 
 ```lua
 local amp = require("rootbeer.amp")
 ```
 
-## Example
+## Configure Amp
 
 ```lua
 amp.config({
@@ -24,7 +25,13 @@ amp.config({
         { tool = "Bash(rm *)", mode = "ask" },
     },
 })
+```
 
+## Write Instructions
+
+Use `amp.prompt()` for the instructions you want Amp to follow in this config:
+
+```lua
 amp.prompt([[
 ## Conventions
 

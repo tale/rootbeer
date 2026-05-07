@@ -1,16 +1,17 @@
 # zsh
 
-Declarative zsh configuration. Describe your entire shell setup — environment
-variables, login profile, options, aliases, prompt, history, completions — as
-a single Lua table and rootbeer generates all the zsh files for you:
-`~/.zshenv` (bootstrap), `<dir>/.zshenv`, `<dir>/.zprofile`, and
-`<dir>/.zshrc`.
+The zsh module lets you describe your shell setup as one Lua table. Rootbeer
+turns it into the files zsh expects: environment, login profile, interactive
+settings, aliases, history, completions, and startup commands.
 
 ```lua
 local zsh = require("rootbeer.zsh")
 ```
 
-## Example
+## Configure zsh
+
+Start with the settings you would normally spread across `.zshenv`,
+`.zprofile`, and `.zshrc`:
 
 ```lua
 zsh.config({
@@ -29,8 +30,11 @@ zsh.config({
 })
 ```
 
-For per-machine overrides, see [Profiles](/guide/profiles).
-For the conditionals pattern, see [Core Concepts](/guide/core-concepts#conditionals).
+Rootbeer writes the generated files into its managed config directory and uses
+`~/.zshenv` as the bootstrap entrypoint.
+
+For machine-specific values like work-only aliases or a different `EDITOR`, use
+[Profiles](/guide/profiles).
 
 ## API Reference
 

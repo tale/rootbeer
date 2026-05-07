@@ -1,19 +1,17 @@
 # git
 
-Declarative git configuration. Manages your `~/.gitconfig` and global gitignore
-from a single Lua table — no more hand-editing INI sections. Shortcuts like
-`signing` and `lfs` wire up multiple gitconfig sections at once, and `extra`
-lets you pass through tool-specific sections like `delta` or `interactive`.
+The git module manages your global Git config from Lua. It writes
+`~/.gitconfig`, can manage a global gitignore, and gives common settings like
+signing and Git LFS first-class fields.
 
 ```lua
 local git = require("rootbeer.git")
 ```
 
-## Example
+## Configure Git
 
-`signing` wires up `user.signingkey`, `gpg.format`, `commit.gpgSign`, and
-`tag.gpgSign` automatically. `lfs = true` emits the full `[filter "lfs"]`
-section. `extra` passes through arbitrary gitconfig sections.
+Most config maps directly to familiar Git settings. Use `extra` for
+tool-specific sections that Rootbeer doesn't model directly, such as `delta`.
 
 ```lua
 git.config({
@@ -33,7 +31,8 @@ git.config({
 })
 ```
 
-For per-machine overrides, see [Profiles](/guide/profiles).
+For different emails, signing keys, or ignores per machine, use
+[Profiles](/guide/profiles).
 
 ## API Reference
 
