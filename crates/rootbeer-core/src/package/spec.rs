@@ -10,6 +10,20 @@ pub struct LockedPackage {
     pub source: LockedSource,
     pub install: LockedInstall,
     pub provides: Provides,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_sha256: Option<String>,
+}
+
+impl LockedPackage {
+    pub fn id(&self) -> String {
+        format!("{}@{}", self.name, self.version)
+    }
+
+    pub fn without_output_hash(&self) -> Self {
+        let mut package = self.clone();
+        package.output_sha256 = None;
+        package
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

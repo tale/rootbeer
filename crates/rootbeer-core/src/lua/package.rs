@@ -67,6 +67,7 @@ fn parse_package(cx: &Ctx<'_>, spec: Table) -> LuaResult<LockedPackage> {
         source,
         install,
         provides,
+        output_sha256: None,
     })
 }
 

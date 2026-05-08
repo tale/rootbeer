@@ -545,6 +545,7 @@ mod tests {
             provides: Provides {
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
+            output_sha256: None,
         }
     }
 

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use crate::executor::{self, ExecutionHandler, ExecutionReport};
+use crate::package::lockfile::{LockError, RootbeerLock};
 use crate::plan::Op;
 use crate::{Error, Runtime};
 
@@ -133,10 +134,111 @@ impl PlannedPipeline {
     /// Execute the planned operations, reporting progress to the handler.
     pub fn execute(self, handler: &mut impl ExecutionHandler) -> Result<ExecutionReport, Error> {
         let report = match self.opts.mode {
-            Mode::Apply => executor::apply(&self.ops, self.opts.force, handler)?,
+            Mode::Apply => {
+                let ops = self.locked_ops_for_apply()?;
+                executor::apply(&ops, self.opts.force, handler)?
+            }
             Mode::DryRun => executor::dry_run(&self.ops, handler),
         };
 
         Ok(report)
+    }
+
+    fn locked_ops_for_apply(&self) -> Result<Vec<Op>, Error> {
+        if !RootbeerLock::has_package_ops(&self.ops) {
+            return Ok(self.ops.clone());
+        }
+
+        let path = self.opts.script_dir.join("rootbeer.lock");
+        if !path.exists() {
+            return Err(LockError::MissingLockfile { path }.into());
+        }
+
+        let lock = RootbeerLock::read(&path)?;
+        Ok(lock.apply_to_ops(&self.ops)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use crate::executor::OpResult;
+    use crate::package::{LockedInstall, LockedPackage, LockedSource, Provides};
+
+    use super::*;
+
+    #[derive(Default)]
+    struct Recorder;
+
+    impl ExecutionHandler for Recorder {
+        fn on_start(&mut self, _op: &Op) {}
+        fn on_output(&mut self, _line: &str) {}
+        fn on_result(&mut self, _result: &OpResult) {}
+    }
+
+    fn opts(script_dir: PathBuf, mode: Mode) -> Options {
+        Options {
+            script_dir,
+            script_name: "init.lua".to_string(),
+            lua_dir: PathBuf::from("lua"),
+            profile: None,
+            mode,
+            force: false,
+        }
+    }
+
+    fn package() -> LockedPackage {
+        LockedPackage {
+            name: "demo".to_string(),
+            version: "1.0.0".to_string(),
+            source: LockedSource::Path {
+                path: PathBuf::from("demo"),
+                sha256: "source".to_string(),
+            },
+            install: LockedInstall::Directory { strip_prefix: None },
+            provides: Provides {
+                bins: BTreeMap::new(),
+            },
+            output_sha256: None,
+        }
+    }
+
+    #[test]
+    fn apply_requires_lockfile_for_package_ops() {
+        let tmp = tempfile::tempdir().unwrap();
+        let planned = PlannedPipeline {
+            opts: opts(tmp.path().to_path_buf(), Mode::Apply),
+            ops: vec![Op::RealizePackage { package: package() }],
+        };
+
+        let err = planned.execute(&mut Recorder).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::Lock(LockError::MissingLockfile { .. })
+        ));
+    }
+
+    #[test]
+    fn apply_uses_locked_package_facts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut locked = package();
+        locked.output_sha256 = Some("output".to_string());
+        RootbeerLock::from_packages([locked])
+            .unwrap()
+            .write(tmp.path().join("rootbeer.lock"))
+            .unwrap();
+        let planned = PlannedPipeline {
+            opts: opts(tmp.path().to_path_buf(), Mode::Apply),
+            ops: vec![Op::RealizePackage { package: package() }],
+        };
+
+        let ops = planned.locked_ops_for_apply().unwrap();
+
+        let [Op::RealizePackage { package }] = ops.as_slice() else {
+            panic!("expected package op");
+        };
+        assert_eq!(package.output_sha256.as_deref(), Some("output"));
     }
 }

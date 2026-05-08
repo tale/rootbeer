@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use clap::Subcommand;
 use owo_colors::OwoColorize;
 use rootbeer_core::package::lockfile::RootbeerLock;
+use rootbeer_core::package::{LockedPackage, PackageRealizer};
+use rootbeer_core::Op;
 
 #[derive(clap::Args, Debug)]
 pub struct Args {
@@ -62,7 +64,12 @@ fn lock(args: LockArgs, lua_dir: Option<&PathBuf>) {
             .unwrap_or_else(|| PathBuf::from("rootbeer.lock"))
     });
 
-    let lock = RootbeerLock::from_ops(planned.ops());
+    let packages = realize_packages(planned.ops());
+    let lock = RootbeerLock::from_packages(packages).unwrap_or_else(|e| {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    });
+
     lock.write(&output).unwrap_or_else(|e| {
         eprintln!("error: failed to write {}: {e}", output.display());
         std::process::exit(1);
@@ -74,4 +81,26 @@ fn lock(args: LockArgs, lua_dir: Option<&PathBuf>) {
         output.display(),
         lock.packages.len()
     );
+}
+
+fn realize_packages(ops: &[Op]) -> Vec<LockedPackage> {
+    let realizer = PackageRealizer::default();
+    let mut packages = Vec::new();
+
+    for op in ops {
+        let Op::RealizePackage { package } = op else {
+            continue;
+        };
+
+        let realized = realizer.realize(package).unwrap_or_else(|e| {
+            eprintln!("error: failed to realize package {}: {e}", package.id());
+            std::process::exit(1);
+        });
+
+        let mut locked = package.clone();
+        locked.output_sha256 = Some(realized.store_entry.output_sha256);
+        packages.push(locked);
+    }
+
+    packages
 }

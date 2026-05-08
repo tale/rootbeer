@@ -83,6 +83,19 @@ impl PackageRealizer {
         let store_entry =
             self.store
                 .add_tree(package.name.clone(), package.version.clone(), &install_root)?;
+        if let Some(expected) = &package.output_sha256 {
+            if store_entry.output_sha256 != *expected {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "package {} output hash mismatch: expected {}, got {}",
+                        package.id(),
+                        expected,
+                        store_entry.output_sha256
+                    ),
+                ));
+            }
+        }
 
         let bins = package
             .provides
@@ -328,6 +341,7 @@ mod tests {
             provides: Provides {
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
+            output_sha256: None,
         }
     }
 
@@ -387,6 +401,7 @@ mod tests {
             provides: Provides {
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
+            output_sha256: None,
         }
     }
 
@@ -510,6 +525,19 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(err.to_string().contains("hash mismatch"));
+    }
+
+    #[test]
+    fn rejects_output_hash_mismatch() {
+        let store_root = tempfile::tempdir().unwrap();
+        let (_archive_root, archive) = archive_source();
+        let mut package = archive_package(&archive, hash_file(&archive).unwrap());
+        package.output_sha256 = Some("bad-output-hash".to_string());
+
+        let err = realizer(store_root.path()).realize(&package).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("output hash mismatch"));
     }
 
     #[test]
