@@ -1,5 +1,6 @@
 use std::io::{self, BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::{fs, os::unix::fs as unix_fs, process, process::Command, thread};
 
 use crate::{
@@ -13,7 +14,13 @@ pub fn apply(
     force: bool,
     handler: &mut impl ExecutionHandler,
 ) -> io::Result<ExecutionReport> {
-    apply_with_package_realizer(ops, force, handler, &PackageRealizer::default())
+    apply_with_package_realizer(
+        ops,
+        force,
+        handler,
+        &PackageRealizer::default(),
+        &package_bin_dir(),
+    )
 }
 
 fn apply_with_package_realizer(
@@ -21,6 +28,7 @@ fn apply_with_package_realizer(
     force: bool,
     handler: &mut impl ExecutionHandler,
     package_realizer: &PackageRealizer,
+    package_bin_dir: &Path,
 ) -> io::Result<ExecutionReport> {
     let mut report = ExecutionReport::default();
 
@@ -218,6 +226,7 @@ fn apply_with_package_realizer(
 
             Op::RealizePackage { package } => {
                 let realized = package_realizer.realize(package)?;
+                activate_package_bins(&realized.bins, force, package_bin_dir)?;
                 let result = OpResult::PackageRealized {
                     name: package.name.clone(),
                     version: package.version.clone(),
@@ -230,6 +239,52 @@ fn apply_with_package_realizer(
     }
 
     Ok(report)
+}
+
+fn activate_package_bins(
+    bins: &std::collections::BTreeMap<String, PathBuf>,
+    force: bool,
+    bin_dir: &Path,
+) -> io::Result<()> {
+    fs::create_dir_all(bin_dir)?;
+
+    for (name, src) in bins {
+        let dst = bin_dir.join(name);
+        if dst.is_symlink() {
+            if fs::read_link(&dst).ok().as_ref() == Some(src) {
+                continue;
+            }
+            fs::remove_file(&dst)?;
+        } else if dst.exists() {
+            if force {
+                if dst.is_dir() {
+                    fs::remove_dir_all(&dst)?;
+                } else {
+                    fs::remove_file(&dst)?;
+                }
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "package bin {} exists and is not a symlink (use --force to overwrite)",
+                        dst.display()
+                    ),
+                ));
+            }
+        }
+
+        unix_fs::symlink(src, dst)?;
+    }
+
+    Ok(())
+}
+
+fn package_bin_dir() -> PathBuf {
+    crate::state_dir()
+        .join("profiles")
+        .join("default")
+        .join("current")
+        .join("bin")
 }
 
 #[cfg(test)]
@@ -508,7 +563,14 @@ mod tests {
         );
 
         let mut h = Recorder::default();
-        apply_with_package_realizer(&ops, false, &mut h, &package_realizer).unwrap();
+        apply_with_package_realizer(
+            &ops,
+            false,
+            &mut h,
+            &package_realizer,
+            &root.path().join("profile/bin"),
+        )
+        .unwrap();
 
         let OpResult::PackageRealized {
             name,
@@ -521,5 +583,9 @@ mod tests {
         assert_eq!(name, "demo");
         assert_eq!(version, "1.0.0");
         assert!(store_path.join("bin/demo").is_file());
+        assert_eq!(
+            fs::read_link(root.path().join("profile/bin/demo")).unwrap(),
+            store_path.join("bin/demo")
+        );
     }
 }

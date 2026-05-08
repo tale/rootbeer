@@ -58,6 +58,37 @@ function rootbeer.link(src, dst) end
 --- @param args? string[] Optional arguments passed to the command.
 function rootbeer.exec(cmd, args) end
 
+--- @class rootbeer.PackageSpec
+--- @field name string Package name.
+--- @field version string Locked package version.
+--- @field source rootbeer.PackageSource Locked package source.
+--- @field install rootbeer.PackageInstall Package install recipe.
+--- @field bins table<string, string> Binary name → relative path in the installed output tree.
+
+--- @class rootbeer.PackageSource
+--- @field path? string Local directory tree source. The `sha256` is a deterministic tree hash.
+--- @field file? string Local source file, usually an archive. The `sha256` is a byte hash.
+--- @field url? string Remote or `file://` source URL. The `sha256` is a byte hash.
+--- @field sha256 string Locked source hash.
+
+--- @class rootbeer.PackageInstall
+--- @field directory? boolean Install a directory tree source.
+--- @field archive? "tar.gz"|"tgz" Install an archive source.
+--- @field strip_prefix? string Relative subdirectory to use as the install root.
+
+--- Realizes a locked package into the Rootbeer store and activates its `bins`
+--- under Rootbeer's stable package profile. This is a low-level escape hatch;
+--- higher-level resolvers should eventually produce this locked shape.
+--- @param spec rootbeer.PackageSpec The locked package specification.
+function rootbeer.package(spec) end
+
+--- Returns the stable Rootbeer profile path for a managed binary, or `nil`
+--- when the binary is not provided by the current plan/profile. This never
+--- searches the host `PATH`.
+--- @param bin string Binary name.
+--- @return string?
+function rootbeer.which(bin) end
+
 --- Checks whether a path exists (file, directory, or symlink).
 --- Supports `~` expansion and relative paths.
 --- @param path string The path to check.
