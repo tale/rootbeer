@@ -47,6 +47,11 @@ pub enum OpResult {
     RemoteUnchanged {
         url: String,
     },
+    PackageRealized {
+        name: String,
+        version: String,
+        store_path: Option<PathBuf>,
+    },
 }
 
 /// Receives lifecycle events during pipeline execution.
