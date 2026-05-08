@@ -2,6 +2,7 @@ mod apply;
 mod cd;
 mod edit;
 mod init;
+mod package;
 mod remote;
 mod typegen;
 mod update;
@@ -50,6 +51,9 @@ enum Commands {
     /// Apply the rootbeer configuration
     Apply(apply::Args),
 
+    /// Package lockfile commands
+    Package(package::Args),
+
     /// View or change the git remote protocol for the source directory
     Remote(remote::Args),
 
@@ -65,6 +69,7 @@ fn main() {
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),
         Commands::Apply(args) => apply::run(args, cli.lua_dir.as_ref()),
+        Commands::Package(args) => package::run(args, cli.lua_dir.as_ref()),
         Commands::Remote(args) => remote::run(args),
         Commands::Update => update::run(),
     }

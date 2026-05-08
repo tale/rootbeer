@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
@@ -7,7 +8,7 @@ use crate::lua::module::install;
 #[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
 use crate::lua::require::EmbeddedRequirer;
 use crate::lua::require::FsRequirer;
-use crate::lua::{fs, secret, sys, writer};
+use crate::lua::{fs, package, secret, sys, writer};
 use crate::plan::Op;
 use crate::profile::{self, ProfileContext};
 use crate::Runtime;
@@ -25,6 +26,38 @@ impl Run {
     }
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct PackageBins(Mutex<BTreeMap<String, PathBuf>>);
+
+impl PackageBins {
+    pub fn insert(&self, name: String, path: PathBuf) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name, path);
+    }
+
+    pub fn get(&self, name: &str) -> Option<PathBuf> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(name)
+            .cloned()
+    }
+}
+
+pub(crate) fn profile_bin_path(bin: &str) -> PathBuf {
+    profile_bin_dir().join(bin)
+}
+
+pub(crate) fn profile_bin_dir() -> PathBuf {
+    crate::state_dir()
+        .join("profiles")
+        .join("default")
+        .join("current")
+        .join("bin")
+}
+
 pub(crate) struct Vm {
     pub lua: Lua,
 }
@@ -40,11 +73,13 @@ impl Vm {
 
         lua.set_app_data(runtime);
         lua.set_app_data(Run::default());
+        lua.set_app_data(PackageBins::default());
         lua.set_app_data(ProfileContext::new(cli_profile));
 
         let rb = lua.create_table()?;
         install::<fs::Fs>(&lua, &rb)?;
         install::<writer::Writer>(&lua, &rb)?;
+        install::<package::Package>(&lua, &rb)?;
         install::<sys::Sys>(&lua, &rb)?;
         install::<secret::Secret>(&lua, &rb)?;
         install::<profile::Profile>(&lua, &rb)?;

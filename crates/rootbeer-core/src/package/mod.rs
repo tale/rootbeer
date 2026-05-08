@@ -5,6 +5,7 @@
 //! the content-addressed store. Higher-level backends such as GitHub, aqua, or
 //! npm should eventually lower to these locked package facts before apply.
 
+pub mod lockfile;
 mod realize;
 mod resolve;
 mod spec;

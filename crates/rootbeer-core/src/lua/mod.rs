@@ -1,6 +1,7 @@
 pub(crate) mod ctx;
 mod fs;
 pub(crate) mod module;
+mod package;
 pub(crate) mod require;
 mod secret;
 mod sys;
