@@ -1,5 +1,6 @@
 mod executor;
 mod lua;
+pub mod package;
 mod pipeline;
 mod plan;
 pub mod profile;
