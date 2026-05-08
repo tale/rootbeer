@@ -9,4 +9,4 @@ mod realize;
 mod spec;
 
 pub use realize::{PackageRealizer, RealizedPackage};
-pub use spec::{LockedInstall, LockedPackage, LockedSource, Provides};
+pub use spec::{ArchiveFormat, LockedInstall, LockedPackage, LockedSource, Provides};

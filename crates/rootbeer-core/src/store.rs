@@ -200,6 +200,27 @@ pub fn hash_tree(path: impl AsRef<Path>) -> io::Result<String> {
     Ok(hex(hasher.finalize().as_slice()))
 }
 
+pub fn hash_file(path: impl AsRef<Path>) -> io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+
+        hasher.update(&buf[..n]);
+    }
+
+    Ok(hex(hasher.finalize().as_slice()))
+}
+
+pub fn hash_bytes(bytes: &[u8]) -> String {
+    hex(Sha256::digest(bytes).as_slice())
+}
+
 #[derive(Debug)]
 struct TreeEntry {
     relative: String,
