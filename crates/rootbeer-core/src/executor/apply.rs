@@ -4,6 +4,7 @@ use std::{fs, os::unix::fs as unix_fs, process, process::Command, thread};
 
 use crate::{
     executor::{ExecutionHandler, ExecutionReport, OpResult},
+    package::PackageRealizer,
     Op,
 };
 
@@ -11,6 +12,15 @@ pub fn apply(
     ops: &[Op],
     force: bool,
     handler: &mut impl ExecutionHandler,
+) -> io::Result<ExecutionReport> {
+    apply_with_package_realizer(ops, force, handler, &PackageRealizer::default())
+}
+
+fn apply_with_package_realizer(
+    ops: &[Op],
+    force: bool,
+    handler: &mut impl ExecutionHandler,
+    package_realizer: &PackageRealizer,
 ) -> io::Result<ExecutionReport> {
     let mut report = ExecutionReport::default();
 
@@ -205,6 +215,17 @@ pub fn apply(
                     report.results.push(result);
                 }
             }
+
+            Op::RealizePackage { package } => {
+                let realized = package_realizer.realize(package)?;
+                let result = OpResult::PackageRealized {
+                    name: package.name.clone(),
+                    version: package.version.clone(),
+                    store_path: Some(realized.store_entry.path),
+                };
+                handler.on_result(&result);
+                report.results.push(result);
+            }
         }
     }
 
@@ -214,6 +235,11 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::package::{ArchiveFormat, LockedInstall, LockedPackage, LockedSource, Provides};
+    use crate::store::{hash_file, Store};
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     #[derive(Default)]
@@ -426,5 +452,74 @@ mod tests {
             content: "y".into(),
         };
         assert!(matches!(op, Op::WriteFile { .. }));
+    }
+
+    fn archive_source() -> (tempfile::TempDir, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let archive_path = root.path().join("demo.tar.gz");
+        let file = fs::File::create(&archive_path).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+
+        let mut header = tar::Header::new_gnu();
+        let body = b"#!/bin/sh\n";
+        header.set_size(body.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "demo/bin/demo", &body[..])
+            .unwrap();
+        builder.finish().unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+
+        (root, archive_path)
+    }
+
+    fn locked_package(archive: &PathBuf) -> LockedPackage {
+        LockedPackage {
+            name: "demo".to_string(),
+            version: "1.0.0".to_string(),
+            source: LockedSource::File {
+                path: archive.clone(),
+                sha256: hash_file(archive).unwrap(),
+            },
+            install: LockedInstall::Archive {
+                format: ArchiveFormat::TarGz,
+                strip_prefix: Some(PathBuf::from("demo")),
+            },
+            provides: Provides {
+                bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
+            },
+        }
+    }
+
+    #[test]
+    fn realize_package_op_installs_locked_package_into_store() {
+        let root = tempfile::tempdir().unwrap();
+        let (_archive_root, archive) = archive_source();
+        let package = locked_package(&archive);
+        let ops = vec![Op::RealizePackage {
+            package: package.clone(),
+        }];
+        let package_realizer = PackageRealizer::with_dirs(
+            Store::new(root.path().join("store")),
+            root.path().join("downloads"),
+            root.path().join("tmp"),
+        );
+
+        let mut h = Recorder::default();
+        apply_with_package_realizer(&ops, false, &mut h, &package_realizer).unwrap();
+
+        let OpResult::PackageRealized {
+            name,
+            version,
+            store_path: Some(store_path),
+        } = &h.results[0]
+        else {
+            panic!("expected package realized result");
+        };
+        assert_eq!(name, "demo");
+        assert_eq!(version, "1.0.0");
+        assert!(store_path.join("bin/demo").is_file());
     }
 }

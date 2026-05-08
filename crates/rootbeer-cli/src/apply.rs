@@ -94,6 +94,21 @@ impl ExecutionHandler for CliHandler {
             OpResult::RemoteUnchanged { url } => {
                 eprintln!("  {} {url} (unchanged)", "skip".dimmed());
             }
+            OpResult::PackageRealized {
+                name,
+                version,
+                store_path,
+            } => {
+                if let Some(store_path) = store_path {
+                    eprintln!(
+                        "  {} {name}@{version} -> {}",
+                        "package".green(),
+                        store_path.display()
+                    );
+                } else {
+                    eprintln!("  {} {name}@{version}", "package".green());
+                }
+            }
         }
     }
 }

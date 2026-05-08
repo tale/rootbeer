@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::package::LockedPackage;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     WriteFile {
@@ -26,5 +28,8 @@ pub enum Op {
     SetRemoteUrl {
         dir: PathBuf,
         url: String,
+    },
+    RealizePackage {
+        package: LockedPackage,
     },
 }

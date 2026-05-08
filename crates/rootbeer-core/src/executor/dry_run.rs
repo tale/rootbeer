@@ -72,6 +72,16 @@ pub fn dry_run(ops: &[Op], handler: &mut impl ExecutionHandler) -> ExecutionRepo
                 handler.on_result(&result);
                 report.results.push(result);
             }
+
+            Op::RealizePackage { package } => {
+                let result = OpResult::PackageRealized {
+                    name: package.name.clone(),
+                    version: package.version.clone(),
+                    store_path: None,
+                };
+                handler.on_result(&result);
+                report.results.push(result);
+            }
         }
     }
 
