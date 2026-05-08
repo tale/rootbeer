@@ -69,6 +69,14 @@ impl ResolveContext {
             system: system.into(),
         }
     }
+
+    pub fn current() -> Self {
+        Self::new(format!(
+            "{}-{}",
+            std::env::consts::ARCH,
+            std::env::consts::OS
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -78,8 +78,10 @@ function rootbeer.exec(cmd, args) end
 
 --- Realizes a locked package into the Rootbeer store and activates its `bins`
 --- under Rootbeer's stable package profile. This is a low-level escape hatch;
---- higher-level resolvers should eventually produce this locked shape.
---- @param spec rootbeer.PackageSpec The locked package specification.
+--- higher-level resolvers should eventually produce this locked shape. Passing
+--- a string uses the package resolver stack; for now, `aqua:owner/repo@version`
+--- is supported.
+--- @param spec rootbeer.PackageSpec|string The locked package specification or resolver request.
 function rootbeer.package(spec) end
 
 --- Returns the stable Rootbeer profile path for a managed binary, or `nil`
