@@ -3,6 +3,7 @@ mod lua;
 mod pipeline;
 mod plan;
 pub mod profile;
+pub mod store;
 
 pub use executor::{ExecutionHandler, ExecutionReport, OpResult};
 pub use pipeline::{Mode, Options, Pipeline, PlannedPipeline};
