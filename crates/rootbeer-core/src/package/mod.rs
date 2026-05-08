@@ -6,7 +6,11 @@
 //! npm should eventually lower to these locked package facts before apply.
 
 mod realize;
+mod resolve;
 mod spec;
 
 pub use realize::{PackageRealizer, RealizedPackage};
+pub use resolve::{
+    PackageRequest, PackageResolver, ResolveAttempt, ResolveContext, ResolveError, ResolverStack,
+};
 pub use spec::{ArchiveFormat, LockedInstall, LockedPackage, LockedSource, Provides};
