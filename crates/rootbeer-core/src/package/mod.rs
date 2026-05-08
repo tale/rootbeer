@@ -5,13 +5,21 @@
 //! the content-addressed store. Higher-level backends such as GitHub, aqua, or
 //! npm should eventually lower to these locked package facts before apply.
 
+mod aqua;
 pub mod lockfile;
 mod realize;
 mod resolve;
 mod spec;
 
+pub use aqua::AquaResolver;
 pub use realize::{PackageRealizer, RealizedPackage};
 pub use resolve::{
     PackageRequest, PackageResolver, ResolveAttempt, ResolveContext, ResolveError, ResolverStack,
 };
 pub use spec::{ArchiveFormat, LockedInstall, LockedPackage, LockedSource, Provides};
+
+pub fn default_resolver_stack() -> ResolverStack {
+    let mut stack = ResolverStack::new();
+    stack.push(AquaResolver::new());
+    stack
+}

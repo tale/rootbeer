@@ -1,12 +1,15 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use mlua::{Error as LuaError, Lua, Result as LuaResult, Table};
+use mlua::{Error as LuaError, Lua, Result as LuaResult, Table, Value};
 
 use super::ctx::Ctx;
 use super::module::Module;
 use super::vm::{profile_bin_path, PackageBins};
-use crate::package::{ArchiveFormat, LockedInstall, LockedPackage, LockedSource, Provides};
+use crate::package::{
+    default_resolver_stack, ArchiveFormat, LockedInstall, LockedPackage, LockedSource,
+    PackageRequest, Provides, ResolveContext,
+};
 use crate::plan::Op;
 
 pub(crate) struct Package;
@@ -17,18 +20,20 @@ impl Module for Package {
     fn build(lua: &Lua, t: &Table) -> LuaResult<()> {
         t.set(
             "package",
-            lua.create_function(|lua, spec: Table| {
+            lua.create_function(|lua, spec: Value| {
                 let cx = Ctx::from(lua);
-                let package = parse_package(&cx, spec)?;
+                let package = match spec {
+                    Value::Table(spec) => parse_package(&cx, spec)?,
+                    Value::String(spec) => resolve_package_request(spec.to_str()?.as_ref())?,
+                    other => {
+                        return Err(LuaError::RuntimeError(format!(
+                            "rb.package expected a package table or request string, got {}",
+                            other.type_name()
+                        )));
+                    }
+                };
 
-                let bins = lua
-                    .app_data_ref::<PackageBins>()
-                    .expect("PackageBins not set");
-
-                for bin in package.provides.bins.keys() {
-                    bins.insert(bin.clone(), profile_bin_path(bin));
-                }
-
+                register_package_bins(lua, &package);
                 cx.push(Op::RealizePackage { package });
                 Ok(())
             })?,
@@ -51,6 +56,23 @@ impl Module for Package {
         )?;
 
         Ok(())
+    }
+}
+
+fn resolve_package_request(input: &str) -> LuaResult<LockedPackage> {
+    let request = PackageRequest::parse(input);
+    default_resolver_stack()
+        .resolve(&request, &ResolveContext::current())
+        .map_err(|e| LuaError::RuntimeError(e.to_string()))
+}
+
+fn register_package_bins(lua: &Lua, package: &LockedPackage) {
+    let bins = lua
+        .app_data_ref::<PackageBins>()
+        .expect("PackageBins not set");
+
+    for bin in package.provides.bins.keys() {
+        bins.insert(bin.clone(), profile_bin_path(bin));
     }
 }
 
