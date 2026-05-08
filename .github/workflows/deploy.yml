@@ -10,21 +10,40 @@ jobs:
     name: Detect changes
     runs-on: ubuntu-latest
     outputs:
-      source: ${{ steps.filter.outputs.source }}
+      source: ${{ steps.diff.outputs.source }}
       timestamp: ${{ steps.timestamp.outputs.value }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Detect source changes
-        uses: dorny/paths-filter@v3
-        id: filter
         with:
-          filters: |
-            source:
-              - 'crates/**'
-              - 'lua/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
+          fetch-depth: 0
+      - name: Find published nightly source
+        id: nightly
+        shell: bash
+        run: |
+          sha="$(curl -fsSL https://rootbeer.tale.me/nightly/source-sha.txt || true)"
+
+          if [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$sha^{commit}" 2>/dev/null; then
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Detect source changes
+        id: diff
+        shell: bash
+        run: |
+          base='${{ steps.nightly.outputs.sha }}'
+
+          if [[ -z "$base" ]]; then
+            echo "source=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git diff --quiet "$base" HEAD -- crates lua Cargo.toml Cargo.lock; then
+            echo "source=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Generate build timestamp
         id: timestamp
         run: echo "value=$(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
@@ -118,6 +137,7 @@ jobs:
             (cd "artifacts/rb-${name}" && zip "../../.vitepress/dist/nightly/rb-${name}.zip" rb)
           done
           echo '${{ needs.changes.outputs.timestamp }}' > .vitepress/dist/nightly/version.txt
+          echo '${{ github.sha }}' > .vitepress/dist/nightly/source-sha.txt
 
       - name: Preserve existing nightly binaries
         if: needs.changes.outputs.source != 'true'
@@ -129,6 +149,8 @@ jobs:
           done
           curl -fsSL "https://rootbeer.tale.me/nightly/version.txt" \
             -o ".vitepress/dist/nightly/version.txt" || true
+          curl -fsSL "https://rootbeer.tale.me/nightly/source-sha.txt" \
+            -o ".vitepress/dist/nightly/source-sha.txt" || true
 
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v3
