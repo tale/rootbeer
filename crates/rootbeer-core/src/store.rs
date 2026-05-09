@@ -46,10 +46,6 @@ impl Store {
         Self { root: root.into() }
     }
 
-    pub fn default() -> Self {
-        Self::new(state_dir().join("store"))
-    }
-
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -151,6 +147,12 @@ impl Store {
             sanitize(name),
             sanitize(version)
         ))
+    }
+}
+
+impl Default for Store {
+    fn default() -> Self {
+        Self::new(state_dir().join("store"))
     }
 }
 

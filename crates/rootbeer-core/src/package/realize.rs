@@ -44,10 +44,6 @@ impl PackageRealizer {
         }
     }
 
-    pub fn default() -> Self {
-        Self::new(Store::default())
-    }
-
     pub fn realize(&self, package: &LockedPackage) -> io::Result<RealizedPackage> {
         let source = self.fetch_source(&package.source)?;
         let extracted;
@@ -170,6 +166,12 @@ impl PackageRealizer {
         fs::rename(&tmp, &cached)?;
 
         Ok(cached)
+    }
+}
+
+impl Default for PackageRealizer {
+    fn default() -> Self {
+        Self::new(Store::default())
     }
 }
 

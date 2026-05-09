@@ -19,10 +19,12 @@ impl LockedPackage {
         format!("{}@{}", self.name, self.version)
     }
 
-    pub fn without_output_hash(&self) -> Self {
-        let mut package = self.clone();
-        package.output_sha256 = None;
-        package
+    pub fn same_locked_facts_without_output_hash(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.version == other.version
+            && self.source == other.source
+            && self.install == other.install
+            && self.provides == other.provides
     }
 }
 

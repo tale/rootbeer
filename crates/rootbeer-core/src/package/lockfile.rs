@@ -83,7 +83,7 @@ impl RootbeerLock {
                         return Err(LockError::MissingPackage { id });
                     };
 
-                    if locked.without_output_hash() != package.without_output_hash() {
+                    if !locked.same_locked_facts_without_output_hash(package) {
                         return Err(LockError::PackageChanged { id });
                     }
 
