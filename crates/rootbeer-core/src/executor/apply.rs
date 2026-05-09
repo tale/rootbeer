@@ -5,7 +5,7 @@ use std::{fs, os::unix::fs as unix_fs, process, process::Command, thread};
 
 use crate::{
     executor::{ExecutionHandler, ExecutionReport, OpResult},
-    package::PackageRealizer,
+    package::{profile as package_profile, PackageRealizer},
     Op,
 };
 
@@ -19,7 +19,7 @@ pub fn apply(
         force,
         handler,
         &PackageRealizer::default(),
-        &package_bin_dir(),
+        &package_profile::bin_dir(),
     )
 }
 
@@ -227,6 +227,7 @@ fn apply_with_package_realizer(
             Op::RealizePackage { package } => {
                 let realized = package_realizer.realize(package)?;
                 activate_package_bins(&realized.bins, force, package_bin_dir)?;
+                package_profile::write_env_file_for_bin_dir(package_bin_dir)?;
                 let result = OpResult::PackageRealized {
                     name: package.name.clone(),
                     version: package.version.clone(),
@@ -277,14 +278,6 @@ fn activate_package_bins(
     }
 
     Ok(())
-}
-
-fn package_bin_dir() -> PathBuf {
-    crate::state_dir()
-        .join("profiles")
-        .join("default")
-        .join("current")
-        .join("bin")
 }
 
 #[cfg(test)]
@@ -588,5 +581,9 @@ mod tests {
             fs::read_link(root.path().join("profile/bin/demo")).unwrap(),
             store_path.join("bin/demo")
         );
+        assert!(root.path().join("profile/env.sh").is_file());
+        assert!(fs::read_to_string(root.path().join("profile/env.sh"))
+            .unwrap()
+            .contains("profile/bin"));
     }
 }

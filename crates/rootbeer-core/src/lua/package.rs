@@ -7,8 +7,8 @@ use super::ctx::Ctx;
 use super::module::Module;
 use super::vm::{profile_bin_path, PackageBins};
 use crate::package::{
-    default_resolver_stack, ArchiveFormat, LockedInstall, LockedPackage, LockedSource,
-    PackageRequest, Provides, ResolveContext,
+    default_resolver_stack, profile as package_profile, ArchiveFormat, LockedInstall,
+    LockedPackage, LockedSource, PackageRequest, Provides, ResolveContext,
 };
 use crate::plan::Op;
 
@@ -52,6 +52,26 @@ impl Module for Package {
 
                 let path = profile_bin_path(&bin);
                 Ok(path.exists().then(|| path.to_string_lossy().to_string()))
+            })?,
+        )?;
+
+        t.set(
+            "env_export",
+            lua.create_function(|lua, shell: Option<String>| {
+                let shell = shell.as_deref().unwrap_or("sh");
+                if !matches!(shell, "sh" | "bash" | "zsh") {
+                    return Err(LuaError::RuntimeError(format!(
+                        "unsupported env export shell `{shell}`"
+                    )));
+                }
+
+                let path = package_profile::env_path();
+                Ctx::from(lua).push(Op::WriteFile {
+                    path: path.clone(),
+                    content: package_profile::env_contents(),
+                });
+
+                Ok(path.to_string_lossy().to_string())
             })?,
         )?;
 

@@ -91,6 +91,13 @@ function rootbeer.package(spec) end
 --- @return string?
 function rootbeer.which(bin) end
 
+--- Writes Rootbeer's package profile environment file and returns its path.
+--- Source this from shell configuration to make managed package bins available
+--- on `PATH` without hardcoding store/profile internals.
+--- @param shell? "sh"|"bash"|"zsh" Shell syntax to generate. Defaults to `"sh"`.
+--- @return string
+function rootbeer.env_export(shell) end
+
 --- Checks whether a path exists (file, directory, or symlink).
 --- Supports `~` expansion and relative paths.
 --- @param path string The path to check.

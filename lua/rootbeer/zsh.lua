@@ -6,7 +6,7 @@ local rb = require("rootbeer")
 --- @class zsh.Config
 --- @field dir? string ZDOTDIR path. Defaults to `"~/.config/zsh"`. All zsh files are written here and a bootstrap `~/.zshenv` is created to set `ZDOTDIR`.
 --- @field env? table<string, string> Environment variables written to `.zshenv` (available in all shells).
---- @field profile? zsh.ProfileConfig Login shell configuration written to `.zprofile`.
+--- @field profile? zsh.ProfileConfig Login shell configuration written to `.zprofile`. Rootbeer's package profile environment is sourced automatically.
 --- @field options? string[] `setopt` options (e.g. `"CORRECT"`, `"EXTENDED_GLOB"`).
 --- @field keybind_mode? "emacs"|"vi" Input mode (`set -o emacs` or `set -o vi`).
 --- @field variables? table<string, string> Shell variable assignments (not exported).
@@ -122,7 +122,9 @@ end
 --- @param dir string
 --- @param profile zsh.ProfileConfig
 local function build_zprofile(dir, profile)
+	profile = profile or {}
 	local lines = {}
+	add_block(lines, { ". " .. rb.env_export("zsh") })
 
 	if profile.evals then
 		for _, cmd in ipairs(profile.evals) do
@@ -361,9 +363,7 @@ function M.config(cfg)
 		build_zshenv(dir, cfg.env)
 	end
 
-	if cfg.profile then
-		build_zprofile(dir, cfg.profile)
-	end
+	build_zprofile(dir, cfg.profile)
 
 	build_zshrc(dir, cfg)
 end

@@ -34,10 +34,17 @@ fn zsh_config_writes_bootstrap_and_zshrc() {
         "#);
 
     let writes = writes(&ops);
-    // Bootstrap, env, zshrc — at minimum.
+    // Bootstrap, env, package profile, zprofile, zshrc — at minimum.
     let bootstrap = find(&writes, ".zshenv");
     assert!(bootstrap.contains("ZDOTDIR=~/.config/zsh"));
     assert!(bootstrap.contains(". $ZDOTDIR/.zshenv"));
+
+    let zprofile = find(&writes, ".zprofile");
+    assert!(zprofile.contains(". "));
+    assert!(zprofile.contains("profiles/default/current/env.sh"));
+    assert!(writes.iter().any(|(p, content)| {
+        p.ends_with("profiles/default/current/env.sh") && content.contains("_rootbeer_package_bin=")
+    }));
 
     let zshrc = find(&writes, ".zshrc");
     assert!(zshrc.contains("set -o emacs"));

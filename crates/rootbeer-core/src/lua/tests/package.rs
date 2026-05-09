@@ -75,3 +75,25 @@ fn rb_which_returns_planned_package_bin_path() {
         .ends_with("profiles/default/current/bin/demo"));
     assert_eq!(missing, None);
 }
+
+#[test]
+fn rb_env_export_writes_package_env_file_and_returns_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let vm = vm_in(
+        r#"
+        result = rb.env_export("zsh")
+        "#,
+        tmp.path(),
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    let ops = super::super::test_support::drain(vm);
+
+    let [Op::WriteFile { path, content }] = ops.as_slice() else {
+        panic!("expected one WriteFile op, got {ops:?}");
+    };
+
+    assert_eq!(result, path.to_string_lossy());
+    assert!(path.ends_with("profiles/default/current/env.sh"));
+    assert!(content.contains("_rootbeer_package_bin="));
+    assert!(content.contains("export PATH=\"$_rootbeer_package_bin:$PATH\""));
+}
