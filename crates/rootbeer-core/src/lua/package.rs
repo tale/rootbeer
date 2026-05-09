@@ -7,8 +7,8 @@ use super::ctx::Ctx;
 use super::module::Module;
 use super::vm::{profile_bin_path, PackageBins};
 use crate::package::{
-    default_resolver_stack, profile as package_profile, ArchiveFormat, LockedInstall,
-    LockedPackage, LockedSource, PackageRequest, Provides, ResolveContext,
+    lockfile::RootbeerLock, profile as package_profile, ArchiveFormat, LockedInstall,
+    LockedPackage, LockedSource, PackageIntent, PackageRequest, Provides, ResolveContext,
 };
 use crate::plan::Op;
 
@@ -22,9 +22,17 @@ impl Module for Package {
             "package",
             lua.create_function(|lua, spec: Value| {
                 let cx = Ctx::from(lua);
-                let package = match spec {
-                    Value::Table(spec) => parse_package(&cx, spec)?,
-                    Value::String(spec) => resolve_package_request(spec.to_str()?.as_ref())?,
+                let intent = match spec {
+                    Value::Table(spec) => {
+                        let package = parse_package(&cx, spec)?;
+                        register_package_bins(lua, &package);
+                        PackageIntent::locked(package)
+                    }
+                    Value::String(spec) => {
+                        let request = PackageRequest::parse(spec.to_str()?.as_ref());
+                        register_locked_request_bins(lua, &cx, &request);
+                        PackageIntent::request(request)
+                    }
                     other => {
                         return Err(LuaError::RuntimeError(format!(
                             "rb.package expected a package table or request string, got {}",
@@ -33,8 +41,7 @@ impl Module for Package {
                     }
                 };
 
-                register_package_bins(lua, &package);
-                cx.push(Op::RealizePackage { package });
+                cx.push(Op::Package { intent });
                 Ok(())
             })?,
         )?;
@@ -79,13 +86,6 @@ impl Module for Package {
     }
 }
 
-fn resolve_package_request(input: &str) -> LuaResult<LockedPackage> {
-    let request = PackageRequest::parse(input);
-    default_resolver_stack()
-        .resolve(&request, &ResolveContext::current())
-        .map_err(|e| LuaError::RuntimeError(e.to_string()))
-}
-
 fn register_package_bins(lua: &Lua, package: &LockedPackage) {
     let bins = lua
         .app_data_ref::<PackageBins>()
@@ -94,6 +94,19 @@ fn register_package_bins(lua: &Lua, package: &LockedPackage) {
     for bin in package.provides.bins.keys() {
         bins.insert(bin.clone(), profile_bin_path(bin));
     }
+}
+
+fn register_locked_request_bins(lua: &Lua, cx: &Ctx<'_>, request: &PackageRequest) {
+    let lock_path = cx.runtime.script_dir.join("rootbeer.lock");
+    let Ok(lock) = RootbeerLock::read(lock_path) else {
+        return;
+    };
+
+    let Ok(package) = lock.package_for_request(request, &ResolveContext::current()) else {
+        return;
+    };
+
+    register_package_bins(lua, package);
 }
 
 fn parse_package(cx: &Ctx<'_>, spec: Table) -> LuaResult<LockedPackage> {

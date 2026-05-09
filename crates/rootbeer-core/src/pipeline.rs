@@ -164,7 +164,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::executor::OpResult;
-    use crate::package::{LockedInstall, LockedPackage, LockedSource, Provides};
+    use crate::package::{LockedInstall, LockedPackage, LockedSource, PackageIntent, Provides};
 
     use super::*;
 
@@ -209,7 +209,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let planned = PlannedPipeline {
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
-            ops: vec![Op::RealizePackage { package: package() }],
+            ops: vec![Op::Package {
+                intent: PackageIntent::Locked(package()),
+            }],
         };
 
         let err = planned.execute(&mut Recorder).unwrap_err();
@@ -231,7 +233,9 @@ mod tests {
             .unwrap();
         let planned = PlannedPipeline {
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
-            ops: vec![Op::RealizePackage { package: package() }],
+            ops: vec![Op::Package {
+                intent: PackageIntent::Locked(package()),
+            }],
         };
 
         let ops = planned.locked_ops_for_apply().unwrap();

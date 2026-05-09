@@ -1,3 +1,4 @@
+pub mod deterministic;
 mod executor;
 mod lua;
 pub mod package;

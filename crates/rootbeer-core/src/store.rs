@@ -15,6 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::deterministic::DeterministicOutput;
 use crate::state_dir;
 
 const MANIFEST_DIR: &str = ".rootbeer";
@@ -153,6 +154,22 @@ impl Store {
 impl Default for Store {
     fn default() -> Self {
         Self::new(state_dir().join("store"))
+    }
+}
+
+impl DeterministicOutput for StoreEntry {
+    const KIND: &'static str = "store.entry";
+
+    fn output_sha256(&self) -> &str {
+        &self.output_sha256
+    }
+}
+
+impl DeterministicOutput for StoreManifest {
+    const KIND: &'static str = "store.manifest";
+
+    fn output_sha256(&self) -> &str {
+        &self.output_sha256
     }
 }
 
