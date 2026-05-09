@@ -236,6 +236,13 @@ fn apply_with_package_realizer(
                 handler.on_result(&result);
                 report.results.push(result);
             }
+
+            Op::Package { intent } => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("package `{intent}` must be locked before apply"),
+                ));
+            }
         }
     }
 

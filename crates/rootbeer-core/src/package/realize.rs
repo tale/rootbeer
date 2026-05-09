@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use flate2::read::GzDecoder;
 
 use super::{ArchiveFormat, LockedInstall, LockedPackage, LockedSource, Provides};
+use crate::deterministic::DeterministicOutput;
 use crate::state_dir;
 use crate::store::{hash_bytes, hash_file, hash_tree, Store, StoreEntry};
 
@@ -172,6 +173,14 @@ impl PackageRealizer {
 impl Default for PackageRealizer {
     fn default() -> Self {
         Self::new(Store::default())
+    }
+}
+
+impl DeterministicOutput for RealizedPackage {
+    const KIND: &'static str = "package.realized";
+
+    fn output_sha256(&self) -> &str {
+        &self.store_entry.output_sha256
     }
 }
 

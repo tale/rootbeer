@@ -76,11 +76,10 @@ function rootbeer.exec(cmd, args) end
 --- @field archive? "tar.gz"|"tgz" Install an archive source.
 --- @field strip_prefix? string Relative subdirectory to use as the install root.
 
---- Realizes a locked package into the Rootbeer store and activates its `bins`
---- under Rootbeer's stable package profile. This is a low-level escape hatch;
---- higher-level resolvers should eventually produce this locked shape. Passing
---- a string uses the package resolver stack; for now, `aqua:owner/repo@version`
---- is supported.
+--- Declares a package to realize into the Rootbeer store and activate under
+--- Rootbeer's stable package profile. Passing a locked table uses that exact
+--- realization input; passing a string records a resolver request which is
+--- pinned in `rootbeer.lock`. For now, `aqua:owner/repo@version` is supported.
 --- @param spec rootbeer.PackageSpec|string The locked package specification or resolver request.
 function rootbeer.package(spec) end
 

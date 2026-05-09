@@ -109,6 +109,9 @@ impl ExecutionHandler for CliHandler {
                     eprintln!("  {} {name}@{version}", "package".green());
                 }
             }
+            OpResult::PackagePlanned { spec } => {
+                eprintln!("  {} {spec}", "package".green());
+            }
         }
     }
 }

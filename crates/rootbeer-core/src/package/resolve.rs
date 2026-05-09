@@ -1,15 +1,39 @@
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
+use crate::deterministic::DeterministicInput;
+
 use super::LockedPackage;
 
 /// A high-level package request before it has been lowered to a locked package
 /// fact. The resolver prefix is optional: `ripgrep` is implicit, while
 /// `aqua:ripgrep` or `github:BurntSushi/ripgrep` is explicit.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageRequest {
     pub name: String,
     pub version: Option<String>,
     pub resolver: Option<String>,
+}
+
+impl DeterministicInput for PackageRequest {
+    const KIND: &'static str = "package.request";
+}
+
+impl fmt::Display for PackageRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(resolver) = &self.resolver {
+            write!(f, "{resolver}:")?;
+        }
+
+        write!(f, "{}", self.name)?;
+
+        if let Some(version) = &self.version {
+            write!(f, "@{version}")?;
+        }
+
+        Ok(())
+    }
 }
 
 impl PackageRequest {
@@ -56,9 +80,19 @@ impl PackageRequest {
     pub fn is_explicit(&self) -> bool {
         self.resolver.is_some()
     }
+
+    pub fn resolution_input<'a>(
+        &'a self,
+        context: &'a ResolveContext,
+    ) -> PackageResolutionInput<'a> {
+        PackageResolutionInput {
+            request: self,
+            context,
+        }
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolveContext {
     pub system: String,
 }
@@ -77,6 +111,16 @@ impl ResolveContext {
             std::env::consts::OS
         ))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PackageResolutionInput<'a> {
+    pub request: &'a PackageRequest,
+    pub context: &'a ResolveContext,
+}
+
+impl DeterministicInput for PackageResolutionInput<'_> {
+    const KIND: &'static str = "package.resolution";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -332,6 +376,18 @@ mod tests {
             PackageRequest::new("BurntSushi/ripgrep")
                 .resolver("aqua")
                 .version("14.1.1")
+        );
+    }
+
+    #[test]
+    fn package_resolution_input_fingerprint_includes_request_and_context() {
+        let request = PackageRequest::new("ripgrep").resolver("aqua");
+        let darwin = ResolveContext::new("aarch64-macos");
+        let linux = ResolveContext::new("x86_64-linux");
+
+        assert_ne!(
+            request.resolution_input(&darwin).fingerprint().unwrap(),
+            request.resolution_input(&linux).fingerprint().unwrap()
         );
     }
 

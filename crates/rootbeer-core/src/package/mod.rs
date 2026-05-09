@@ -6,6 +6,7 @@
 //! npm should eventually lower to these locked package facts before apply.
 
 mod aqua;
+mod intent;
 pub mod lockfile;
 pub mod profile;
 mod realize;
@@ -13,11 +14,15 @@ mod resolve;
 mod spec;
 
 pub use aqua::AquaResolver;
+pub use intent::PackageIntent;
 pub use realize::{PackageRealizer, RealizedPackage};
 pub use resolve::{
-    PackageRequest, PackageResolver, ResolveAttempt, ResolveContext, ResolveError, ResolverStack,
+    PackageRequest, PackageResolutionInput, PackageResolver, ResolveAttempt, ResolveContext,
+    ResolveError, ResolverStack,
 };
-pub use spec::{ArchiveFormat, LockedInstall, LockedPackage, LockedSource, Provides};
+pub use spec::{
+    ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRealizationInput, Provides,
+};
 
 pub fn default_resolver_stack() -> ResolverStack {
     let mut stack = ResolverStack::new();

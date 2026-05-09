@@ -49,6 +49,9 @@ pub enum OpResult {
         version: String,
         store_path: Option<PathBuf>,
     },
+    PackagePlanned {
+        spec: String,
+    },
 }
 
 /// Receives lifecycle events during pipeline execution.

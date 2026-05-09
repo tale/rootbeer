@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::package::LockedPackage;
+use crate::package::{LockedPackage, PackageIntent};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
@@ -28,6 +28,9 @@ pub enum Op {
     SetRemoteUrl {
         dir: PathBuf,
         url: String,
+    },
+    Package {
+        intent: PackageIntent,
     },
     RealizePackage {
         package: LockedPackage,

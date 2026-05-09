@@ -82,6 +82,14 @@ pub fn dry_run(ops: &[Op], handler: &mut impl ExecutionHandler) -> ExecutionRepo
                 handler.on_result(&result);
                 report.results.push(result);
             }
+
+            Op::Package { intent } => {
+                let result = OpResult::PackagePlanned {
+                    spec: intent.to_string(),
+                };
+                handler.on_result(&result);
+                report.results.push(result);
+            }
         }
     }
 

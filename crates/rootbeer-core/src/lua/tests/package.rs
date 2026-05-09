@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::package::{ArchiveFormat, LockedInstall, LockedSource};
+use crate::package::{ArchiveFormat, LockedInstall, LockedSource, PackageIntent, PackageRequest};
 use crate::plan::Op;
 
 use super::super::test_support::{run, vm_in};
@@ -25,8 +25,11 @@ fn rb_package_pushes_realize_package_op() {
         })
         "#);
 
-    let [Op::RealizePackage { package }] = ops.as_slice() else {
-        panic!("expected one RealizePackage op, got {ops:?}");
+    let [Op::Package { intent }] = ops.as_slice() else {
+        panic!("expected one Package op, got {ops:?}");
+    };
+    let PackageIntent::Locked(package) = intent else {
+        panic!("expected locked package intent, got {intent:?}");
     };
 
     assert_eq!(package.name, "demo");
@@ -46,6 +49,26 @@ fn rb_package_pushes_realize_package_op() {
     assert_eq!(
         package.provides.bins.get("demo"),
         Some(&PathBuf::from("bin/demo"))
+    );
+}
+
+#[test]
+fn rb_package_string_pushes_request_intent_without_resolving() {
+    let ops = run(r#"
+        rb.package("aqua:owner/tool@v1.0.0")
+        "#);
+
+    let [Op::Package { intent }] = ops.as_slice() else {
+        panic!("expected one Package op, got {ops:?}");
+    };
+
+    assert_eq!(
+        intent,
+        &PackageIntent::Request(
+            PackageRequest::new("owner/tool")
+                .resolver("aqua")
+                .version("v1.0.0")
+        )
     );
 }
 
