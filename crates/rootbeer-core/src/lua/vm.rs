@@ -47,15 +47,7 @@ impl PackageBins {
 }
 
 pub(crate) fn profile_bin_path(bin: &str) -> PathBuf {
-    profile_bin_dir().join(bin)
-}
-
-pub(crate) fn profile_bin_dir() -> PathBuf {
-    crate::state_dir()
-        .join("profiles")
-        .join("default")
-        .join("current")
-        .join("bin")
+    crate::package::profile::bin_path(bin)
 }
 
 pub(crate) struct Vm {

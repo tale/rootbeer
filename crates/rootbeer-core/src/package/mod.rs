@@ -7,6 +7,7 @@
 
 mod aqua;
 pub mod lockfile;
+pub mod profile;
 mod realize;
 mod resolve;
 mod spec;
