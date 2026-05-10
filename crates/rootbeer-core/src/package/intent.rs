@@ -3,7 +3,9 @@ use std::fmt;
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Deserialize, Serialize, Serializer};
 
-use super::{LockedPackage, PackageRealizationInput, PackageRequest, ResolveContext};
+use super::{
+    LockedPackage, PackageRealizationInput, PackageRequest, PackageResolverInputs, ResolveContext,
+};
 use crate::deterministic::DeterministicInput;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,12 +37,25 @@ impl PackageIntent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageLockInput {
     pub context: ResolveContext,
+    pub resolver_inputs: PackageResolverInputs,
     pub intents: Vec<PackageIntent>,
 }
 
 impl PackageLockInput {
     pub fn new(context: ResolveContext, intents: Vec<PackageIntent>) -> Self {
-        Self { context, intents }
+        Self::with_resolver_inputs(context, PackageResolverInputs::default(), intents)
+    }
+
+    pub fn with_resolver_inputs(
+        context: ResolveContext,
+        resolver_inputs: PackageResolverInputs,
+        intents: Vec<PackageIntent>,
+    ) -> Self {
+        Self {
+            context,
+            resolver_inputs,
+            intents,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -57,8 +72,9 @@ impl Serialize for PackageLockInput {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("PackageLockInput", 2)?;
+        let mut state = serializer.serialize_struct("PackageLockInput", 3)?;
         state.serialize_field("context", &self.context)?;
+        state.serialize_field("resolver_inputs", &self.resolver_inputs)?;
         state.serialize_field("intents", &SerializablePackageIntents(&self.intents))?;
         state.end()
     }
@@ -105,7 +121,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::package::{LockedInstall, LockedSource, Provides};
+    use crate::package::{
+        GitHubRepositoryPin, LockedInstall, LockedSource, Provides, ResolverInput,
+    };
 
     fn package(output_sha256: Option<&str>) -> LockedPackage {
         LockedPackage {
@@ -137,5 +155,28 @@ mod tests {
             without_output.fingerprint().unwrap(),
             with_output.fingerprint().unwrap()
         );
+    }
+
+    #[test]
+    fn lock_input_fingerprint_includes_resolver_inputs() {
+        let context = ResolveContext::new("test-system");
+        let base =
+            PackageLockInput::new(context.clone(), vec![PackageIntent::locked(package(None))]);
+        let pinned = PackageLockInput::with_resolver_inputs(
+            context,
+            PackageResolverInputs {
+                resolvers: BTreeMap::from([(
+                    "aqua".to_string(),
+                    ResolverInput::AquaRegistry(GitHubRepositoryPin {
+                        owner: "aquaproj".to_string(),
+                        repo: "aqua-registry".to_string(),
+                        rev: "abc123".to_string(),
+                    }),
+                )]),
+            },
+            vec![PackageIntent::locked(package(None))],
+        );
+
+        assert_ne!(base.fingerprint().unwrap(), pinned.fingerprint().unwrap());
     }
 }

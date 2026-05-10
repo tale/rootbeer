@@ -34,19 +34,45 @@ impl PackageRealizer {
         )
     }
 
+    pub fn offline(store: Store) -> Self {
+        Self::with_dirs_and_offline(
+            store,
+            state_dir().join("downloads"),
+            state_dir().join("tmp/package"),
+            true,
+        )
+    }
+
     pub fn with_dirs(
         store: Store,
         downloads: impl Into<PathBuf>,
         temp_dir: impl Into<PathBuf>,
     ) -> Self {
+        Self::with_dirs_and_offline(store, downloads, temp_dir, false)
+    }
+
+    fn with_dirs_and_offline(
+        store: Store,
+        downloads: impl Into<PathBuf>,
+        temp_dir: impl Into<PathBuf>,
+        offline: bool,
+    ) -> Self {
         Self {
             store,
-            downloads: DownloadCache::new(downloads),
+            downloads: if offline {
+                DownloadCache::offline(downloads)
+            } else {
+                DownloadCache::new(downloads)
+            },
             temp_dir: temp_dir.into(),
         }
     }
 
     pub fn realize(&self, package: &LockedPackage) -> io::Result<RealizedPackage> {
+        if let Some(realized) = self.realized_from_store(package)? {
+            return Ok(realized);
+        }
+
         let source = self.fetch_source(&package.source)?;
         let extracted;
         let install_source = match (&source, &package.install) {
@@ -107,6 +133,39 @@ impl PackageRealizer {
             store_entry,
             bins,
         })
+    }
+
+    fn realized_from_store(&self, package: &LockedPackage) -> io::Result<Option<RealizedPackage>> {
+        let Some(output_sha256) = &package.output_sha256 else {
+            return Ok(None);
+        };
+
+        let path = self
+            .store
+            .store_path(output_sha256, &package.name, &package.version);
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        self.store.verify_entry(&path)?;
+        let store_entry = StoreEntry {
+            path,
+            name: package.name.clone(),
+            version: package.version.clone(),
+            output_sha256: output_sha256.clone(),
+        };
+        let bins = package
+            .provides
+            .bins
+            .iter()
+            .map(|(name, rel)| (name.clone(), store_entry.path.join(rel)))
+            .collect();
+
+        Ok(Some(RealizedPackage {
+            package: package.clone(),
+            store_entry,
+            bins,
+        }))
     }
 
     fn fetch_source(&self, source: &LockedSource) -> io::Result<SourceMaterial> {
@@ -475,6 +534,30 @@ mod tests {
             .join(format!("sha256-{}", hash_file(&archive).unwrap()))
             .is_file());
         assert!(realized.store_entry.path.join("bin/demo").is_file());
+    }
+
+    #[test]
+    fn offline_realizer_reuses_existing_store_output_without_source_cache() {
+        let store_root = tempfile::tempdir().unwrap();
+        let (_archive_root, archive) = archive_source();
+        let package = archive_package(&archive, hash_file(&archive).unwrap());
+        let realized = realizer(store_root.path()).realize(&package).unwrap();
+        let mut locked = package.clone();
+        locked.output_sha256 = Some(realized.store_entry.output_sha256.clone());
+        locked.source = LockedSource::Url {
+            url: "unsupported://not-cached".to_string(),
+            sha256: "missing".to_string(),
+        };
+        let offline = PackageRealizer::with_dirs_and_offline(
+            Store::new(store_root.path().join("store")),
+            store_root.path().join("offline-downloads"),
+            store_root.path().join("offline-tmp"),
+            true,
+        );
+
+        let reused = offline.realize(&locked).unwrap();
+
+        assert_eq!(reused.store_entry, realized.store_entry);
     }
 
     #[test]

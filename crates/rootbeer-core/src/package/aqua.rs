@@ -5,8 +5,8 @@ use serde::Deserialize;
 
 use super::download::{read_url, DownloadCache};
 use super::{
-    ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRequest, PackageResolver,
-    Provides, ResolveContext,
+    ArchiveFormat, GitHubRepositoryPin, LockedInstall, LockedPackage, LockedSource, PackageRequest,
+    PackageResolver, Provides, ResolveContext,
 };
 
 #[derive(Debug, Clone)]
@@ -20,6 +20,16 @@ impl AquaResolver {
         Self {
             registry_base_url: "https://raw.githubusercontent.com/aquaproj/aqua-registry/main/pkgs"
                 .to_string(),
+            downloads: DownloadCache::default(),
+        }
+    }
+
+    pub fn from_registry_pin(pin: &GitHubRepositoryPin) -> Self {
+        Self {
+            registry_base_url: format!(
+                "https://raw.githubusercontent.com/{}/{}/{}/pkgs",
+                pin.owner, pin.repo, pin.rev
+            ),
             downloads: DownloadCache::default(),
         }
     }
