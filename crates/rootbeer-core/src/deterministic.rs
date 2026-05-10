@@ -12,7 +12,6 @@ use std::io::{self, Write};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// LOL
 const INPUT_DOMAIN: &[u8] = b"rootbeer deterministic input v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

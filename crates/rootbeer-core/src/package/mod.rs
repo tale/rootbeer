@@ -7,6 +7,7 @@
 
 mod aqua;
 mod intent;
+mod lock;
 pub mod lockfile;
 pub mod profile;
 mod realize;
@@ -14,11 +15,12 @@ mod resolve;
 mod spec;
 
 pub use aqua::AquaResolver;
-pub use intent::PackageIntent;
+pub use intent::{PackageIntent, PackageLockInput};
+pub use lock::{LockBuildError, PackageLockBuilder, PackageRealizerBackend};
 pub use realize::{PackageRealizer, RealizedPackage};
 pub use resolve::{
-    PackageRequest, PackageResolutionInput, PackageResolver, ResolveAttempt, ResolveContext,
-    ResolveError, ResolverStack,
+    PackageRequest, PackageRequestResolver, PackageResolutionInput, PackageResolver,
+    ResolveAttempt, ResolveContext, ResolveError, ResolverStack,
 };
 pub use spec::{
     ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRealizationInput, Provides,

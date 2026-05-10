@@ -13,6 +13,8 @@ use crate::Op;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootbeerLock {
     pub schema: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub resolutions: BTreeMap<String, String>,
     pub packages: BTreeMap<String, LockedPackage>,
@@ -62,17 +64,15 @@ impl fmt::Display for LockError {
                 write!(f, "duplicate package resolution `{fingerprint}`")
             }
             LockError::MissingPackage { id } => {
-                write!(f, "package `{id}` is not locked; run `rb package lock`")
+                write!(f, "package `{id}` is not present in rootbeer.lock")
             }
             LockError::PackageChanged { id } => write!(
                 f,
-                "package `{id}` differs from rootbeer.lock; run `rb package lock`"
+                "package `{id}` differs from the facts recorded in rootbeer.lock"
             ),
-            LockError::MissingLockfile { path } => write!(
-                f,
-                "package lockfile {} is missing; run `rb package lock`",
-                path.display()
-            ),
+            LockError::MissingLockfile { path } => {
+                write!(f, "package lockfile {} is missing", path.display())
+            }
             LockError::Fingerprint { kind, error } => {
                 write!(f, "failed to fingerprint {kind}: {error}")
             }
@@ -110,10 +110,20 @@ impl RootbeerLock {
         }
 
         Ok(Self {
-            schema: 1,
+            schema: 2,
+            input_fingerprint: None,
             resolutions,
             packages: map,
         })
+    }
+
+    pub fn with_input_fingerprint(mut self, fingerprint: impl Into<String>) -> Self {
+        self.input_fingerprint = Some(fingerprint.into());
+        self
+    }
+
+    pub fn matches_input_fingerprint(&self, fingerprint: &str) -> bool {
+        self.input_fingerprint.as_deref() == Some(fingerprint)
     }
 
     pub fn from_ops(ops: &[Op]) -> Result<Self, LockError> {
@@ -274,7 +284,8 @@ mod tests {
         }])
         .unwrap();
 
-        assert_eq!(lock.schema, 1);
+        assert_eq!(lock.schema, 2);
+        assert!(lock.input_fingerprint.is_none());
         assert!(lock.resolutions.is_empty());
         assert_eq!(lock.packages.get("demo@1.0.0"), Some(&package));
     }
