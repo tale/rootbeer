@@ -6,19 +6,41 @@ use std::{fs, os::unix::fs as unix_fs, process, process::Command, thread};
 use crate::{
     executor::{ExecutionHandler, ExecutionReport, OpResult},
     package::{profile as package_profile, PackageRealizer},
+    store::Store,
     Op,
 };
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ApplyOptions {
+    pub package_offline: bool,
+}
+
+#[cfg(test)]
 pub fn apply(
     ops: &[Op],
     force: bool,
     handler: &mut impl ExecutionHandler,
 ) -> io::Result<ExecutionReport> {
+    apply_with_options(ops, force, handler, ApplyOptions::default())
+}
+
+pub fn apply_with_options(
+    ops: &[Op],
+    force: bool,
+    handler: &mut impl ExecutionHandler,
+    options: ApplyOptions,
+) -> io::Result<ExecutionReport> {
+    let package_realizer = if options.package_offline {
+        PackageRealizer::offline(Store::default())
+    } else {
+        PackageRealizer::default()
+    };
+
     apply_with_package_realizer(
         ops,
         force,
         handler,
-        &PackageRealizer::default(),
+        &package_realizer,
         &package_profile::bin_dir(),
     )
 }

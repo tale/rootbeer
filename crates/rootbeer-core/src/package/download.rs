@@ -8,9 +8,12 @@ use sha2::{Digest, Sha256};
 use crate::state_dir;
 use crate::store::hash_file;
 
+const USER_AGENT: &str = concat!("rootbeer/", env!("CARGO_PKG_VERSION"));
+
 #[derive(Debug, Clone)]
 pub(super) struct DownloadCache {
     root: PathBuf,
+    offline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,7 +24,17 @@ pub(super) struct DownloadedFile {
 
 impl DownloadCache {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            offline: false,
+        }
+    }
+
+    pub fn offline(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            offline: true,
+        }
     }
 
     pub fn materialize(
@@ -35,6 +48,18 @@ impl DownloadCache {
             if let Some(downloaded) = self.valid_cached(sha256)? {
                 return Ok(downloaded);
             }
+        }
+
+        if self.offline {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                match expected_sha256 {
+                    Some(sha256) => format!(
+                        "source {url} with sha256 {sha256} is not in the download cache and offline mode is enabled"
+                    ),
+                    None => format!("source {url} cannot be fetched in offline mode"),
+                },
+            ));
         }
 
         let (tmp, actual_sha256) = self.download_to_temp(url)?;
@@ -216,6 +241,7 @@ fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
     }
 
     let (_, body) = ureq::get(url)
+        .header("User-Agent", USER_AGENT)
         .call()
         .map_err(|e| io::Error::other(format!("failed to fetch {url}: {e}")))?
         .into_parts();
@@ -291,5 +317,18 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(fs::read_dir(&cache.root).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn offline_cache_misses_do_not_open_url() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = DownloadCache::offline(tmp.path().join("downloads"));
+
+        let err = cache
+            .materialize("unsupported://does-not-matter", Some("missing"))
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(err.to_string().contains("offline mode"));
     }
 }

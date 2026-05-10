@@ -8,7 +8,7 @@ pub mod profile;
 pub mod store;
 
 pub use executor::{ExecutionHandler, ExecutionReport, OpResult};
-pub use pipeline::{Mode, Options, Pipeline, PlannedPipeline};
+pub use pipeline::{Mode, Options, PackageLockMode, Pipeline, PlannedPipeline};
 pub use plan::Op;
 pub use profile::ProfileError;
 

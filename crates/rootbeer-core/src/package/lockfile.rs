@@ -6,13 +6,15 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{LockedPackage, PackageIntent, PackageRequest, ResolveContext};
+use super::{LockedPackage, PackageIntent, PackageRequest, PackageResolverInputs, ResolveContext};
 use crate::deterministic::DeterministicInput;
 use crate::Op;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootbeerLock {
     pub schema: u32,
+    #[serde(default, skip_serializing_if = "PackageResolverInputs::is_empty")]
+    pub inputs: PackageResolverInputs,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -23,6 +25,7 @@ pub struct RootbeerLock {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageLockEntry {
     pub package: LockedPackage,
+    pub id: Option<String>,
     pub resolution_fingerprint: Option<String>,
 }
 
@@ -30,6 +33,7 @@ impl PackageLockEntry {
     pub fn locked(package: LockedPackage) -> Self {
         Self {
             package,
+            id: None,
             resolution_fingerprint: None,
         }
     }
@@ -40,6 +44,7 @@ impl PackageLockEntry {
         package: LockedPackage,
     ) -> Result<Self, LockError> {
         Ok(Self {
+            id: Some(package_id_for_request(request, &package)),
             package,
             resolution_fingerprint: Some(resolution_fingerprint(request, context)?),
         })
@@ -53,6 +58,7 @@ pub enum LockError {
     MissingPackage { id: String },
     PackageChanged { id: String },
     MissingLockfile { path: std::path::PathBuf },
+    StaleLockfile { path: std::path::PathBuf },
     Fingerprint { kind: &'static str, error: String },
 }
 
@@ -73,6 +79,11 @@ impl fmt::Display for LockError {
             LockError::MissingLockfile { path } => {
                 write!(f, "package lockfile {} is missing", path.display())
             }
+            LockError::StaleLockfile { path } => write!(
+                f,
+                "package lockfile {} is stale for the current plan",
+                path.display()
+            ),
             LockError::Fingerprint { kind, error } => {
                 write!(f, "failed to fingerprint {kind}: {error}")
             }
@@ -95,7 +106,7 @@ impl RootbeerLock {
         let mut map = BTreeMap::new();
         let mut resolutions = BTreeMap::new();
         for entry in entries {
-            let id = entry.package.id();
+            let id = entry.id.unwrap_or_else(|| entry.package.id());
             if map.insert(id.clone(), entry.package).is_some() {
                 return Err(LockError::DuplicatePackage { id });
             }
@@ -110,7 +121,8 @@ impl RootbeerLock {
         }
 
         Ok(Self {
-            schema: 2,
+            schema: 1,
+            inputs: PackageResolverInputs::default(),
             input_fingerprint: None,
             resolutions,
             packages: map,
@@ -119,6 +131,11 @@ impl RootbeerLock {
 
     pub fn with_input_fingerprint(mut self, fingerprint: impl Into<String>) -> Self {
         self.input_fingerprint = Some(fingerprint.into());
+        self
+    }
+
+    pub fn with_resolver_inputs(mut self, inputs: PackageResolverInputs) -> Self {
+        self.inputs = inputs;
         self
     }
 
@@ -192,7 +209,7 @@ impl RootbeerLock {
         }
 
         if let Some(version) = &request.version {
-            let id = format!("{}@{}", request.name, version);
+            let id = package_id_for_request_version(request, version);
             if let Some(package) = self.packages.get(&id) {
                 return Ok(package);
             }
@@ -232,6 +249,17 @@ impl RootbeerLock {
 
         let json = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
         fs::write(path, format!("{json}\n"))
+    }
+}
+
+fn package_id_for_request(request: &PackageRequest, package: &LockedPackage) -> String {
+    package_id_for_request_version(request, &package.version)
+}
+
+fn package_id_for_request_version(request: &PackageRequest, version: &str) -> String {
+    match &request.resolver {
+        Some(resolver) => format!("{resolver}:{}@{version}", request.name),
+        None => format!("{}@{version}", request.name),
     }
 }
 
@@ -284,7 +312,8 @@ mod tests {
         }])
         .unwrap();
 
-        assert_eq!(lock.schema, 2);
+        assert_eq!(lock.schema, 1);
+        assert!(lock.inputs.is_empty());
         assert!(lock.input_fingerprint.is_none());
         assert!(lock.resolutions.is_empty());
         assert_eq!(lock.packages.get("demo@1.0.0"), Some(&package));
@@ -342,6 +371,32 @@ mod tests {
             panic!("expected package op");
         };
         assert_eq!(package.output_sha256.as_deref(), Some("out"));
+    }
+
+    #[test]
+    fn explicit_resolver_entries_are_namespaced_by_resolver() {
+        let context = ResolveContext::current();
+        let aqua_request = PackageRequest::new("demo").resolver("aqua");
+        let npm_request = PackageRequest::new("demo").resolver("npm");
+        let mut aqua_package = package();
+        aqua_package.source = LockedSource::Url {
+            url: "file:///tmp/aqua.tar.gz".to_string(),
+            sha256: "abc123".to_string(),
+        };
+        let mut npm_package = package();
+        npm_package.source = LockedSource::Url {
+            url: "file:///tmp/npm.tar.gz".to_string(),
+            sha256: "abc123".to_string(),
+        };
+
+        let lock = RootbeerLock::from_package_entries([
+            PackageLockEntry::resolved(&aqua_request, &context, aqua_package).unwrap(),
+            PackageLockEntry::resolved(&npm_request, &context, npm_package).unwrap(),
+        ])
+        .unwrap();
+
+        assert!(lock.packages.contains_key("aqua:demo@1.0.0"));
+        assert!(lock.packages.contains_key("npm:demo@1.0.0"));
     }
 
     #[test]

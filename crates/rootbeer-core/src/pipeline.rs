@@ -2,9 +2,9 @@ use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-use crate::executor::{self, ExecutionHandler, ExecutionReport};
+use crate::executor::{self, ApplyOptions, ExecutionHandler, ExecutionReport};
 use crate::package::lockfile::{LockError, RootbeerLock};
-use crate::package::PackageLockBuilder;
+use crate::package::{PackageIntent, PackageLockBuilder, PackageResolverInputs};
 use crate::plan::Op;
 use crate::{Error, Runtime};
 
@@ -13,6 +13,21 @@ pub enum Mode {
     #[default]
     Apply,
     DryRun,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum PackageLockMode {
+    #[default]
+    Auto,
+    Locked,
+    Offline,
+    Update,
+}
+
+impl PackageLockMode {
+    pub fn offline(self) -> bool {
+        matches!(self, Self::Offline)
+    }
 }
 
 impl Display for Mode {
@@ -32,6 +47,7 @@ pub struct Options {
     pub profile: Option<String>,
     pub mode: Mode,
     pub force: bool,
+    pub package_lock: PackageLockMode,
 }
 
 impl Options {
@@ -60,6 +76,7 @@ impl Options {
             profile: None,
             mode: Mode::default(),
             force: false,
+            package_lock: PackageLockMode::default(),
         })
     }
 }
@@ -137,7 +154,14 @@ impl PlannedPipeline {
         let report = match self.opts.mode {
             Mode::Apply => {
                 let ops = self.locked_ops_for_apply()?;
-                executor::apply(&ops, self.opts.force, handler)?
+                executor::apply_with_options(
+                    &ops,
+                    self.opts.force,
+                    handler,
+                    ApplyOptions {
+                        package_offline: self.opts.package_lock.offline(),
+                    },
+                )?
             }
             Mode::DryRun => executor::dry_run(&self.ops, handler),
         };
@@ -150,26 +174,88 @@ impl PlannedPipeline {
             return Ok(self.ops.clone());
         }
 
-        let builder = PackageLockBuilder::default();
-        let input = builder.lock_input_from_ops(&self.ops);
-        let input_fingerprint = builder.fingerprint_input(&input)?;
         let path = self.opts.script_dir.join("rootbeer.lock");
-        if path.exists() {
-            let lock = RootbeerLock::read(&path)?;
-            if lock.matches_input_fingerprint(&input_fingerprint)
-                || lock.input_fingerprint.is_none()
-            {
-                match lock.apply_to_ops(&self.ops) {
-                    Ok(ops) => return Ok(ops),
-                    Err(LockError::MissingPackage { .. } | LockError::PackageChanged { .. }) => {}
-                    Err(err) => return Err(err.into()),
+        let existing = if path.exists() {
+            Some(RootbeerLock::read(&path)?)
+        } else {
+            None
+        };
+
+        if matches!(
+            self.opts.package_lock,
+            PackageLockMode::Locked | PackageLockMode::Offline
+        ) {
+            let Some(lock) = existing.as_ref() else {
+                return Err(LockError::MissingLockfile { path }.into());
+            };
+
+            if !self.lock_matches_plan(lock)? {
+                return Err(LockError::StaleLockfile { path }.into());
+            }
+
+            return lock.apply_to_ops(&self.ops).map_err(Into::into);
+        }
+
+        if !matches!(self.opts.package_lock, PackageLockMode::Update) {
+            if let Some(lock) = existing.as_ref() {
+                if self.lock_matches_plan(lock)? {
+                    match lock.apply_to_ops(&self.ops) {
+                        Ok(ops) => return Ok(ops),
+                        Err(
+                            LockError::MissingPackage { .. } | LockError::PackageChanged { .. },
+                        ) => {}
+                        Err(err) => return Err(err.into()),
+                    }
                 }
             }
         }
 
+        let inputs = match self.opts.package_lock {
+            PackageLockMode::Update if self.has_package_requests() => {
+                PackageResolverInputs::resolve_current()?
+            }
+            PackageLockMode::Update => PackageResolverInputs::default(),
+            PackageLockMode::Auto => existing
+                .as_ref()
+                .and_then(|lock| (!lock.inputs.is_empty()).then(|| lock.inputs.clone()))
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    if self.has_package_requests() {
+                        PackageResolverInputs::resolve_current()
+                    } else {
+                        Ok(PackageResolverInputs::default())
+                    }
+                })?,
+            PackageLockMode::Locked | PackageLockMode::Offline => unreachable!(),
+        };
+
+        let builder = PackageLockBuilder::current_system_with_inputs(inputs);
+        let input = builder.lock_input_from_ops(&self.ops);
         let lock = builder.build(&input)?;
         lock.write(&path)?;
         Ok(lock.apply_to_ops(&self.ops)?)
+    }
+
+    fn lock_matches_plan(&self, lock: &RootbeerLock) -> Result<bool, Error> {
+        let Some(expected) = lock.input_fingerprint.as_deref() else {
+            return Ok(true);
+        };
+
+        let builder = PackageLockBuilder::current_system_with_inputs(lock.inputs.clone());
+        let input = builder.lock_input_from_ops(&self.ops);
+        let actual = builder.fingerprint_input(&input)?;
+        Ok(actual == expected)
+    }
+
+    fn has_package_requests(&self) -> bool {
+        self.ops.iter().any(|op| {
+            matches!(
+                op,
+                Op::Package {
+                    intent: PackageIntent::Request(_)
+                }
+            )
+        })
     }
 }
 
@@ -199,6 +285,7 @@ mod tests {
             profile: None,
             mode,
             force: false,
+            package_lock: PackageLockMode::Auto,
         }
     }
 
@@ -287,5 +374,49 @@ mod tests {
         let err = planned.locked_ops_for_apply().unwrap_err();
 
         assert!(matches!(err, Error::LockBuild(_)));
+    }
+
+    #[test]
+    fn locked_mode_requires_existing_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut opts = opts(tmp.path().to_path_buf(), Mode::Apply);
+        opts.package_lock = PackageLockMode::Locked;
+        let planned = PlannedPipeline {
+            opts,
+            ops: vec![Op::Package {
+                intent: PackageIntent::Locked(package()),
+            }],
+        };
+
+        let err = planned.locked_ops_for_apply().unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::Lock(LockError::MissingLockfile { .. })
+        ));
+    }
+
+    #[test]
+    fn locked_mode_rejects_stale_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut locked = package();
+        locked.output_sha256 = Some("output".to_string());
+        RootbeerLock::from_packages([locked])
+            .unwrap()
+            .with_input_fingerprint("stale")
+            .write(tmp.path().join("rootbeer.lock"))
+            .unwrap();
+        let mut opts = opts(tmp.path().to_path_buf(), Mode::Apply);
+        opts.package_lock = PackageLockMode::Locked;
+        let planned = PlannedPipeline {
+            opts,
+            ops: vec![Op::Package {
+                intent: PackageIntent::Locked(package()),
+            }],
+        };
+
+        let err = planned.locked_ops_for_apply().unwrap_err();
+
+        assert!(matches!(err, Error::Lock(LockError::StaleLockfile { .. })));
     }
 }
