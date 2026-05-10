@@ -3,15 +3,16 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use super::download::{read_url, DownloadCache};
 use super::{
     ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRequest, PackageResolver,
     Provides, ResolveContext,
 };
-use crate::store::hash_bytes;
 
 #[derive(Debug, Clone)]
 pub struct AquaResolver {
     registry_base_url: String,
+    downloads: DownloadCache,
 }
 
 impl AquaResolver {
@@ -19,13 +20,18 @@ impl AquaResolver {
         Self {
             registry_base_url: "https://raw.githubusercontent.com/aquaproj/aqua-registry/main/pkgs"
                 .to_string(),
+            downloads: DownloadCache::default(),
         }
     }
 
     #[cfg(test)]
-    fn with_registry_base_url(registry_base_url: impl Into<String>) -> Self {
+    fn with_registry_base_url(
+        registry_base_url: impl Into<String>,
+        downloads: impl Into<PathBuf>,
+    ) -> Self {
         Self {
             registry_base_url: registry_base_url.into(),
+            downloads: DownloadCache::new(downloads),
         }
     }
 
@@ -94,8 +100,10 @@ impl AquaResolver {
             _ => return Ok(None),
         };
 
-        let bytes = read_url(&source_url)?;
-        let sha256 = hash_bytes(&bytes);
+        let source = self
+            .downloads
+            .materialize(&source_url, None)
+            .map_err(|e| format!("failed to fetch {source_url}: {e}"))?;
         let asset_without_ext = asset_without_ext(&source_url);
         let vars = vars.with_asset_without_ext(asset_without_ext);
 
@@ -104,7 +112,7 @@ impl AquaResolver {
             version,
             source: LockedSource::Url {
                 url: source_url,
-                sha256,
+                sha256: source.sha256,
             },
             install: LockedInstall::Archive {
                 format: ArchiveFormat::TarGz,
@@ -119,7 +127,7 @@ impl AquaResolver {
 
     fn latest_version(&self, owner: &str, repo: &str) -> Result<String, String> {
         let url = format!("{}/{owner}/{repo}/pkg.yaml", self.registry_base_url);
-        let bytes = read_url(&url)?;
+        let bytes = read_url(&url).map_err(|e| e.to_string())?;
         let pkg: AquaPkg = serde_yml::from_slice(&bytes)
             .map_err(|e| format!("failed to parse aqua package index {url}: {e}"))?;
 
@@ -134,7 +142,7 @@ impl AquaResolver {
 
     fn registry(&self, owner: &str, repo: &str) -> Result<AquaRegistry, String> {
         let url = format!("{}/{owner}/{repo}/registry.yaml", self.registry_base_url);
-        let bytes = read_url(&url)?;
+        let bytes = read_url(&url).map_err(|e| e.to_string())?;
         serde_yml::from_slice(&bytes)
             .map_err(|e| format!("failed to parse aqua registry {url}: {e}"))
     }
@@ -393,24 +401,12 @@ fn asset_without_ext(url: &str) -> String {
         .to_string()
 }
 
-fn read_url(url: &str) -> Result<Vec<u8>, String> {
-    if let Some(path) = url.strip_prefix("file://") {
-        return std::fs::read(path).map_err(|e| format!("failed to read {url}: {e}"));
-    }
-
-    ureq::get(url)
-        .call()
-        .map_err(|e| format!("failed to fetch {url}: {e}"))?
-        .into_body()
-        .read_to_vec()
-        .map_err(|e| format!("failed to read {url}: {e}"))
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
 
     use super::*;
+    use crate::store::hash_bytes;
 
     #[test]
     fn resolves_simple_http_aqua_package() {
@@ -445,8 +441,10 @@ packages:
         )
         .unwrap();
 
-        let resolver =
-            AquaResolver::with_registry_base_url(format!("file://{}", tmp.path().display()));
+        let resolver = AquaResolver::with_registry_base_url(
+            format!("file://{}", tmp.path().display()),
+            tmp.path().join("downloads"),
+        );
         let package = resolver
             .resolve(
                 &PackageRequest::new("owner/tool"),
