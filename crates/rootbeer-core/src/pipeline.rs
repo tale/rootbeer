@@ -4,6 +4,7 @@ use std::{fs, io};
 
 use crate::executor::{self, ExecutionHandler, ExecutionReport};
 use crate::package::lockfile::{LockError, RootbeerLock};
+use crate::package::PackageLockBuilder;
 use crate::plan::Op;
 use crate::{Error, Runtime};
 
@@ -149,12 +150,25 @@ impl PlannedPipeline {
             return Ok(self.ops.clone());
         }
 
+        let builder = PackageLockBuilder::default();
+        let input = builder.lock_input_from_ops(&self.ops);
+        let input_fingerprint = builder.fingerprint_input(&input)?;
         let path = self.opts.script_dir.join("rootbeer.lock");
-        if !path.exists() {
-            return Err(LockError::MissingLockfile { path }.into());
+        if path.exists() {
+            let lock = RootbeerLock::read(&path)?;
+            if lock.matches_input_fingerprint(&input_fingerprint)
+                || lock.input_fingerprint.is_none()
+            {
+                match lock.apply_to_ops(&self.ops) {
+                    Ok(ops) => return Ok(ops),
+                    Err(LockError::MissingPackage { .. } | LockError::PackageChanged { .. }) => {}
+                    Err(err) => return Err(err.into()),
+                }
+            }
         }
 
-        let lock = RootbeerLock::read(&path)?;
+        let lock = builder.build(&input)?;
+        lock.write(&path)?;
         Ok(lock.apply_to_ops(&self.ops)?)
     }
 }
@@ -204,8 +218,17 @@ mod tests {
         }
     }
 
+    fn package_with_source_path(path: PathBuf) -> LockedPackage {
+        let mut package = package();
+        package.source = LockedSource::Path {
+            path,
+            sha256: "source".to_string(),
+        };
+        package
+    }
+
     #[test]
-    fn apply_requires_lockfile_for_package_ops() {
+    fn apply_attempts_to_build_lock_when_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let planned = PlannedPipeline {
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
@@ -216,10 +239,7 @@ mod tests {
 
         let err = planned.execute(&mut Recorder).unwrap_err();
 
-        assert!(matches!(
-            err,
-            Error::Lock(LockError::MissingLockfile { .. })
-        ));
+        assert!(matches!(err, Error::LockBuild(_)));
     }
 
     #[test]
@@ -244,5 +264,28 @@ mod tests {
             panic!("expected package op");
         };
         assert_eq!(package.output_sha256.as_deref(), Some("output"));
+    }
+
+    #[test]
+    fn apply_rebuilds_lock_when_input_fingerprint_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let planned_package = package_with_source_path(tmp.path().join("missing-source"));
+        let mut locked = planned_package.clone();
+        locked.output_sha256 = Some("output".to_string());
+        RootbeerLock::from_packages([locked])
+            .unwrap()
+            .with_input_fingerprint("stale")
+            .write(tmp.path().join("rootbeer.lock"))
+            .unwrap();
+        let planned = PlannedPipeline {
+            opts: opts(tmp.path().to_path_buf(), Mode::Apply),
+            ops: vec![Op::Package {
+                intent: PackageIntent::Locked(planned_package),
+            }],
+        };
+
+        let err = planned.locked_ops_for_apply().unwrap_err();
+
+        assert!(matches!(err, Error::LockBuild(_)));
     }
 }

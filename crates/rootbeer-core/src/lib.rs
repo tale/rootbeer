@@ -25,6 +25,7 @@ use std::path::PathBuf;
 use std::{error, io};
 
 use package::lockfile::LockError;
+use package::LockBuildError;
 
 #[derive(Debug)]
 pub(crate) struct Runtime {
@@ -72,6 +73,7 @@ pub enum Error {
     Io(io::Error),
     Lua(mlua::Error),
     Lock(LockError),
+    LockBuild(Box<LockBuildError>),
     Profile(ProfileError),
 }
 
@@ -80,6 +82,7 @@ impl Display for Error {
         match self {
             Error::Io(e) => write!(f, "{e}"),
             Error::Lock(e) => write!(f, "{e}"),
+            Error::LockBuild(e) => write!(f, "{e}"),
             Error::Profile(e) => write!(f, "{e}"),
             Error::Lua(e) => {
                 let msg = e.to_string();
@@ -108,6 +111,12 @@ impl From<io::Error> for Error {
 impl From<LockError> for Error {
     fn from(e: LockError) -> Self {
         Error::Lock(e)
+    }
+}
+
+impl From<LockBuildError> for Error {
+    fn from(e: LockBuildError) -> Self {
+        Error::LockBuild(Box::new(e))
     }
 }
 

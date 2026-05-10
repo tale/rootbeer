@@ -210,6 +210,16 @@ pub trait PackageResolver {
     ) -> Result<Option<LockedPackage>, String>;
 }
 
+/// Resolves package requests into locked package facts. This is intentionally
+/// separate from `PackageResolver`, which models a single backend that may miss.
+pub trait PackageRequestResolver {
+    fn resolve_package(
+        &self,
+        request: &PackageRequest,
+        context: &ResolveContext,
+    ) -> Result<LockedPackage, ResolveError>;
+}
+
 /// Ordered resolver orchestration. This is the only policy encoded here:
 /// explicit requests use exactly one named resolver, while implicit requests
 /// try resolvers in configured order and surface every failed attempt.
@@ -285,6 +295,16 @@ impl ResolverStack {
             request: request.clone(),
             attempts,
         })
+    }
+}
+
+impl PackageRequestResolver for ResolverStack {
+    fn resolve_package(
+        &self,
+        request: &PackageRequest,
+        context: &ResolveContext,
+    ) -> Result<LockedPackage, ResolveError> {
+        self.resolve(request, context)
     }
 }
 
