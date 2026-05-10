@@ -1,19 +1,20 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use flate2::read::GzDecoder;
 
+use super::download::DownloadCache;
 use super::{ArchiveFormat, LockedInstall, LockedPackage, LockedSource, Provides};
 use crate::deterministic::DeterministicOutput;
 use crate::state_dir;
-use crate::store::{hash_bytes, hash_file, hash_tree, Store, StoreEntry};
+use crate::store::{hash_file, hash_tree, Store, StoreEntry};
 
 #[derive(Debug, Clone)]
 pub struct PackageRealizer {
     store: Store,
-    downloads: PathBuf,
+    downloads: DownloadCache,
     temp_dir: PathBuf,
 }
 
@@ -40,7 +41,7 @@ impl PackageRealizer {
     ) -> Self {
         Self {
             store,
-            downloads: downloads.into(),
+            downloads: DownloadCache::new(downloads),
             temp_dir: temp_dir.into(),
         }
     }
@@ -133,40 +134,10 @@ impl PackageRealizer {
             }
 
             LockedSource::Url { url, sha256 } => {
-                let path = self.fetch_url(url, sha256)?;
+                let path = self.downloads.materialize_verified(url, sha256)?;
                 Ok(SourceMaterial::File(path))
             }
         }
-    }
-
-    fn fetch_url(&self, url: &str, sha256: &str) -> io::Result<PathBuf> {
-        fs::create_dir_all(&self.downloads)?;
-        let cached = self.downloads.join(format!("sha256-{sha256}"));
-
-        if cached.exists() {
-            if hash_file(&cached)? == sha256 {
-                return Ok(cached);
-            }
-
-            fs::remove_file(&cached)?;
-        }
-
-        let bytes = read_url(url)?;
-        let actual = hash_bytes(&bytes);
-        if actual != sha256 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("source {url} hash mismatch: expected {sha256}, got {actual}"),
-            ));
-        }
-
-        let tmp = self.downloads.join(format!(".tmp-sha256-{sha256}"));
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        fs::rename(&tmp, &cached)?;
-
-        Ok(cached)
     }
 }
 
@@ -228,26 +199,6 @@ fn verify_file_hash(path: &Path, sha256: &str) -> io::Result<()> {
     }
 
     Ok(())
-}
-
-fn read_url(url: &str) -> io::Result<Vec<u8>> {
-    if let Some(path) = url.strip_prefix("file://") {
-        return fs::read(path);
-    }
-
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("unsupported source URL `{url}`"),
-        ));
-    }
-
-    ureq::get(url)
-        .call()
-        .map_err(|e| io::Error::other(format!("failed to fetch {url}: {e}")))?
-        .into_body()
-        .read_to_vec()
-        .map_err(io::Error::other)
 }
 
 fn extract_archive(archive: &Path, format: ArchiveFormat, dest: &Path) -> io::Result<()> {

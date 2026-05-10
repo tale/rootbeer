@@ -6,6 +6,7 @@
 //! npm should eventually lower to these locked package facts before apply.
 
 mod aqua;
+mod download;
 mod intent;
 mod lock;
 pub mod lockfile;
