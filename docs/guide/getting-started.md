@@ -89,6 +89,10 @@ fully analyze your config for correctness and then apply all changes in a single
 execution. If you want to see what would change without actually writing files,
 use `rb apply --dry-run` or `rb apply -n` to preview the planned changes.
 
+If your config declares packages with `rb.package()`, `rb apply` also maintains a
+`rootbeer.lock` beside your config. See [Packages](/guide/packages) for the
+`--locked`, `--offline`, and `--update` workflow.
+
 ### Editor Autocomplete
 
 `rb init` will automatically set up a `.luarc.json` that enables you to have
@@ -123,5 +127,6 @@ rb update
 You may want to brush up on some of the core concepts and features of Rootbeer.
 
 - [Core Concepts](/guide/what-is-rootbeer#core-concepts): Quick overview.
+- [Packages](/guide/packages): Managed packages and lockfile workflow.
 - [Rootbeer API](/reference/): General purpose functions.
 - [Modules](/modules/): High-level abstractions for popular tools and platforms.

@@ -6,7 +6,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{LockedPackage, PackageIntent, PackageRequest, PackageResolverInputs, ResolveContext};
+use super::{
+    LockedPackage, PackageIntent, PackageRequest, PackageResolution, PackageResolverInputs,
+    ResolutionProof, ResolveContext,
+};
 use crate::deterministic::DeterministicInput;
 use crate::Op;
 
@@ -18,8 +21,14 @@ pub struct RootbeerLock {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub resolutions: BTreeMap<String, String>,
+    pub resolutions: BTreeMap<String, PackageLockResolution>,
     pub packages: BTreeMap<String, LockedPackage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageLockResolution {
+    pub package: String,
+    pub proof: ResolutionProof,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +36,7 @@ pub struct PackageLockEntry {
     pub package: LockedPackage,
     pub id: Option<String>,
     pub resolution_fingerprint: Option<String>,
+    pub proof: Option<ResolutionProof>,
 }
 
 impl PackageLockEntry {
@@ -35,18 +45,21 @@ impl PackageLockEntry {
             package,
             id: None,
             resolution_fingerprint: None,
+            proof: None,
         }
     }
 
     pub fn resolved(
         request: &PackageRequest,
         context: &ResolveContext,
-        package: LockedPackage,
+        resolution: PackageResolution,
     ) -> Result<Self, LockError> {
+        let id = package_id_for_request(request, &resolution.package);
         Ok(Self {
-            id: Some(package_id_for_request(request, &package)),
-            package,
+            package: resolution.package,
+            id: Some(id),
             resolution_fingerprint: Some(resolution_fingerprint(request, context)?),
+            proof: Some(resolution.proof),
         })
     }
 }
@@ -55,6 +68,7 @@ impl PackageLockEntry {
 pub enum LockError {
     DuplicatePackage { id: String },
     DuplicateResolution { fingerprint: String },
+    MissingResolutionProof { id: String },
     MissingPackage { id: String },
     PackageChanged { id: String },
     MissingLockfile { path: std::path::PathBuf },
@@ -68,6 +82,9 @@ impl fmt::Display for LockError {
             LockError::DuplicatePackage { id } => write!(f, "duplicate package `{id}`"),
             LockError::DuplicateResolution { fingerprint } => {
                 write!(f, "duplicate package resolution `{fingerprint}`")
+            }
+            LockError::MissingResolutionProof { id } => {
+                write!(f, "package resolution `{id}` is missing a proof")
             }
             LockError::MissingPackage { id } => {
                 write!(f, "package `{id}` is not present in rootbeer.lock")
@@ -112,8 +129,15 @@ impl RootbeerLock {
             }
 
             if let Some(fingerprint) = entry.resolution_fingerprint {
-                if let Some(previous) = resolutions.insert(fingerprint.clone(), id.clone()) {
-                    if previous != id {
+                let proof = entry
+                    .proof
+                    .ok_or_else(|| LockError::MissingResolutionProof { id: id.clone() })?;
+                let resolution = PackageLockResolution {
+                    package: id.clone(),
+                    proof,
+                };
+                if let Some(previous) = resolutions.insert(fingerprint.clone(), resolution) {
+                    if previous.package != id {
                         return Err(LockError::DuplicateResolution { fingerprint });
                     }
                 }
@@ -201,7 +225,8 @@ impl RootbeerLock {
         context: &ResolveContext,
     ) -> Result<&LockedPackage, LockError> {
         let fingerprint = resolution_fingerprint(request, context)?;
-        if let Some(id) = self.resolutions.get(&fingerprint) {
+        if let Some(resolution) = self.resolutions.get(&fingerprint) {
+            let id = &resolution.package;
             return self
                 .packages
                 .get(id)
@@ -283,7 +308,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::package::{ArchiveFormat, LockedInstall, LockedSource, Provides};
+    use crate::package::{
+        ArchiveFormat, ExternalManagerProof, LockedInstall, LockedSource, Provides,
+    };
 
     fn package() -> LockedPackage {
         LockedPackage {
@@ -302,6 +329,14 @@ mod tests {
             },
             output_sha256: None,
         }
+    }
+
+    fn proof(manager: &str) -> ResolutionProof {
+        ResolutionProof::ExternalManager(ExternalManagerProof {
+            manager: manager.to_string(),
+            inputs: BTreeMap::new(),
+            notes: vec!["test resolver".to_string()],
+        })
     }
 
     #[test]
@@ -356,7 +391,9 @@ mod tests {
         let mut locked = package();
         locked.output_sha256 = Some("out".to_string());
         let lock = RootbeerLock::from_package_entries([PackageLockEntry::resolved(
-            &request, &context, locked,
+            &request,
+            &context,
+            PackageResolution::new(locked, proof("aqua")),
         )
         .unwrap()])
         .unwrap();
@@ -377,26 +414,40 @@ mod tests {
     fn explicit_resolver_entries_are_namespaced_by_resolver() {
         let context = ResolveContext::current();
         let aqua_request = PackageRequest::new("demo").resolver("aqua");
-        let npm_request = PackageRequest::new("demo").resolver("npm");
+        let other_request = PackageRequest::new("demo").resolver("other");
         let mut aqua_package = package();
         aqua_package.source = LockedSource::Url {
             url: "file:///tmp/aqua.tar.gz".to_string(),
             sha256: "abc123".to_string(),
         };
-        let mut npm_package = package();
-        npm_package.source = LockedSource::Url {
-            url: "file:///tmp/npm.tar.gz".to_string(),
+        let mut other_package = package();
+        other_package.source = LockedSource::Url {
+            url: "file:///tmp/other.tar.gz".to_string(),
             sha256: "abc123".to_string(),
         };
 
         let lock = RootbeerLock::from_package_entries([
-            PackageLockEntry::resolved(&aqua_request, &context, aqua_package).unwrap(),
-            PackageLockEntry::resolved(&npm_request, &context, npm_package).unwrap(),
+            PackageLockEntry::resolved(
+                &aqua_request,
+                &context,
+                PackageResolution::new(aqua_package, proof("aqua")),
+            )
+            .unwrap(),
+            PackageLockEntry::resolved(
+                &other_request,
+                &context,
+                PackageResolution::new(other_package, proof("other")),
+            )
+            .unwrap(),
         ])
         .unwrap();
 
         assert!(lock.packages.contains_key("aqua:demo@1.0.0"));
-        assert!(lock.packages.contains_key("npm:demo@1.0.0"));
+        assert!(lock.packages.contains_key("other:demo@1.0.0"));
+        assert!(lock
+            .resolutions
+            .values()
+            .any(|resolution| resolution.proof == proof("aqua")));
     }
 
     #[test]
@@ -430,5 +481,29 @@ mod tests {
         lock.write(&path).unwrap();
 
         assert_eq!(RootbeerLock::read(&path).unwrap(), lock);
+    }
+
+    #[test]
+    fn writes_and_reads_resolution_proofs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("rootbeer.lock");
+        let request = PackageRequest::new("demo").resolver("aqua");
+        let context = ResolveContext::current();
+        let lock = RootbeerLock::from_package_entries([PackageLockEntry::resolved(
+            &request,
+            &context,
+            PackageResolution::new(package(), proof("aqua")),
+        )
+        .unwrap()])
+        .unwrap();
+
+        lock.write(&path).unwrap();
+
+        let read = RootbeerLock::read(&path).unwrap();
+        assert_eq!(read, lock);
+        assert_eq!(
+            read.resolutions.values().next().unwrap().proof,
+            proof("aqua")
+        );
     }
 }

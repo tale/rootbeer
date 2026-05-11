@@ -79,7 +79,8 @@ function rootbeer.exec(cmd, args) end
 --- Declares a package to realize into the Rootbeer store and activate under
 --- Rootbeer's stable package profile. Passing a locked table uses that exact
 --- realization input; passing a string records a resolver request which is
---- pinned in `rootbeer.lock`. For now, `aqua:owner/repo@version` is supported.
+--- pinned in `rootbeer.lock`. Supported resolver prefixes include
+--- `aqua:owner/repo@version`.
 --- @param spec rootbeer.PackageSpec|string The locked package specification or resolver request.
 function rootbeer.package(spec) end
 

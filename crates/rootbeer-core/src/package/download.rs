@@ -3,6 +3,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
 use crate::state_dir;
@@ -204,6 +205,19 @@ pub(super) fn read_url(url: &str) -> io::Result<Vec<u8>> {
         .read_to_end(&mut bytes)
         .map_err(|e| io::Error::other(format!("failed to read {url}: {e}")))?;
     Ok(bytes)
+}
+
+pub(super) fn read_json_url<T>(url: &str) -> io::Result<T>
+where
+    T: DeserializeOwned,
+{
+    let reader = url_reader(url)?;
+    serde_json::from_reader(reader).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("failed to parse JSON from {url}: {e}"),
+        )
+    })
 }
 
 fn copy_url_to_writer(url: &str, writer: &mut impl Write) -> io::Result<String> {

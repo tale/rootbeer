@@ -4,7 +4,7 @@ use std::io;
 use super::lockfile::{LockError, PackageLockEntry, RootbeerLock};
 use super::{
     default_resolver_stack, resolver_stack_for_inputs, LockedPackage, PackageIntent,
-    PackageLockInput, PackageRealizer, PackageRequest, PackageRequestResolver,
+    PackageLockInput, PackageRealizer, PackageRequest, PackageRequestResolver, PackageResolution,
     PackageResolverInputs, RealizedPackage, ResolveContext, ResolveError,
 };
 use crate::deterministic::DeterministicInput;
@@ -117,9 +117,9 @@ where
         for intent in &input.intents {
             let entry = match intent {
                 PackageIntent::Request(request) => {
-                    let package = self.resolve_request(request, &input.context)?;
-                    let locked = self.realize_locked_package(&package)?;
-                    PackageLockEntry::resolved(request, &input.context, locked)?
+                    let mut resolution = self.resolve_request(request, &input.context)?;
+                    resolution.package = self.realize_locked_package(&resolution.package)?;
+                    PackageLockEntry::resolved(request, &input.context, resolution)?
                 }
 
                 PackageIntent::Locked(package) => {
@@ -139,7 +139,7 @@ where
         &self,
         request: &PackageRequest,
         context: &ResolveContext,
-    ) -> Result<LockedPackage, LockBuildError> {
+    ) -> Result<PackageResolution, LockBuildError> {
         self.resolver
             .resolve_package(request, context)
             .map_err(|source| LockBuildError::Resolve {
@@ -226,7 +226,8 @@ mod tests {
 
     use super::*;
     use crate::package::{
-        ArchiveFormat, GitHubRepositoryPin, LockedInstall, LockedSource, Provides, ResolverInput,
+        ArchiveFormat, ExternalManagerProof, GitHubRepositoryPin, LockedInstall, LockedSource,
+        Provides, ResolutionProof, ResolverInput,
     };
     use crate::store::StoreEntry;
 
@@ -239,8 +240,8 @@ mod tests {
             &self,
             _request: &PackageRequest,
             _context: &ResolveContext,
-        ) -> Result<LockedPackage, ResolveError> {
-            Ok(self.package.clone())
+        ) -> Result<PackageResolution, ResolveError> {
+            Ok(PackageResolution::new(self.package.clone(), proof()))
         }
     }
 
@@ -278,6 +279,14 @@ mod tests {
         }
     }
 
+    fn proof() -> ResolutionProof {
+        ResolutionProof::ExternalManager(ExternalManagerProof {
+            manager: "fake".to_string(),
+            inputs: BTreeMap::new(),
+            notes: vec!["test resolver".to_string()],
+        })
+    }
+
     #[test]
     fn builder_uses_injected_resolver_and_realizer() {
         let inputs = PackageResolverInputs {
@@ -307,5 +316,6 @@ mod tests {
         assert_eq!(lock.inputs, inputs);
         assert!(lock.input_fingerprint.is_some());
         assert_eq!(lock.resolutions.len(), 1);
+        assert_eq!(lock.resolutions.values().next().unwrap().proof, proof());
     }
 }
