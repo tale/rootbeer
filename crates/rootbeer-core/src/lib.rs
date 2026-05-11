@@ -1,11 +1,14 @@
+pub mod deterministic;
 mod executor;
 mod lua;
+pub mod package;
 mod pipeline;
 mod plan;
 pub mod profile;
+pub mod store;
 
 pub use executor::{ExecutionHandler, ExecutionReport, OpResult};
-pub use pipeline::{Mode, Options, Pipeline, PlannedPipeline};
+pub use pipeline::{Mode, Options, PackageLockMode, Pipeline, PlannedPipeline};
 pub use plan::Op;
 pub use profile::ProfileError;
 
@@ -20,6 +23,9 @@ pub fn lua_dir() -> PathBuf {
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::{error, io};
+
+use package::lockfile::LockError;
+use package::LockBuildError;
 
 #[derive(Debug)]
 pub(crate) struct Runtime {
@@ -66,6 +72,8 @@ pub fn script_path() -> PathBuf {
 pub enum Error {
     Io(io::Error),
     Lua(mlua::Error),
+    Lock(LockError),
+    LockBuild(Box<LockBuildError>),
     Profile(ProfileError),
 }
 
@@ -73,6 +81,8 @@ impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Io(e) => write!(f, "{e}"),
+            Error::Lock(e) => write!(f, "{e}"),
+            Error::LockBuild(e) => write!(f, "{e}"),
             Error::Profile(e) => write!(f, "{e}"),
             Error::Lua(e) => {
                 let msg = e.to_string();
@@ -95,6 +105,18 @@ impl error::Error for Error {}
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Error::Io(e)
+    }
+}
+
+impl From<LockError> for Error {
+    fn from(e: LockError) -> Self {
+        Error::Lock(e)
+    }
+}
+
+impl From<LockBuildError> for Error {
+    fn from(e: LockBuildError) -> Self {
+        Error::LockBuild(Box::new(e))
     }
 }
 

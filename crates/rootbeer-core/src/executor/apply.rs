@@ -1,16 +1,56 @@
 use std::io::{self, BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::{fs, os::unix::fs as unix_fs, process, process::Command, thread};
 
 use crate::{
     executor::{ExecutionHandler, ExecutionReport, OpResult},
+    package::{profile as package_profile, PackageRealizer},
+    store::Store,
     Op,
 };
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ApplyOptions {
+    pub package_offline: bool,
+}
+
+#[cfg(test)]
 pub fn apply(
     ops: &[Op],
     force: bool,
     handler: &mut impl ExecutionHandler,
+) -> io::Result<ExecutionReport> {
+    apply_with_options(ops, force, handler, ApplyOptions::default())
+}
+
+pub fn apply_with_options(
+    ops: &[Op],
+    force: bool,
+    handler: &mut impl ExecutionHandler,
+    options: ApplyOptions,
+) -> io::Result<ExecutionReport> {
+    let package_realizer = if options.package_offline {
+        PackageRealizer::offline(Store::default())
+    } else {
+        PackageRealizer::default()
+    };
+
+    apply_with_package_realizer(
+        ops,
+        force,
+        handler,
+        &package_realizer,
+        &package_profile::bin_dir(),
+    )
+}
+
+fn apply_with_package_realizer(
+    ops: &[Op],
+    force: bool,
+    handler: &mut impl ExecutionHandler,
+    package_realizer: &PackageRealizer,
+    package_bin_dir: &Path,
 ) -> io::Result<ExecutionReport> {
     let mut report = ExecutionReport::default();
 
@@ -205,15 +245,78 @@ pub fn apply(
                     report.results.push(result);
                 }
             }
+
+            Op::RealizePackage { package } => {
+                let realized = package_realizer.realize(package)?;
+                activate_package_bins(&realized.bins, force, package_bin_dir)?;
+                package_profile::write_env_file_for_bin_dir(package_bin_dir)?;
+                let result = OpResult::PackageRealized {
+                    name: package.name.clone(),
+                    version: package.version.clone(),
+                    store_path: Some(realized.store_entry.path),
+                };
+                handler.on_result(&result);
+                report.results.push(result);
+            }
+
+            Op::Package { intent } => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("package `{intent}` must be locked before apply"),
+                ));
+            }
         }
     }
 
     Ok(report)
 }
 
+fn activate_package_bins(
+    bins: &std::collections::BTreeMap<String, PathBuf>,
+    force: bool,
+    bin_dir: &Path,
+) -> io::Result<()> {
+    fs::create_dir_all(bin_dir)?;
+
+    for (name, src) in bins {
+        let dst = bin_dir.join(name);
+        if dst.is_symlink() {
+            if fs::read_link(&dst).ok().as_ref() == Some(src) {
+                continue;
+            }
+            fs::remove_file(&dst)?;
+        } else if dst.exists() {
+            if force {
+                if dst.is_dir() {
+                    fs::remove_dir_all(&dst)?;
+                } else {
+                    fs::remove_file(&dst)?;
+                }
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "package bin {} exists and is not a symlink (use --force to overwrite)",
+                        dst.display()
+                    ),
+                ));
+            }
+        }
+
+        unix_fs::symlink(src, dst)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::package::{ArchiveFormat, LockedInstall, LockedPackage, LockedSource, Provides};
+    use crate::store::{hash_file, Store};
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     #[derive(Default)]
@@ -426,5 +529,90 @@ mod tests {
             content: "y".into(),
         };
         assert!(matches!(op, Op::WriteFile { .. }));
+    }
+
+    fn archive_source() -> (tempfile::TempDir, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let archive_path = root.path().join("demo.tar.gz");
+        let file = fs::File::create(&archive_path).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+
+        let mut header = tar::Header::new_gnu();
+        let body = b"#!/bin/sh\n";
+        header.set_size(body.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "demo/bin/demo", &body[..])
+            .unwrap();
+        builder.finish().unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+
+        (root, archive_path)
+    }
+
+    fn locked_package(archive: &PathBuf) -> LockedPackage {
+        LockedPackage {
+            name: "demo".to_string(),
+            version: "1.0.0".to_string(),
+            source: LockedSource::File {
+                path: archive.clone(),
+                sha256: hash_file(archive).unwrap(),
+            },
+            install: LockedInstall::Archive {
+                format: ArchiveFormat::TarGz,
+                strip_prefix: Some(PathBuf::from("demo")),
+            },
+            provides: Provides {
+                bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
+            },
+            output_sha256: None,
+        }
+    }
+
+    #[test]
+    fn realize_package_op_installs_locked_package_into_store() {
+        let root = tempfile::tempdir().unwrap();
+        let (_archive_root, archive) = archive_source();
+        let package = locked_package(&archive);
+        let ops = vec![Op::RealizePackage {
+            package: package.clone(),
+        }];
+        let package_realizer = PackageRealizer::with_dirs(
+            Store::new(root.path().join("store")),
+            root.path().join("downloads"),
+            root.path().join("tmp"),
+        );
+
+        let mut h = Recorder::default();
+        apply_with_package_realizer(
+            &ops,
+            false,
+            &mut h,
+            &package_realizer,
+            &root.path().join("profile/bin"),
+        )
+        .unwrap();
+
+        let OpResult::PackageRealized {
+            name,
+            version,
+            store_path: Some(store_path),
+        } = &h.results[0]
+        else {
+            panic!("expected package realized result");
+        };
+        assert_eq!(name, "demo");
+        assert_eq!(version, "1.0.0");
+        assert!(store_path.join("bin/demo").is_file());
+        assert_eq!(
+            fs::read_link(root.path().join("profile/bin/demo")).unwrap(),
+            store_path.join("bin/demo")
+        );
+        assert!(root.path().join("profile/env.sh").is_file());
+        assert!(fs::read_to_string(root.path().join("profile/env.sh"))
+            .unwrap()
+            .contains("profile/bin"));
     }
 }

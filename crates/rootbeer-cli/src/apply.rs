@@ -15,6 +15,18 @@ pub struct Args {
     #[arg(short, long)]
     pub force: bool,
 
+    /// Refuse to update rootbeer.lock; fail if it is missing or stale
+    #[arg(long)]
+    pub locked: bool,
+
+    /// Do not use the network; require rootbeer.lock and cached package sources/store outputs
+    #[arg(long)]
+    pub offline: bool,
+
+    /// Refresh pinned resolver inputs and rewrite rootbeer.lock before applying
+    #[arg(long)]
+    pub update: bool,
+
     /// Path to a .lua script to execute (default: data_dir/source/rootbeer.lua)
     #[arg(short, long)]
     pub script: Option<PathBuf>,
@@ -94,11 +106,34 @@ impl ExecutionHandler for CliHandler {
             OpResult::RemoteUnchanged { url } => {
                 eprintln!("  {} {url} (unchanged)", "skip".dimmed());
             }
+            OpResult::PackageRealized {
+                name,
+                version,
+                store_path,
+            } => {
+                if let Some(store_path) = store_path {
+                    eprintln!(
+                        "  {} {name}@{version} -> {}",
+                        "package".green(),
+                        store_path.display()
+                    );
+                } else {
+                    eprintln!("  {} {name}@{version}", "package".green());
+                }
+            }
+            OpResult::PackagePlanned { spec } => {
+                eprintln!("  {} {spec}", "package".green());
+            }
         }
     }
 }
 
 pub fn run(args: Args, lua_dir: Option<&PathBuf>) {
+    if args.update && (args.locked || args.offline) {
+        eprintln!("error: --update cannot be combined with --locked or --offline");
+        std::process::exit(1);
+    }
+
     let script = args.script.unwrap_or_else(rootbeer_core::script_path);
 
     if !script.exists() {
@@ -118,6 +153,15 @@ pub fn run(args: Args, lua_dir: Option<&PathBuf>) {
     };
     opts.force = args.force;
     opts.profile = args.profile;
+    opts.package_lock = if args.update {
+        rootbeer_core::PackageLockMode::Update
+    } else if args.offline {
+        rootbeer_core::PackageLockMode::Offline
+    } else if args.locked {
+        rootbeer_core::PackageLockMode::Locked
+    } else {
+        rootbeer_core::PackageLockMode::Auto
+    };
 
     if let Some(lua_dir) = lua_dir {
         opts.lua_dir = lua_dir.clone();

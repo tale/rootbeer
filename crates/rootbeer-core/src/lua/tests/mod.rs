@@ -7,6 +7,7 @@
 mod brew;
 mod fs;
 mod git;
+mod package;
 mod profile;
 mod vm;
 mod writer;

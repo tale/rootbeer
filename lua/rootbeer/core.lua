@@ -58,6 +58,46 @@ function rootbeer.link(src, dst) end
 --- @param args? string[] Optional arguments passed to the command.
 function rootbeer.exec(cmd, args) end
 
+--- @class rootbeer.PackageSpec
+--- @field name string Package name.
+--- @field version string Locked package version.
+--- @field source rootbeer.PackageSource Locked package source.
+--- @field install rootbeer.PackageInstall Package install recipe.
+--- @field bins table<string, string> Binary name → relative path in the installed output tree.
+
+--- @class rootbeer.PackageSource
+--- @field path? string Local directory tree source. The `sha256` is a deterministic tree hash.
+--- @field file? string Local source file, usually an archive. The `sha256` is a byte hash.
+--- @field url? string Remote or `file://` source URL. The `sha256` is a byte hash.
+--- @field sha256 string Locked source hash.
+
+--- @class rootbeer.PackageInstall
+--- @field directory? boolean Install a directory tree source.
+--- @field archive? "tar.gz"|"tgz" Install an archive source.
+--- @field strip_prefix? string Relative subdirectory to use as the install root.
+
+--- Declares a package to realize into the Rootbeer store and activate under
+--- Rootbeer's stable package profile. Passing a locked table uses that exact
+--- realization input; passing a string records a resolver request which is
+--- pinned in `rootbeer.lock`. Supported resolver prefixes include
+--- `aqua:owner/repo@version`.
+--- @param spec rootbeer.PackageSpec|string The locked package specification or resolver request.
+function rootbeer.package(spec) end
+
+--- Returns the stable Rootbeer profile path for a managed binary, or `nil`
+--- when the binary is not provided by the current plan/profile. This never
+--- searches the host `PATH`.
+--- @param bin string Binary name.
+--- @return string?
+function rootbeer.which(bin) end
+
+--- Writes Rootbeer's package profile environment file and returns its path.
+--- Source this from shell configuration to make managed package bins available
+--- on `PATH` without hardcoding store/profile internals.
+--- @param shell? "sh"|"bash"|"zsh" Shell syntax to generate. Defaults to `"sh"`.
+--- @return string
+function rootbeer.env_export(shell) end
+
 --- Checks whether a path exists (file, directory, or symlink).
 --- Supports `~` expansion and relative paths.
 --- @param path string The path to check.
