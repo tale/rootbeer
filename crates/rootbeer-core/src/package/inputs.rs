@@ -3,7 +3,7 @@ use std::io;
 
 use serde::{Deserialize, Serialize};
 
-use super::download::read_url;
+use super::download::read_json_url;
 
 const AQUA_REGISTRY_OWNER: &str = "aquaproj";
 const AQUA_REGISTRY_REPO: &str = "aqua-registry";
@@ -43,7 +43,6 @@ impl PackageResolverInputs {
                 )?,
             }),
         );
-
         Ok(Self { resolvers })
     }
 
@@ -54,7 +53,7 @@ impl PackageResolverInputs {
     pub fn aqua_registry(&self) -> Option<&GitHubRepositoryPin> {
         match self.resolvers.get("aqua") {
             Some(ResolverInput::AquaRegistry(pin)) => Some(pin),
-            None => None,
+            _ => None,
         }
     }
 }
@@ -66,13 +65,7 @@ struct GitHubCommitResponse {
 
 fn resolve_github_commit(owner: &str, repo: &str, reference: &str) -> io::Result<String> {
     let url = format!("https://api.github.com/repos/{owner}/{repo}/commits/{reference}");
-    let bytes = read_url(&url)?;
-    let response: GitHubCommitResponse = serde_json::from_slice(&bytes).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("failed to parse GitHub commit response from {url}: {e}"),
-        )
-    })?;
+    let response: GitHubCommitResponse = read_json_url(&url)?;
 
     if response.sha.is_empty() {
         return Err(io::Error::new(

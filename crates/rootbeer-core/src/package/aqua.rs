@@ -5,13 +5,16 @@ use serde::Deserialize;
 
 use super::download::{read_url, DownloadCache};
 use super::{
-    ArchiveFormat, GitHubRepositoryPin, LockedInstall, LockedPackage, LockedSource, PackageRequest,
-    PackageResolver, Provides, ResolveContext,
+    ArchiveFormat, GitHubRepositoryPin, LockedInstall, LockedPackage, LockedSource,
+    MetadataDocumentProof, PackageRequest, PackageResolution, PackageResolver, Provides,
+    ResolutionProof, ResolveContext, SnapshotProof, SnapshotSource,
 };
+use crate::store::hash_bytes;
 
 #[derive(Debug, Clone)]
 pub struct AquaResolver {
     registry_base_url: String,
+    registry_source: SnapshotSource,
     downloads: DownloadCache,
 }
 
@@ -20,16 +23,22 @@ impl AquaResolver {
         Self {
             registry_base_url: "https://raw.githubusercontent.com/aquaproj/aqua-registry/main/pkgs"
                 .to_string(),
+            registry_source: SnapshotSource::Url {
+                url: "https://raw.githubusercontent.com/aquaproj/aqua-registry/main/pkgs"
+                    .to_string(),
+            },
             downloads: DownloadCache::default(),
         }
     }
 
     pub fn from_registry_pin(pin: &GitHubRepositoryPin) -> Self {
+        let registry_base_url = format!(
+            "https://raw.githubusercontent.com/{}/{}/{}/pkgs",
+            pin.owner, pin.repo, pin.rev
+        );
         Self {
-            registry_base_url: format!(
-                "https://raw.githubusercontent.com/{}/{}/{}/pkgs",
-                pin.owner, pin.repo, pin.rev
-            ),
+            registry_base_url,
+            registry_source: SnapshotSource::GitHubRepository(pin.clone()),
             downloads: DownloadCache::default(),
         }
     }
@@ -39,8 +48,12 @@ impl AquaResolver {
         registry_base_url: impl Into<String>,
         downloads: impl Into<PathBuf>,
     ) -> Self {
+        let registry_base_url = registry_base_url.into();
         Self {
-            registry_base_url: registry_base_url.into(),
+            registry_source: SnapshotSource::Url {
+                url: registry_base_url.clone(),
+            },
+            registry_base_url,
             downloads: DownloadCache::new(downloads),
         }
     }
@@ -49,18 +62,24 @@ impl AquaResolver {
         &self,
         request: &PackageRequest,
         context: &ResolveContext,
-    ) -> Result<Option<LockedPackage>, String> {
+    ) -> Result<Option<PackageResolution>, String> {
         let (owner, repo) = request.name.split_once('/').ok_or_else(|| {
             "aqua packages must be requested as `owner/repo`, e.g. `aqua:FiloSottile/age`"
                 .to_string()
         })?;
 
+        let mut documents = Vec::new();
         let version = match &request.version {
             Some(version) => version.clone(),
-            None => self.latest_version(owner, repo)?,
+            None => {
+                let (version, document) = self.latest_version(owner, repo)?;
+                documents.push(document);
+                version
+            }
         };
 
-        let registry = self.registry(owner, repo)?;
+        let (registry, document) = self.registry(owner, repo)?;
+        documents.push(document);
         let Some(package) = registry.packages.into_iter().find(|package| {
             matches!(
                 package.package_type.as_deref(),
@@ -117,7 +136,7 @@ impl AquaResolver {
         let asset_without_ext = asset_without_ext(&source_url);
         let vars = vars.with_asset_without_ext(asset_without_ext);
 
-        Ok(Some(LockedPackage {
+        let package = LockedPackage {
             name: request.name.clone(),
             version,
             source: LockedSource::Url {
@@ -132,12 +151,27 @@ impl AquaResolver {
                 bins: package.provides(repo, &vars),
             },
             output_sha256: None,
-        }))
+        };
+        let proof = ResolutionProof::Snapshot(SnapshotProof {
+            resolver: "aqua".to_string(),
+            source: self.registry_source.clone(),
+            documents,
+        });
+
+        Ok(Some(PackageResolution::new(package, proof)))
     }
 
-    fn latest_version(&self, owner: &str, repo: &str) -> Result<String, String> {
+    fn latest_version(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<(String, MetadataDocumentProof), String> {
         let url = format!("{}/{owner}/{repo}/pkg.yaml", self.registry_base_url);
         let bytes = read_url(&url).map_err(|e| e.to_string())?;
+        let proof = MetadataDocumentProof {
+            url: url.clone(),
+            sha256: hash_bytes(&bytes),
+        };
         let pkg: AquaPkg = serde_yml::from_slice(&bytes)
             .map_err(|e| format!("failed to parse aqua package index {url}: {e}"))?;
 
@@ -145,15 +179,27 @@ impl AquaResolver {
             return Err(format!("aqua package `{owner}/{repo}` has no versions"));
         };
 
-        package.version(owner, repo).ok_or_else(|| {
-            format!("aqua package `{owner}/{repo}` latest entry does not include a version")
-        })
+        package
+            .version(owner, repo)
+            .map(|version| (version, proof))
+            .ok_or_else(|| {
+                format!("aqua package `{owner}/{repo}` latest entry does not include a version")
+            })
     }
 
-    fn registry(&self, owner: &str, repo: &str) -> Result<AquaRegistry, String> {
+    fn registry(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<(AquaRegistry, MetadataDocumentProof), String> {
         let url = format!("{}/{owner}/{repo}/registry.yaml", self.registry_base_url);
         let bytes = read_url(&url).map_err(|e| e.to_string())?;
+        let proof = MetadataDocumentProof {
+            url: url.clone(),
+            sha256: hash_bytes(&bytes),
+        };
         serde_yml::from_slice(&bytes)
+            .map(|registry| (registry, proof))
             .map_err(|e| format!("failed to parse aqua registry {url}: {e}"))
     }
 }
@@ -173,7 +219,7 @@ impl PackageResolver for AquaResolver {
         &self,
         request: &PackageRequest,
         context: &ResolveContext,
-    ) -> Result<Option<LockedPackage>, String> {
+    ) -> Result<Option<PackageResolution>, String> {
         self.resolve_inner(request, context)
     }
 }
@@ -455,13 +501,14 @@ packages:
             format!("file://{}", tmp.path().display()),
             tmp.path().join("downloads"),
         );
-        let package = resolver
+        let resolution = resolver
             .resolve(
                 &PackageRequest::new("owner/tool"),
                 &ResolveContext::new("aarch64-macos"),
             )
             .unwrap()
             .unwrap();
+        let package = resolution.package;
 
         assert_eq!(package.name, "owner/tool");
         assert_eq!(package.version, "v1.0.0");
@@ -479,6 +526,11 @@ packages:
             package.provides.bins.get("tool"),
             Some(&PathBuf::from("tool/bin/tool"))
         );
+        let ResolutionProof::Snapshot(proof) = resolution.proof else {
+            panic!("expected aqua snapshot proof");
+        };
+        assert_eq!(proof.resolver, "aqua");
+        assert_eq!(proof.documents.len(), 2);
     }
 
     #[test]

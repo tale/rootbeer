@@ -2,8 +2,8 @@
 //!
 //! The package layer consumes locked package facts, verifies their source
 //! content, installs them into a normalized tree, and inserts that tree into
-//! the content-addressed store. Higher-level backends such as GitHub, aqua, or
-//! npm should eventually lower to these locked package facts before apply.
+//! the content-addressed store. Higher-level package backends should lower to
+//! these locked package facts before apply.
 
 mod aqua;
 mod download;
@@ -22,8 +22,10 @@ pub use intent::{PackageIntent, PackageLockInput};
 pub use lock::{LockBuildError, PackageLockBuilder, PackageRealizerBackend};
 pub use realize::{PackageRealizer, RealizedPackage};
 pub use resolve::{
-    PackageRequest, PackageRequestResolver, PackageResolutionInput, PackageResolver,
-    ResolveAttempt, ResolveContext, ResolveError, ResolverStack,
+    ArtifactProof, DependencyProof, ExternalManagerProof, GitReleaseProof, MetadataClosureProof,
+    MetadataDocumentProof, PackageRequest, PackageRequestResolver, PackageResolution,
+    PackageResolutionInput, PackageResolver, ResolutionProof, ResolveAttempt, ResolveContext,
+    ResolveError, ResolverStack, SnapshotProof, SnapshotSource,
 };
 pub use spec::{
     ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRealizationInput, Provides,

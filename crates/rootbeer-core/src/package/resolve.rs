@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
 use crate::deterministic::DeterministicInput;
 
-use super::LockedPackage;
+use super::{GitHubRepositoryPin, LockedPackage};
 
 /// A high-level package request before it has been lowered to a locked package
 /// fact. The resolver prefix is optional: `ripgrep` is implicit, while
@@ -46,18 +47,18 @@ impl PackageRequest {
     }
 
     pub fn parse(input: &str) -> Self {
-        let (input, version) = match input.rsplit_once('@') {
-            Some((name, version)) if !name.is_empty() && !version.is_empty() => {
-                (name, Some(version.to_string()))
+        let (resolver, input) = match input.split_once(':') {
+            Some((resolver, name)) if !resolver.is_empty() && !name.is_empty() => {
+                (Some(resolver.to_string()), name)
             }
-            _ => (input, None),
+            _ => (None, input),
         };
 
-        let (resolver, name) = match input.split_once(':') {
-            Some((resolver, name)) if !resolver.is_empty() && !name.is_empty() => {
-                (Some(resolver.to_string()), name.to_string())
+        let (name, version) = match input.rsplit_once('@') {
+            Some((name, version)) if !name.is_empty() && !version.is_empty() => {
+                (name.to_string(), Some(version.to_string()))
             }
-            _ => (None, input.to_string()),
+            _ => (input.to_string(), None),
         };
 
         Self {
@@ -121,6 +122,97 @@ pub struct PackageResolutionInput<'a> {
 
 impl DeterministicInput for PackageResolutionInput<'_> {
     const KIND: &'static str = "package.resolution";
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageResolution {
+    pub package: LockedPackage,
+    pub proof: ResolutionProof,
+}
+
+impl PackageResolution {
+    pub fn new(package: LockedPackage, proof: ResolutionProof) -> Self {
+        Self { package, proof }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResolutionProof {
+    Snapshot(SnapshotProof),
+    MetadataClosure(MetadataClosureProof),
+    GitRelease(GitReleaseProof),
+    ExternalManager(ExternalManagerProof),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotProof {
+    pub resolver: String,
+    pub source: SnapshotSource,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<MetadataDocumentProof>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SnapshotSource {
+    GitHubRepository(GitHubRepositoryPin),
+    Url { url: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetadataClosureProof {
+    pub resolver: String,
+    pub root: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<MetadataDocumentProof>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<ArtifactProof>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<DependencyProof>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DependencyProof {
+    pub name: String,
+    pub version: String,
+    pub proof: Box<ResolutionProof>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetadataDocumentProof {
+    pub url: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactProof {
+    pub url: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitReleaseProof {
+    pub host: String,
+    pub owner: String,
+    pub repo: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<MetadataDocumentProof>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalManagerProof {
+    pub manager: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub inputs: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,7 +291,7 @@ impl fmt::Display for ResolveError {
 impl std::error::Error for ResolveError {}
 
 /// Implementations can use any kind of strategy to resolve a package but must
-/// return either Ok(None) if not found or a locked package if found.
+/// return either Ok(None) if not found or a locked package with a proof if found.
 pub trait PackageResolver {
     fn name(&self) -> &str;
 
@@ -207,7 +299,7 @@ pub trait PackageResolver {
         &self,
         request: &PackageRequest,
         context: &ResolveContext,
-    ) -> Result<Option<LockedPackage>, String>;
+    ) -> Result<Option<PackageResolution>, String>;
 }
 
 /// Resolves package requests into locked package facts. This is intentionally
@@ -217,7 +309,7 @@ pub trait PackageRequestResolver {
         &self,
         request: &PackageRequest,
         context: &ResolveContext,
-    ) -> Result<LockedPackage, ResolveError>;
+    ) -> Result<PackageResolution, ResolveError>;
 }
 
 /// Ordered resolver orchestration. This is the only policy encoded here:
@@ -251,7 +343,7 @@ impl ResolverStack {
         &self,
         request: &PackageRequest,
         context: &ResolveContext,
-    ) -> Result<LockedPackage, ResolveError> {
+    ) -> Result<PackageResolution, ResolveError> {
         if self.resolvers.is_empty() {
             return Err(ResolveError::NoResolvers);
         }
@@ -303,7 +395,7 @@ impl PackageRequestResolver for ResolverStack {
         &self,
         request: &PackageRequest,
         context: &ResolveContext,
-    ) -> Result<LockedPackage, ResolveError> {
+    ) -> Result<PackageResolution, ResolveError> {
         self.resolve(request, context)
     }
 }
@@ -318,7 +410,7 @@ mod tests {
 
     struct FakeResolver {
         name: &'static str,
-        package: Option<LockedPackage>,
+        resolution: Option<PackageResolution>,
         error: Option<&'static str>,
     }
 
@@ -326,7 +418,7 @@ mod tests {
         fn miss(name: &'static str) -> Self {
             Self {
                 name,
-                package: None,
+                resolution: None,
                 error: None,
             }
         }
@@ -334,7 +426,7 @@ mod tests {
         fn hit(name: &'static str, package: LockedPackage) -> Self {
             Self {
                 name,
-                package: Some(package),
+                resolution: Some(PackageResolution::new(package, proof(name))),
                 error: None,
             }
         }
@@ -342,7 +434,7 @@ mod tests {
         fn error(name: &'static str, error: &'static str) -> Self {
             Self {
                 name,
-                package: None,
+                resolution: None,
                 error: Some(error),
             }
         }
@@ -357,13 +449,21 @@ mod tests {
             &self,
             _request: &PackageRequest,
             _context: &ResolveContext,
-        ) -> Result<Option<LockedPackage>, String> {
+        ) -> Result<Option<PackageResolution>, String> {
             if let Some(error) = self.error {
                 Err(error.to_string())
             } else {
-                Ok(self.package.clone())
+                Ok(self.resolution.clone())
             }
         }
+    }
+
+    fn proof(resolver: &str) -> ResolutionProof {
+        ResolutionProof::ExternalManager(ExternalManagerProof {
+            manager: resolver.to_string(),
+            inputs: BTreeMap::new(),
+            notes: vec!["test resolver".to_string()],
+        })
     }
 
     fn package(name: &str) -> LockedPackage {
@@ -397,6 +497,24 @@ mod tests {
                 .resolver("aqua")
                 .version("14.1.1")
         );
+        assert_eq!(
+            PackageRequest::parse("@scope/tool"),
+            PackageRequest::new("@scope/tool")
+        );
+        assert_eq!(
+            PackageRequest::parse("@scope/tool@1.2.3"),
+            PackageRequest::new("@scope/tool").version("1.2.3")
+        );
+        assert_eq!(
+            PackageRequest::parse("registry:@scope/tool"),
+            PackageRequest::new("@scope/tool").resolver("registry")
+        );
+        assert_eq!(
+            PackageRequest::parse("registry:@scope/tool@1.2.3"),
+            PackageRequest::new("@scope/tool")
+                .resolver("registry")
+                .version("1.2.3")
+        );
     }
 
     #[test]
@@ -425,7 +543,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(resolved.name, "ripgrep");
+        assert_eq!(resolved.package.name, "ripgrep");
     }
 
     #[test]
@@ -441,7 +559,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(resolved.name, "ripgrep");
+        assert_eq!(resolved.package.name, "ripgrep");
     }
 
     #[test]
