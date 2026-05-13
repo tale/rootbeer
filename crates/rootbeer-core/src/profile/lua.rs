@@ -54,6 +54,12 @@ const BUILTIN_STRATEGIES: &[BuiltinStrategy] = &[
         resolve: resolve_user,
         missing: missing_user,
     },
+    BuiltinStrategy {
+        name: "command",
+        aliases: &["match_command"],
+        resolve: resolve_command,
+        missing: missing_command,
+    },
 ];
 
 fn define(lua: &Lua, spec_table: Table) -> mlua::Result<()> {
@@ -104,12 +110,18 @@ fn resolve_builtin(
     builtin: &'static BuiltinStrategy,
     require_match: bool,
 ) -> mlua::Result<Option<String>> {
-    let matched = (builtin.resolve)(lua, facts)?;
-    if matched.is_none() && require_match {
+    if let Some(matched) = (builtin.resolve)(lua, facts)? {
+        return Ok(Some(matched));
+    }
+
+    if require_match {
+        if let Some(fallback) = state(lua).fallback() {
+            return Ok(Some(fallback));
+        }
         return Err((builtin.missing)(lua, facts).into());
     }
 
-    Ok(matched)
+    Ok(None)
 }
 
 fn resolve_cli(lua: &Lua, _: &StrategyFacts) -> mlua::Result<Option<String>> {
@@ -161,6 +173,59 @@ fn missing_user(lua: &Lua, facts: &StrategyFacts) -> ProfileError {
         value: Some(facts.user.clone()),
         profiles: state(lua).schema_keys(),
     }
+}
+
+fn resolve_command(lua: &Lua, _: &StrategyFacts) -> mlua::Result<Option<String>> {
+    let s = state(lua);
+    let Some(schema) = s.schema() else {
+        return Ok(None);
+    };
+
+    for (name, spec) in schema {
+        if spec.matches.iter().any(|cmd| command_on_path(cmd)) {
+            return Ok(Some(name.clone()));
+        }
+    }
+    Ok(None)
+}
+
+fn missing_command(lua: &Lua, _: &StrategyFacts) -> ProfileError {
+    ProfileError::NoMatch {
+        strategy: "command",
+        value: None,
+        profiles: state(lua).schema_keys(),
+    }
+}
+
+/// Returns true if `cmd` resolves to an executable file on `PATH`. Absolute
+/// or relative paths are checked directly. Empty input is rejected.
+fn command_on_path(cmd: &str) -> bool {
+    if cmd.is_empty() {
+        return false;
+    }
+
+    if cmd.contains(std::path::MAIN_SEPARATOR) {
+        return is_executable(std::path::Path::new(cmd));
+    }
+
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+
+    std::env::split_paths(&path).any(|dir| is_executable(&dir.join(cmd)))
+}
+
+#[cfg(unix)]
+fn is_executable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &std::path::Path) -> bool {
+    path.is_file()
 }
 
 fn resolve_custom(lua: &Lua, f: Function, facts: StrategyFacts) -> mlua::Result<Option<String>> {

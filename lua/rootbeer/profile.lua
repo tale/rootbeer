@@ -1,9 +1,11 @@
 --- @meta
 
 --- Strings that resolve to a profile when matched by the active strategy.
---- `"hostname"` matches against `rb.host.hostname`; `"user"` matches
---- against `rb.host.user`; custom strategies can call `ctx.match(value)` or
---- compose built-in strategy helpers such as `ctx.cli()` and `ctx.hostname()`.
+--- `"hostname"` matches against `rb.host.hostname`; `"user"` matches against
+--- `rb.host.user`; `"command"` matches against the names of executables on
+--- `PATH` (or absolute paths). A profile may be declared with an empty list,
+--- in which case it acts as the **fallback** when no other profile matches.
+--- At most one profile may be the fallback.
 --- @alias profile.Matchers string[]
 
 --- @class profile.Ctx
@@ -11,8 +13,9 @@
 --- @field cli fun(): string? Return and validate the `--profile` value, or `nil` when omitted.
 --- @field hostname fun(): string? Match `rb.host.hostname` against the profile matcher table.
 --- @field user fun(): string? Match `rb.host.user` against the profile matcher table.
+--- @field command fun(): string? Match the first profile whose matcher list contains an executable found on `PATH`.
 
---- @alias profile.Strategy "cli" | "hostname" | "user" | fun(ctx: profile.Ctx): string?
+--- @alias profile.Strategy "cli" | "hostname" | "user" | "command" | fun(ctx: profile.Ctx): string?
 
 --- @class profile.Setup
 --- @field strategy profile.Strategy How the active profile is chosen.

@@ -51,7 +51,7 @@ impl fmt::Display for ProfileError {
             },
             Self::InvalidStrategy(s) => write!(
                 f,
-                "unknown strategy '{s}', expected 'cli', 'hostname', 'user', or a function"
+                "unknown strategy '{s}', expected 'cli', 'hostname', 'user', 'command', or a function"
             ),
             Self::Required { active, profiles } => {
                 let known = profiles.join(", ");

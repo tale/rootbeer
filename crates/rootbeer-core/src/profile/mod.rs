@@ -67,6 +67,20 @@ impl ProfileContext {
     pub fn match_user(&self, user: &str) -> Option<String> {
         self.match_value(user)
     }
+
+    /// The unique profile with an empty matcher list, if exactly one exists.
+    /// Used by built-in strategies as an automatic fallback when no matcher
+    /// resolves. If multiple profiles have empty matchers the choice is
+    /// ambiguous and no fallback applies.
+    pub fn fallback(&self) -> Option<String> {
+        let schema = self.schema.as_ref()?;
+        let mut empties = schema.iter().filter(|(_, spec)| spec.matches.is_empty());
+        let first = empties.next()?;
+        if empties.next().is_some() {
+            return None;
+        }
+        Some(first.0.clone())
+    }
 }
 
 /// Try and recursively extract a ProfileError from an `mlua:Error`. These kinds

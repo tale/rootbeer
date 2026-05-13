@@ -316,6 +316,111 @@ fn user_strategy_matches_profile_strings() {
     assert_eq!(result, "current");
 }
 
+// ────────────────────────── strategy = "command" ─────────────────
+
+#[test]
+fn command_strategy_matches_executable_on_path() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = "command",
+            profiles = { work = { "sh" }, personal = { "definitely-not-a-real-binary-xyz" } },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        None,
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "work");
+}
+
+#[test]
+fn command_strategy_no_match_errors() {
+    match err(
+        r#"rb.profile.define({
+            strategy = "command",
+            profiles = {
+                work     = { "definitely-not-a-real-binary-xyz" },
+                personal = { "another-fake-binary-abc" },
+            },
+        })"#,
+        None,
+    ) {
+        ProfileError::NoMatch { strategy, .. } => assert_eq!(strategy, "command"),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[test]
+fn command_strategy_accepts_absolute_path() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = "command",
+            profiles = { unix = { "/bin/sh" }, other = { "/no/such/binary-xyz" } },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        None,
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "unix");
+}
+
+// ───────────────── empty matcher list = fallback profile ─────────
+
+#[test]
+fn empty_matcher_profile_is_fallback_for_command_strategy() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = "command",
+            profiles = { work = { "definitely-not-a-real-binary-xyz" }, personal = {} },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        None,
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "personal");
+}
+
+#[test]
+fn empty_matcher_profile_is_fallback_for_hostname_strategy() {
+    let vm = vm_in_with_profile(
+        r#"
+        rb.profile.define({
+            strategy = "hostname",
+            profiles = { work = { "definitely-not-this-host" }, personal = {} },
+        })
+        result = rb.profile.current()
+        "#,
+        &tempdir(),
+        None,
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(result, "personal");
+}
+
+#[test]
+fn multiple_empty_matchers_disable_fallback() {
+    // With cli strategy and two empty profiles, omitting `--profile` must
+    // still error rather than ambiguously picking one as fallback.
+    assert!(matches!(
+        err(
+            r#"rb.profile.define({
+                strategy = "cli",
+                profiles = { work = {}, personal = {} },
+            })"#,
+            None,
+        ),
+        ProfileError::Required { active: None, .. }
+    ));
+}
+
 // ─────────────────────── function strategy + ctx ─────────────────
 
 #[test]

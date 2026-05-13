@@ -125,6 +125,14 @@ The strategy decides how Rootbeer chooses the active profile. Most configs
 should start with `strategy = "hostname"`: it lets each machine select its
 profile automatically.
 
+| Strategy     | Matches against                                   |
+| ------------ | ------------------------------------------------- |
+| `"hostname"` | `rb.host.hostname`                                |
+| `"user"`     | `rb.host.user`                                    |
+| `"command"`  | The names of executables on `PATH` (or absolute paths) |
+| `"cli"`      | The `--profile` flag                              |
+| `function`   | Whatever you return from your own logic           |
+
 Use `strategy = "cli"` when you want to choose the profile manually every time:
 
 ```lua
@@ -144,9 +152,34 @@ rb apply -p work
 Use `strategy = "user"` for shared machines where the current username is a
 better signal than the hostname.
 
-If you want full control, use a custom strategy. It can return any valid
-profile name from regular Lua logic. Rootbeer passes in `ctx` for the common
-helpers, but you don't have to use it for everything:
+Use `strategy = "command"` when work-issued machines ship corp tooling that a
+personal machine would never have. Each matcher is a command name looked up on
+`PATH`, or an absolute path. The first profile with a hit wins:
+
+```lua
+rb.profile.define({
+    strategy = "command",
+    profiles = {
+        work     = { "iru", "spear-cli" },
+        personal = {}, -- fallback when no work tools are present
+    },
+})
+```
+
+### Fallback Profiles
+
+A profile declared with an empty matcher list is the **fallback**: when no
+other profile matches, Rootbeer picks it. Only one profile may be the fallback
+— if two profiles have empty lists, the choice is ambiguous and no automatic
+fallback applies. (This is what makes `strategy = "cli"` with all-empty
+matchers behave as expected: omitting `--profile` errors out instead of
+silently picking one.)
+
+### Custom Strategies
+
+If you want full control, use a function. It can return any valid profile name
+from regular Lua logic. Rootbeer passes in `ctx` for the common helpers, but
+you don't have to use it for everything:
 
 ```lua
 rb.profile.define({
@@ -155,13 +188,14 @@ rb.profile.define({
             return "server"
         end
 
-        return ctx.cli()
+        return ctx.command()
+            or ctx.cli()
             or ctx.hostname()
             or "personal"
     end,
     profiles = {
         personal = { "Aarnavs-MBP" },
-        work     = { "tale-work" },
+        work     = { "iru" },
         server   = {},
     },
 })
