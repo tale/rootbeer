@@ -120,7 +120,13 @@ pub fn embedded_modules() -> &'static [(&'static str, &'static str)] {
 /// A Require implementation that serves the `@rootbeer` stdlib from
 /// compile-time embedded sources. User scripts are still loaded from
 /// disk via a wrapped TextRequirer.
-#[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+///
+/// In production this is only wired up for release builds (see `vm.rs`),
+/// but the type is available in debug builds too so unit tests can drive
+/// it directly. The `allow(dead_code)` covers the debug-build case where
+/// the struct compiles but isn't constructed outside of tests.
+#[cfg(feature = "embedded-stdlib")]
+#[allow(dead_code)]
 pub(crate) struct EmbeddedRequirer {
     inner: TextRequirer,
     script_dir: PathBuf,
@@ -128,7 +134,8 @@ pub(crate) struct EmbeddedRequirer {
     in_alias: bool,
 }
 
-#[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+#[cfg(feature = "embedded-stdlib")]
+#[allow(dead_code)]
 impl EmbeddedRequirer {
     pub fn new(script_dir: PathBuf) -> Self {
         Self {
@@ -147,10 +154,11 @@ impl EmbeddedRequirer {
     }
 }
 
-#[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+#[cfg(feature = "embedded-stdlib")]
+#[allow(dead_code)]
 const EMBEDDED_SENTINEL: &str = "/__rootbeer_embedded__";
 
-#[cfg(all(feature = "embedded-stdlib", not(debug_assertions)))]
+#[cfg(feature = "embedded-stdlib")]
 impl Require for EmbeddedRequirer {
     fn is_require_allowed(&self, chunk_name: &str) -> bool {
         self.inner.is_require_allowed(chunk_name)
@@ -159,6 +167,26 @@ impl Require for EmbeddedRequirer {
     fn reset(&mut self, chunk_name: &str) -> std::result::Result<(), NavigateError> {
         self.path.clear();
         self.in_alias = false;
+
+        // Embedded stdlib modules are loaded with synthetic chunk names
+        // like "@rootbeer/zsh" (see `loader` below). They don't correspond
+        // to filesystem paths, so the underlying TextRequirer can't reset
+        // to them. Detect these and set our alias-relative state directly
+        // so subsequent navigation (jump_to_alias / to_child / has_module)
+        // resolves through the embedded module table.
+        if let Some(rest) = chunk_name
+            .strip_prefix('@')
+            .and_then(|s| s.strip_prefix("rootbeer"))
+            .and_then(|s| s.strip_prefix('/'))
+        {
+            let name = rest
+                .strip_suffix(".lua")
+                .or_else(|| rest.strip_suffix(".luau"))
+                .unwrap_or(rest);
+            self.in_alias = true;
+            self.path = name.split('/').map(str::to_owned).collect();
+            return Ok(());
+        }
 
         if let Some(normalized) = normalize_chunk_name(chunk_name) {
             return self.inner.reset(&normalized);
@@ -246,6 +274,53 @@ impl Require for EmbeddedRequirer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: when the embedded stdlib serves a Lua module under a
+    /// synthetic chunk name like `@rootbeer/zsh`, that module must be able
+    /// to `require("rootbeer.tbl")` (i.e. another embedded module). The
+    /// failure mode was `EmbeddedRequirer::reset` delegating to
+    /// `TextRequirer.reset("@rootbeer/zsh")`, which TextRequirer rejects
+    /// because it isn't a real filesystem path. The fix recognizes the
+    /// `@rootbeer/<...>` prefix in `reset` and sets the alias-relative
+    /// state directly.
+    #[cfg(feature = "embedded-stdlib")]
+    #[test]
+    fn embedded_requirer_resets_for_synthetic_rootbeer_chunk_names() {
+        let mut r = EmbeddedRequirer::new(PathBuf::from("/tmp"));
+
+        // Chunk names assigned to embedded modules by `loader()` below.
+        r.reset("@rootbeer/zsh").expect("plain alias chunk");
+        assert!(r.in_alias);
+        assert_eq!(r.path, vec!["zsh".to_owned()]);
+
+        r.reset("@rootbeer/zsh.lua")
+            .expect("alias chunk with .lua suffix");
+        assert!(r.in_alias);
+        assert_eq!(r.path, vec!["zsh".to_owned()]);
+
+        r.reset("@rootbeer/sub/mod")
+            .expect("nested alias chunk should split on /");
+        assert!(r.in_alias);
+        assert_eq!(r.path, vec!["sub".to_owned(), "mod".to_owned()]);
+    }
+
+    /// Sibling regression: a user script with a real filesystem chunk
+    /// name (loaded from disk via `@source`) must still reset cleanly via
+    /// the inner TextRequirer.
+    #[cfg(feature = "embedded-stdlib")]
+    #[test]
+    fn embedded_requirer_falls_through_for_filesystem_chunk_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let script = tmp.path().join("init.lua");
+        std::fs::write(&script, "").unwrap();
+
+        let mut r = EmbeddedRequirer::new(tmp.path().to_path_buf());
+        // TextRequirer accepts `@<absolute-path>` chunk names; this
+        // exercises the fallthrough path.
+        r.reset(&format!("@{}", script.display()))
+            .expect("filesystem chunk name should reset");
+        assert!(!r.in_alias);
+    }
 
     #[test]
     fn strips_lua_extension() {
