@@ -2,6 +2,7 @@
 local M = {}
 
 local rb = require("rootbeer")
+local tbl = require("rootbeer.tbl")
 
 --- @class git.Config
 --- @field path? string Where to write the gitconfig file. Defaults to `"~/.gitconfig"`.
@@ -56,16 +57,16 @@ local function emit_gitconfig(sections)
 			table.insert(parts, "")
 		end
 		table.insert(parts, header)
-		for k, v in pairs(body) do
+		for k, v in tbl.sorted_pairs(body) do
 			if type(v) ~= "table" then
 				table.insert(parts, "\t" .. k .. " = " .. tostring(v))
 			end
 		end
 	end
 
-	for section, values in pairs(sections) do
+	for section, values in tbl.sorted_pairs(sections) do
 		-- subsections first: any inner key whose value is a table
-		for k, v in pairs(values) do
+		for k, v in tbl.sorted_pairs(values) do
 			if type(v) == "table" then
 				emit_block(string.format('[%s "%s"]', section, k), v)
 			end
@@ -158,7 +159,9 @@ function M.config(cfg)
 		end
 	end
 
-	-- quote all string values for gitconfig format
+	-- quote all string values for gitconfig format. Iteration order here
+	-- doesn't matter since `emit_gitconfig` re-sorts; we just need to walk
+	-- every entry to apply quoting.
 	local quoted = {}
 	for section, values in pairs(ini) do
 		if type(values) == "table" then

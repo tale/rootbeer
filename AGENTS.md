@@ -44,6 +44,12 @@ is needed — standard `workspace.library` resolution handles everything.
 
 - I/O operations run in a plan/execute mode, where calls only append to a log of
   operations that need to be executed on the apply stage.
+- High-level Lua modules (zsh, git, ssh, …) MUST iterate user-supplied maps
+  with `rootbeer.tbl.sorted_pairs` (not `pairs`) so generated output is
+  deterministic across runs. Multi-line user input MUST be split with
+  `rootbeer.str.split_lines` (not `gmatch("[^\n]+")`) so blank lines are
+  preserved. See `docs/contributing/architecture.md` → "Authoring Principles"
+  for the full convention.
 - The lua language server is used to automatically generate markdown docs for
   the documentation site defined in the `docs` directory (built with Vitepress).
   The `docs/api/_generated/` directory is auto-generated from `lua/rootbeer/*.lua`

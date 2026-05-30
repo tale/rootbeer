@@ -127,6 +127,21 @@ local rb = require("rootbeer")
       ],
     },
     {
+      text: "Module Authoring",
+      entries: [
+        {
+          slug: "str",
+          text: "`str`",
+          desc: "Blank-line-preserving line splitter and indent helper.",
+        },
+        {
+          slug: "tbl",
+          text: "`tbl`",
+          desc: "Sorted iteration for deterministic generator output.",
+        },
+      ],
+    },
+    {
       text: "Data Formats",
       entries: [
         {

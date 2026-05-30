@@ -2,6 +2,7 @@
 local M = {}
 
 local rb = require("rootbeer")
+local tbl = require("rootbeer.tbl")
 
 --- @class ssh.Config
 --- @field path? string Where to write the SSH config. Defaults to `"~/.ssh/config"`.
@@ -32,12 +33,12 @@ function M.config(cfg)
 	end
 
 	if cfg.hosts then
-		for pattern, opts in pairs(cfg.hosts) do
+		for pattern, opts in tbl.sorted_pairs(cfg.hosts) do
 			if #lines > 0 then
 				lines[#lines + 1] = ""
 			end
 			lines[#lines + 1] = "Host " .. pattern
-			for key, value in pairs(opts) do
+			for key, value in tbl.sorted_pairs(opts) do
 				lines[#lines + 1] = "    " .. key .. " " .. fmt(value)
 			end
 		end

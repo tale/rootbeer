@@ -8,6 +8,7 @@ mod brew;
 mod fs;
 mod git;
 mod profile;
+mod stdlib;
 mod vm;
 mod writer;
 mod zsh;

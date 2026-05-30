@@ -16,6 +16,13 @@ local rb = require("rootbeer")
 | [Core API](/reference/core) | File ops, symlinks, exec, secrets, profile system. |
 | [Host](/reference/host) | The `rb.host` table — OS, arch, hostname, user. |
 
+## Module Authoring
+
+| Page | Description |
+| ---- | ----------- |
+| [`str`](/reference/str) | Blank-line-preserving line splitter and indent helper. |
+| [`tbl`](/reference/tbl) | Sorted iteration for deterministic generator output. |
+
 ## Data Formats
 
 | Page | Description |

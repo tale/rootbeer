@@ -2,6 +2,8 @@
 local M = {}
 
 local rb = require("rootbeer")
+local str = require("rootbeer.str")
+local tbl = require("rootbeer.tbl")
 
 --- @class zsh.Config
 --- @field dir? string ZDOTDIR path. Defaults to `"~/.config/zsh"`. All zsh files are written here and a bootstrap `~/.zshenv` is created to set `ZDOTDIR`.
@@ -77,36 +79,6 @@ local function add_block(lines, new)
 	end
 end
 
---- Returns the keys of a table in sorted order. Used to make code generation
---- deterministic across runs (Lua's `pairs` has no defined order).
---- @param tbl table<string, any>
---- @return string[]
-local function sorted_keys(tbl)
-	local keys = {}
-	for k in pairs(tbl) do
-		keys[#keys + 1] = k
-	end
-	table.sort(keys)
-	return keys
-end
-
---- Splits a string on newlines, preserving empty lines (unlike
---- `gmatch("[^\n]+")` which drops them). A trailing newline produces a
---- trailing empty string, which is stripped so round-tripping a function
---- body doesn't introduce a phantom blank line.
---- @param s string
---- @return string[]
-local function split_lines(s)
-	local result = {}
-	for line in (s .. "\n"):gmatch("([^\n]*)\n") do
-		result[#result + 1] = line
-	end
-	if result[#result] == "" then
-		result[#result] = nil
-	end
-	return result
-end
-
 --- Appends extra content (string or string[]) to the output buffer.
 --- @param lines string[]
 --- @param extra string|string[]|nil
@@ -142,8 +114,8 @@ end
 --- @param env table<string, string>
 local function build_zshenv(dir, env)
 	local lines = {}
-	for _, key in ipairs(sorted_keys(env)) do
-		lines[#lines + 1] = "export " .. key .. '="' .. env[key] .. '"'
+	for key, value in tbl.sorted_pairs(env) do
+		lines[#lines + 1] = "export " .. key .. '="' .. value .. '"'
 	end
 	write(dir .. "/.zshenv", lines)
 end
@@ -226,8 +198,8 @@ local function build_zshrc(dir, cfg)
 
 	if cfg.variables then
 		local block = {}
-		for _, name in ipairs(sorted_keys(cfg.variables)) do
-			block[#block + 1] = name .. "=" .. cfg.variables[name]
+		for name, value in tbl.sorted_pairs(cfg.variables) do
+			block[#block + 1] = name .. "=" .. value
 		end
 		add_block(lines, block)
 	end
@@ -238,12 +210,8 @@ local function build_zshrc(dir, cfg)
 
 	if cfg.aliases then
 		local block = {}
-		for _, name in ipairs(sorted_keys(cfg.aliases)) do
-			block[#block + 1] = "alias "
-				.. name
-				.. "='"
-				.. cfg.aliases[name]
-				.. "'"
+		for name, command in tbl.sorted_pairs(cfg.aliases) do
+			block[#block + 1] = "alias " .. name .. "='" .. command .. "'"
 		end
 		add_block(lines, block)
 	end
@@ -312,11 +280,8 @@ local function build_zshrc(dir, cfg)
 		end
 
 		if c.styles then
-			for _, pattern in ipairs(sorted_keys(c.styles)) do
-				block[#block + 1] = "zstyle '"
-					.. pattern
-					.. "' "
-					.. c.styles[pattern]
+			for pattern, value in tbl.sorted_pairs(c.styles) do
+				block[#block + 1] = "zstyle '" .. pattern .. "' " .. value
 			end
 		end
 
@@ -324,15 +289,10 @@ local function build_zshrc(dir, cfg)
 	end
 
 	if cfg.functions then
-		for _, name in ipairs(sorted_keys(cfg.functions)) do
-			local block = {}
-			block[#block + 1] = name .. "() {"
-			for _, fn_line in ipairs(split_lines(cfg.functions[name])) do
-				if fn_line == "" then
-					block[#block + 1] = ""
-				else
-					block[#block + 1] = "\t" .. fn_line
-				end
+		for name, body in tbl.sorted_pairs(cfg.functions) do
+			local block = { name .. "() {" }
+			for _, fn_line in ipairs(str.split_lines(body)) do
+				block[#block + 1] = fn_line == "" and "" or "\t" .. fn_line
 			end
 			block[#block + 1] = "}"
 			add_block(lines, block)
@@ -348,10 +308,8 @@ local function build_zshrc(dir, cfg)
 	end
 
 	if cfg.hooks then
-		local block = {}
-		block[#block + 1] = "autoload -Uz add-zsh-hook"
-		for _, hook in ipairs(sorted_keys(cfg.hooks)) do
-			local fns = cfg.hooks[hook]
+		local block = { "autoload -Uz add-zsh-hook" }
+		for hook, fns in tbl.sorted_pairs(cfg.hooks) do
 			if type(fns) == "string" then
 				block[#block + 1] = "add-zsh-hook " .. hook .. " " .. fns
 			else
@@ -365,11 +323,8 @@ local function build_zshrc(dir, cfg)
 
 	if cfg.keybindings then
 		local block = {}
-		for _, key in ipairs(sorted_keys(cfg.keybindings)) do
-			block[#block + 1] = "bindkey '"
-				.. key
-				.. "' "
-				.. cfg.keybindings[key]
+		for key, widget in tbl.sorted_pairs(cfg.keybindings) do
+			block[#block + 1] = "bindkey '" .. key .. "' " .. widget
 		end
 		add_block(lines, block)
 	end

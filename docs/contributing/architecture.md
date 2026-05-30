@@ -110,6 +110,61 @@ For example, `git.lua` takes a `git.Config` table and:
 Each module is self-contained with its own `@class` annotations for the
 language server. Users load them via `require("rootbeer.git")`.
 
+### Authoring Principles
+
+Generator code (Lua → tool config) is naturally verbose, but the verbosity
+should be **uniform** across modules — read one, you've read them all.
+Follow these conventions:
+
+**1. Iterate user-supplied maps with `rootbeer.tbl.sorted_pairs`.**
+Lua's `pairs()` has no defined order, so plain `pairs()` over a user table
+produces nondeterministic output: different diffs every run, unstable
+tests, and noisy git history. Use the sorted iterator for any map whose
+keys are user-controlled (`aliases`, `functions`, `hosts`, `env`, gitconfig
+sections, …). Insertion-order iteration over arrays (`ipairs`) is fine.
+
+```lua
+local tbl = require("rootbeer.tbl")
+for name, body in tbl.sorted_pairs(cfg.functions) do
+  ...
+end
+```
+
+**2. Split multi-line user input with `rootbeer.str.split_lines`.**
+`s:gmatch("[^\n]+")` silently drops blank lines, which mangles user
+function bodies and templates. `str.split_lines` preserves them. Pair with
+`str.indent` when indenting a block — it skips empty lines so generated
+output stays diff-friendly.
+
+**3. Keep helpers local until at least three modules need them.**
+The shared stdlib (`rootbeer.str`, `rootbeer.tbl`) exists for patterns
+that recur across modules. One-off formatters (gitconfig quoting, SSH
+`yes`/`no` coercion, path basename) stay as `local` functions in the
+module that owns them. Premature extraction creates more cognitive load
+than it saves.
+
+**4. Don't reach for a generic builder.**
+Each module's "what counts as a section, when to emit a blank separator,
+what trailing newline policy" is genuinely different. Direct line-buffer
+loops (`lines[#lines + 1] = ...; rb.file(path, table.concat(lines, "\n")
+.. "\n")`) are clearer than a Lines class wrapping the same. The
+duplication is shallow and reading the next module never requires
+learning a new API.
+
+**5. Stay in Lua unless you need Rust.**
+Rust earns its place when you need filesystem access, subprocess, perf,
+or new `Op` variants. Pure data transformation, string munging, and
+table iteration belong in Lua — users can read it, hack it, and the
+LSP picks up types directly. If a helper is three lines of Lua, it
+doesn't belong in `crates/rootbeer-core/`.
+
+**6. Preserve backwards-compatible input schemas.**
+Module config tables are a user-facing contract. Adding optional fields
+is fine; renaming or restructuring existing ones breaks every user's
+`init.lua`. When the generator's output changes (e.g. switching to
+sorted iteration), make sure the *input* schema is unchanged so users
+don't need to touch their config.
+
 ## Lua Standard Library Loading
 
 The `rootbeer.*` modules in `lua/rootbeer/` can be loaded two ways:
@@ -137,5 +192,13 @@ See [Packaging](./packaging) for distribution-specific build instructions.
    Update `lua/rootbeer/core.lua` with the type signature.
 3. **Lua module** — Create `lua/rootbeer/<name>.lua`. Define `@class` types,
    accept a config table, transform it, and call the lower-level APIs.
-4. **Docs** — Add a page in `docs/modules/<name>.md` and register it in
-   `.vitepress/config.ts`.
+   Follow the [authoring principles](#authoring-principles) — prefer
+   `rootbeer.tbl.sorted_pairs` over `pairs` for user maps, and
+   `rootbeer.str.split_lines` over `gmatch("[^\n]+")` for multi-line bodies.
+4. **Tests** — Add `crates/rootbeer-core/src/lua/tests/<name>.rs` and wire
+   it into `tests/mod.rs`. Drive your module via `test_support::run` and
+   assert on the produced `Vec<Op>` — no filesystem or fixtures needed.
+5. **Docs** — Add a page in `docs/modules/<name>.md` with a hand-written
+   intro plus an `<!--@include: ../api/_generated/<name>.md-->` footer.
+   Register it in the appropriate sidebar category in `.vitepress/nav.ts`.
+   Never hand-edit files under `docs/api/_generated/`.
