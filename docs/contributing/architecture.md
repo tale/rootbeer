@@ -199,6 +199,9 @@ See [Packaging](./packaging) for distribution-specific build instructions.
    it into `tests/mod.rs`. Drive your module via `test_support::run` and
    assert on the produced `Vec<Op>` — no filesystem or fixtures needed.
 5. **Docs** — Add a page in `docs/modules/<name>.md` with a hand-written
-   intro plus an `<!--@include: ../api/_generated/<name>.md-->` footer.
-   Register it in the appropriate sidebar category in `.vitepress/nav.ts`.
-   Never hand-edit files under `docs/api/_generated/`.
+   intro followed by a VitePress `@include` directive that pulls in the
+   generated reference from `docs/api/_generated/<name>.md`. Copy the
+   footer pattern from any existing module page (e.g.
+   [`docs/modules/zsh.md`](https://github.com/tale/rootbeer/blob/main/docs/modules/zsh.md))
+   verbatim. Register the page in the appropriate sidebar category in
+   `.vitepress/nav.ts`. Never hand-edit files under `docs/api/_generated/`.
