@@ -26,6 +26,16 @@ rootbeer.source_dir = ""
 --- @param content string The content to write.
 function rootbeer.file(path, content) end
 
+--- Reads a file from disk at plan time and returns its contents as a string.
+--- Useful for inlining shell snippets, templates, or any other text resource
+--- alongside your Lua configuration (the Nix `builtins.readFile` equivalent).
+--- Paths starting with `~` are expanded to `$HOME`; relative paths resolve
+--- from the script directory. Reads happen immediately during plan, not
+--- during apply.
+--- @param path string The source file path.
+--- @return string content The file's contents.
+function rootbeer.read_file(path) end
+
 --- Creates a symbolic link from a file in the script directory.
 --- The source path is relative to the script directory and must exist.
 --- The destination supports `~` expansion.

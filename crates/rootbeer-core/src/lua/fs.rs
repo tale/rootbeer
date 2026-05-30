@@ -19,6 +19,11 @@ impl Module for Fs {
         )?;
 
         t.set(
+            "read_file",
+            lua.create_function(|lua, path: String| Ctx::from(lua).slurp(&path))?,
+        )?;
+
+        t.set(
             "link_file",
             lua.create_function(|lua, (src, dest): (String, String)| {
                 let cx = Ctx::from(lua);

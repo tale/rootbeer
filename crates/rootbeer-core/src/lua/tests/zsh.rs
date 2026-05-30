@@ -77,6 +77,78 @@ fn zsh_history_block_includes_share_dedup_append_defaults() {
 }
 
 #[test]
+fn zsh_function_body_preserves_blank_lines() {
+    let ops = run(r#"
+        local zsh = require("rootbeer.zsh")
+        zsh.config({
+            functions = {
+                demo = [=[
+local a=1
+
+if [[ -n "$a" ]]; then
+	echo "$a"
+fi
+
+echo "done"]=],
+            },
+        })
+        "#);
+    let writes = writes(&ops);
+    let zshrc = find(&writes, ".zshrc");
+    let expected = "\
+demo() {
+\tlocal a=1
+
+\tif [[ -n \"$a\" ]]; then
+\t\techo \"$a\"
+\tfi
+
+\techo \"done\"
+}";
+    assert!(
+        zshrc.contains(expected),
+        "expected blank lines and indentation preserved.\n--- expected ---\n{expected}\n--- got ---\n{zshrc}"
+    );
+}
+
+#[test]
+fn zsh_aliases_emit_in_sorted_order() {
+    let ops = run(r#"
+        local zsh = require("rootbeer.zsh")
+        zsh.config({
+            aliases = { z = "zoxide", a = "apt", m = "make", g = "git" },
+        })
+        "#);
+    let writes = writes(&ops);
+    let zshrc = find(&writes, ".zshrc");
+    let a = zshrc.find("alias a=").expect("alias a");
+    let g = zshrc.find("alias g=").expect("alias g");
+    let m = zshrc.find("alias m=").expect("alias m");
+    let z = zshrc.find("alias z=").expect("alias z");
+    assert!(a < g && g < m && m < z, "aliases not sorted: {zshrc}");
+}
+
+#[test]
+fn zsh_functions_emit_in_sorted_order() {
+    let ops = run(r#"
+        local zsh = require("rootbeer.zsh")
+        zsh.config({
+            functions = {
+                zulu = "echo z",
+                alpha = "echo a",
+                mike = "echo m",
+            },
+        })
+        "#);
+    let writes = writes(&ops);
+    let zshrc = find(&writes, ".zshrc");
+    let a = zshrc.find("alpha()").expect("alpha");
+    let m = zshrc.find("mike()").expect("mike");
+    let z = zshrc.find("zulu()").expect("zulu");
+    assert!(a < m && m < z, "functions not sorted: {zshrc}");
+}
+
+#[test]
 fn zsh_evals_and_sources_are_emitted() {
     let ops = run(r#"
         local zsh = require("rootbeer.zsh")

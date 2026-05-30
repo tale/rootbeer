@@ -184,6 +184,39 @@ fn rb_copy_file_errors_on_missing_source() {
 }
 
 #[test]
+fn rb_read_file_returns_contents_relative_to_script_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("snippet.zsh"), "echo hello\n").unwrap();
+
+    let vm = crate::lua::test_support::vm_in(
+        r#"
+        local rb = require("rootbeer")
+        contents = rb.read_file("snippet.zsh")
+        "#,
+        tmp.path(),
+    );
+    let got: String = vm.lua.globals().get("contents").unwrap();
+    assert_eq!(got, "echo hello\n");
+}
+
+#[test]
+fn rb_read_file_errors_on_missing_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let vm = crate::lua::test_support::vm(tmp.path(), None);
+    let err = vm
+        .lua
+        .load(
+            r#"
+            local rb = require("rootbeer")
+            rb.read_file("nope.txt")
+            "#,
+        )
+        .exec()
+        .unwrap_err();
+    assert!(err.to_string().contains("failed to read"), "got: {err}");
+}
+
+#[test]
 fn path_predicates_return_correct_values() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(tmp.path().join("a.txt"), "x").unwrap();
