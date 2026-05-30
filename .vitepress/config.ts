@@ -22,6 +22,7 @@ export default defineConfig({
           { text: "What is Rootbeer?", link: "/guide/what-is-rootbeer" },
           { text: "Getting Started", link: "/guide/getting-started" },
           { text: "Profiles", link: "/guide/profiles" },
+          { text: "Packages", link: "/guide/packages" },
         ],
       },
       {
