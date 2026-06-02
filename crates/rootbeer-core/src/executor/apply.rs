@@ -4,8 +4,34 @@ use std::{fs, os::unix::fs as unix_fs, process, process::Command, thread};
 
 use crate::{
     executor::{ExecutionHandler, ExecutionReport, OpResult},
+    plan::WriteSource,
     Op,
 };
+
+/// Resolve a `WriteSource` to its concrete bytes. Inline sources are a
+/// straight clone; secret-backed sources shell out to their provider here
+/// (apply time only).
+fn resolve_source(source: &WriteSource) -> io::Result<Vec<u8>> {
+    match source {
+        WriteSource::Bytes(bytes) => Ok(bytes.clone()),
+        WriteSource::OpDocument { reference } => {
+            let output = Command::new("op")
+                .args(["document", "get", reference])
+                .output()
+                .map_err(|e| io::Error::other(format!("failed to run `op`: {e}")))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(io::Error::other(format!(
+                    "op document get {reference} failed ({}): {stderr}",
+                    output.status
+                )));
+            }
+
+            Ok(output.stdout)
+        }
+    }
+}
 
 pub fn apply(
     ops: &[Op],
@@ -18,15 +44,17 @@ pub fn apply(
         handler.on_start(op);
 
         match op {
-            Op::WriteFile { path, content } => {
+            Op::WriteFile { path, source } => {
+                let bytes = resolve_source(source)?;
+
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
                 }
 
-                fs::write(path, content)?;
+                fs::write(path, &bytes)?;
                 let result = OpResult::FileWritten {
                     path: path.clone(),
-                    bytes: content.len(),
+                    bytes: Some(bytes.len()),
                 };
 
                 handler.on_result(&result);
@@ -235,7 +263,7 @@ mod tests {
         let path = tmp.path().join("a/b/c.txt");
         let ops = vec![Op::WriteFile {
             path: path.clone(),
-            content: "hello\n".into(),
+            source: WriteSource::text("hello\n"),
         }];
 
         let mut h = Recorder::default();
@@ -244,7 +272,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "hello\n");
         assert!(matches!(
             &h.results[0],
-            OpResult::FileWritten { bytes: 6, .. }
+            OpResult::FileWritten { bytes: Some(6), .. }
         ));
     }
 
@@ -423,7 +451,7 @@ mod tests {
         // — guards against future changes that might tempt String paths.
         let op = Op::WriteFile {
             path: PathBuf::from("/tmp/x"),
-            content: "y".into(),
+            source: WriteSource::text("y"),
         };
         assert!(matches!(op, Op::WriteFile { .. }));
     }

@@ -7,16 +7,46 @@ use crate::plan::Op;
 
 #[derive(Debug, Clone)]
 pub enum OpResult {
-    FileWritten { path: PathBuf, bytes: usize },
-    SymlinkCreated { src: PathBuf, dst: PathBuf },
-    SymlinkUnchanged { dst: PathBuf },
-    SymlinkOverwritten { src: PathBuf, dst: PathBuf },
-    FileCopied { src: PathBuf, dst: PathBuf },
-    FileCopySkipped { dst: PathBuf },
-    CommandRan { cmd: String, status: i32 },
-    Chmodded { path: PathBuf, mode: u32 },
-    RemoteUpdated { from: String, to: String },
-    RemoteUnchanged { url: String },
+    /// `bytes` is `None` for dry-runs of secret-backed writes whose payload
+    /// size isn't known until the apply phase fetches it. Apply always sets
+    /// `Some(real_count)`.
+    FileWritten {
+        path: PathBuf,
+        bytes: Option<usize>,
+    },
+    SymlinkCreated {
+        src: PathBuf,
+        dst: PathBuf,
+    },
+    SymlinkUnchanged {
+        dst: PathBuf,
+    },
+    SymlinkOverwritten {
+        src: PathBuf,
+        dst: PathBuf,
+    },
+    FileCopied {
+        src: PathBuf,
+        dst: PathBuf,
+    },
+    FileCopySkipped {
+        dst: PathBuf,
+    },
+    CommandRan {
+        cmd: String,
+        status: i32,
+    },
+    Chmodded {
+        path: PathBuf,
+        mode: u32,
+    },
+    RemoteUpdated {
+        from: String,
+        to: String,
+    },
+    RemoteUnchanged {
+        url: String,
+    },
 }
 
 /// Receives lifecycle events during pipeline execution.

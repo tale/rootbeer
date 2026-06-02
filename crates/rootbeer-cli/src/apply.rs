@@ -29,13 +29,23 @@ struct CliHandler;
 
 impl ExecutionHandler for CliHandler {
     fn on_start(&mut self, op: &Op) {
-        if let Op::Exec { cmd, args, .. } = op {
-            let display = std::iter::once(cmd.as_str())
-                .chain(args.iter().map(|s| s.as_str()))
-                .collect::<Vec<_>>()
-                .join(" ");
+        match op {
+            Op::Exec { cmd, args, .. } => {
+                let display = std::iter::once(cmd.as_str())
+                    .chain(args.iter().map(|s| s.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ");
 
-            eprintln!("  {} `{display}`", "exec".cyan());
+                eprintln!("  {} `{display}`", "exec".cyan());
+            }
+            Op::WriteFile { source, .. } => {
+                // Announce secret-backed fetches before they run so users
+                // know why apply is pausing (Touch ID, network, etc.).
+                if let Some(label) = source.fetch_label() {
+                    eprintln!("  {} {label}", "fetch".cyan());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -46,7 +56,11 @@ impl ExecutionHandler for CliHandler {
     fn on_result(&mut self, result: &OpResult) {
         match result {
             OpResult::FileWritten { path, bytes } => {
-                eprintln!("  {} {} ({bytes} bytes)", "write".green(), path.display());
+                let suffix = match bytes {
+                    Some(n) => format!("({n} bytes)"),
+                    None => "(deferred)".to_string(),
+                };
+                eprintln!("  {} {} {suffix}", "write".green(), path.display());
             }
             OpResult::SymlinkCreated { src, dst } => {
                 eprintln!(

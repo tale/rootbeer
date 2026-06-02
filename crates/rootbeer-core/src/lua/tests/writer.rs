@@ -50,9 +50,10 @@ fn toml_round_trip_preserves_scalars_and_arrays() {
 fn json_write_pushes_write_file_with_trailing_newline() {
     let ops = run(r#"rb.json.write("/tmp/rb-test/x.json", { name = "rb", n = 1 })"#);
     assert_eq!(ops.len(), 1);
-    let Op::WriteFile { path, content } = &ops[0] else {
+    let Op::WriteFile { path, source } = &ops[0] else {
         panic!("expected WriteFile, got {:?}", ops[0]);
     };
+    let content = source.as_str().expect("inline source");
     assert_eq!(path, &PathBuf::from("/tmp/rb-test/x.json"));
     assert!(content.ends_with('\n'), "missing trailing newline");
     let v: serde_json::Value = serde_json::from_str(content.trim_end()).unwrap();
@@ -64,9 +65,10 @@ fn json_write_pushes_write_file_with_trailing_newline() {
 fn toml_write_pushes_write_file_with_trailing_newline() {
     let ops = run(r#"rb.toml.write("/tmp/rb-test/x.toml", { name = "rb", n = 1 })"#);
     assert_eq!(ops.len(), 1);
-    let Op::WriteFile { path, content } = &ops[0] else {
+    let Op::WriteFile { path, source } = &ops[0] else {
         panic!("expected WriteFile");
     };
+    let content = source.as_str().expect("inline source");
     assert_eq!(path, &PathBuf::from("/tmp/rb-test/x.toml"));
     assert!(content.ends_with('\n'));
     assert!(content.contains("name = \"rb\""));
@@ -152,9 +154,10 @@ fn yaml_round_trip_preserves_scalars_and_arrays() {
 fn yaml_write_pushes_write_file_with_trailing_newline() {
     let ops = run(r#"rb.yaml.write("/tmp/rb-test/x.yaml", { name = "rb", n = 1 })"#);
     assert_eq!(ops.len(), 1);
-    let Op::WriteFile { path, content } = &ops[0] else {
+    let Op::WriteFile { path, source } = &ops[0] else {
         panic!("expected WriteFile, got {:?}", ops[0]);
     };
+    let content = source.as_str().expect("inline source");
     assert_eq!(path, &PathBuf::from("/tmp/rb-test/x.yaml"));
     assert!(content.ends_with('\n'), "missing trailing newline");
     // serde_yml may quote scalar keys that resemble YAML reserved words
@@ -224,9 +227,10 @@ fn plist_round_trip_preserves_dict_and_array() {
 fn plist_write_pushes_write_file_with_xml_payload() {
     let ops = run(r#"rb.plist.write("/tmp/rb-test/Prefs.plist", { K = "v" })"#);
     assert_eq!(ops.len(), 1);
-    let Op::WriteFile { path, content } = &ops[0] else {
+    let Op::WriteFile { path, source } = &ops[0] else {
         panic!("expected WriteFile");
     };
+    let content = source.as_str().expect("inline source");
     assert_eq!(path, &PathBuf::from("/tmp/rb-test/Prefs.plist"));
     assert!(content.starts_with("<?xml"), "got: {content}");
     assert!(content.ends_with('\n'));
@@ -241,9 +245,10 @@ fn script_write_emits_writefile_then_chmod() {
     let ops = run(r#"rb.scripts.bash("/tmp/rb-test/hello", "echo hi")"#);
     assert_eq!(ops.len(), 2);
 
-    let Op::WriteFile { path, content } = &ops[0] else {
+    let Op::WriteFile { path, source } = &ops[0] else {
         panic!("expected WriteFile, got {:?}", ops[0]);
     };
+    let content = source.as_str().expect("inline source");
     assert_eq!(path, &PathBuf::from("/tmp/rb-test/hello"));
     assert_eq!(content, "#!/usr/bin/env bash\n\necho hi\n");
 
@@ -257,9 +262,10 @@ fn script_write_emits_writefile_then_chmod() {
 #[test]
 fn script_python_uses_python3_shebang() {
     let ops = run(r#"rb.scripts.python("/tmp/rb-test/x.py", "print('hi')")"#);
-    let Op::WriteFile { content, .. } = &ops[0] else {
+    let Op::WriteFile { source, .. } = &ops[0] else {
         panic!("expected WriteFile");
     };
+    let content = source.as_str().expect("inline source");
     assert!(
         content.starts_with("#!/usr/bin/env python3\n"),
         "got: {content:?}"
@@ -269,9 +275,10 @@ fn script_python_uses_python3_shebang() {
 #[test]
 fn script_generic_with_absolute_interpreter_uses_literal_shebang() {
     let ops = run(r#"rb.scripts.script("/bin/sh", "/tmp/rb-test/x.sh", "echo hi")"#);
-    let Op::WriteFile { content, .. } = &ops[0] else {
+    let Op::WriteFile { source, .. } = &ops[0] else {
         panic!("expected WriteFile");
     };
+    let content = source.as_str().expect("inline source");
     assert!(content.starts_with("#!/bin/sh\n"), "got: {content:?}");
 }
 
@@ -279,9 +286,10 @@ fn script_generic_with_absolute_interpreter_uses_literal_shebang() {
 fn script_generic_with_bare_interpreter_uses_env_shebang() {
     // rb.scripts.script("awk", ...) → #!/usr/bin/env awk
     let ops = run(r#"rb.scripts.script("awk", "/tmp/rb-test/sum", "{ s += $1 }")"#);
-    let Op::WriteFile { content, .. } = &ops[0] else {
+    let Op::WriteFile { source, .. } = &ops[0] else {
         panic!("expected WriteFile");
     };
+    let content = source.as_str().expect("inline source");
     assert!(
         content.starts_with("#!/usr/bin/env awk\n"),
         "got: {content:?}"
@@ -291,9 +299,10 @@ fn script_generic_with_bare_interpreter_uses_env_shebang() {
 #[test]
 fn script_appends_trailing_newline_if_missing() {
     let ops = run(r#"rb.scripts.bash("/tmp/rb-test/x", "echo hi")"#);
-    let Op::WriteFile { content, .. } = &ops[0] else {
+    let Op::WriteFile { source, .. } = &ops[0] else {
         panic!("expected WriteFile");
     };
+    let content = source.as_str().expect("inline source");
     assert!(content.ends_with('\n'), "missing trailing newline");
 }
 

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::lua::test_support::{run, run_in};
-use crate::plan::Op;
+use crate::plan::{Op, WriteSource};
 
 #[test]
 fn rb_file_pushes_write_file_op() {
@@ -14,7 +14,7 @@ fn rb_file_pushes_write_file_op() {
         ops,
         vec![Op::WriteFile {
             path: PathBuf::from("/tmp/rb-test/out.txt"),
-            content: "hello\n".into(),
+            source: WriteSource::text("hello\n"),
         }]
     );
 }
@@ -27,7 +27,7 @@ fn rb_file_resolves_tilde_to_home() {
         ops,
         vec![Op::WriteFile {
             path: PathBuf::from(home).join("note.txt"),
-            content: "x".into(),
+            source: WriteSource::text("x"),
         }]
     );
 }
@@ -40,7 +40,7 @@ fn rb_file_resolves_relative_to_script_dir() {
         ops,
         vec![Op::WriteFile {
             path: tmp.path().join("nested/file.txt"),
-            content: "x".into(),
+            source: WriteSource::text("x"),
         }]
     );
 }

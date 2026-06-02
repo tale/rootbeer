@@ -6,7 +6,9 @@ use crate::plan::Op;
 fn writes(ops: &[Op]) -> Vec<(String, String)> {
     ops.iter()
         .filter_map(|op| match op {
-            Op::WriteFile { path, content } => Some((path.display().to_string(), content.clone())),
+            Op::WriteFile { path, source } => source
+                .as_str()
+                .map(|c| (path.display().to_string(), c.to_string())),
             _ => None,
         })
         .collect()

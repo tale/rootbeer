@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use mlua::{AppDataRef, Error as LuaError, Lua, Result as LuaResult};
 
 use super::vm::Run;
-use crate::plan::Op;
+use crate::plan::{Op, WriteSource};
 use crate::Runtime;
 
 pub(crate) struct Ctx<'a> {
@@ -73,7 +73,7 @@ impl<'a> Ctx<'a> {
     pub fn write(&self, path: &str, content: String) {
         self.push(Op::WriteFile {
             path: self.resolve(path),
-            content,
+            source: WriteSource::text(content),
         });
     }
 

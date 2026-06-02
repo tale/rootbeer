@@ -4,10 +4,14 @@ use crate::lua::test_support::run;
 use crate::plan::Op;
 
 /// Helper: collect all WriteFile ops as `(path-suffix, content)` pairs.
+/// Only inline (`WriteSource::Bytes`) UTF-8 sources are captured — secret-
+/// backed sources don't carry content at plan time.
 fn writes(ops: &[Op]) -> Vec<(String, String)> {
     ops.iter()
         .filter_map(|op| match op {
-            Op::WriteFile { path, content } => Some((path.display().to_string(), content.clone())),
+            Op::WriteFile { path, source } => source
+                .as_str()
+                .map(|c| (path.display().to_string(), c.to_string())),
             _ => None,
         })
         .collect()

@@ -6,7 +6,7 @@ pub mod profile;
 
 pub use executor::{ExecutionHandler, ExecutionReport, OpResult};
 pub use pipeline::{Mode, Options, Pipeline, PlannedPipeline};
-pub use plan::Op;
+pub use plan::{Op, WriteSource};
 pub use profile::ProfileError;
 
 #[cfg(feature = "embedded-stdlib")]

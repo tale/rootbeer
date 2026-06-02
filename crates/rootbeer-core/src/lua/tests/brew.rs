@@ -17,9 +17,10 @@ fn brew_config_writes_brewfile_and_runs_bundle() {
 
     assert_eq!(ops.len(), 2, "expected write + exec, got {ops:?}");
 
-    let Op::WriteFile { path, content } = &ops[0] else {
+    let Op::WriteFile { path, source } = &ops[0] else {
         panic!("expected WriteFile, got {:?}", ops[0]);
     };
+    let content = source.as_str().expect("inline source");
     assert!(path.ends_with("Brewfile"));
     assert!(content.contains(r#"brew "ripgrep""#));
     assert!(content.contains(r#"brew "fd""#));
@@ -46,9 +47,10 @@ fn brew_config_with_only_formulae_omits_other_sections() {
             formulae = { "git" },
         })
         "#);
-    let Op::WriteFile { content, .. } = &ops[0] else {
+    let Op::WriteFile { source, .. } = &ops[0] else {
         panic!("expected WriteFile");
     };
+    let content = source.as_str().expect("inline source");
     assert!(content.contains(r#"brew "git""#));
     assert!(!content.contains("cask"));
     assert!(!content.contains("mas "));

@@ -10,10 +10,12 @@ pub fn dry_run(ops: &[Op], handler: &mut impl ExecutionHandler) -> ExecutionRepo
         handler.on_start(op);
 
         match op {
-            Op::WriteFile { path, content } => {
+            Op::WriteFile { path, source } => {
+                // Inline sources know their size up front; secret-backed
+                // sources can't be measured until apply actually fetches.
                 let result = OpResult::FileWritten {
                     path: path.clone(),
-                    bytes: content.len(),
+                    bytes: source.known_size(),
                 };
                 handler.on_result(&result);
                 report.results.push(result);
@@ -81,6 +83,7 @@ pub fn dry_run(ops: &[Op], handler: &mut impl ExecutionHandler) -> ExecutionRepo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan::WriteSource;
     use std::path::PathBuf;
 
     #[derive(Default)]
@@ -105,7 +108,7 @@ mod tests {
         let path = tmp.path().join("missing/file.txt");
         let ops = vec![Op::WriteFile {
             path: path.clone(),
-            content: "hello".into(),
+            source: WriteSource::text("hello"),
         }];
 
         dry_run(&ops, &mut Recorder::default());
@@ -118,7 +121,7 @@ mod tests {
         let ops = vec![
             Op::WriteFile {
                 path: PathBuf::from("/tmp/rb-test/a"),
-                content: "a".into(),
+                source: WriteSource::text("a"),
             },
             Op::Symlink {
                 src: PathBuf::from("/tmp/rb-test/src"),
