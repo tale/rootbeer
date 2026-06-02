@@ -13,8 +13,14 @@ local rb = require("rootbeer")
 
 | Page | Description |
 | ---- | ----------- |
-| [Core API](/reference/core) | File ops, symlinks, exec, secrets, profile system. |
+| [Core API](/reference/core) | File ops, symlinks, exec, profile system. |
 | [Host](/reference/host) | The `rb.host` table — OS, arch, hostname, user. |
+
+## Secrets
+
+| Page | Description |
+| ---- | ----------- |
+| [Secrets](/reference/secrets) | Pluggable secret providers — 1Password, embedding vs deferred writes. |
 
 ## Module Authoring
 

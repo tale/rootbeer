@@ -117,12 +117,22 @@ local rb = require("rootbeer")
         {
           slug: "core",
           text: "Core API",
-          desc: "File ops, symlinks, exec, secrets, profile system.",
+          desc: "File ops, symlinks, exec, profile system.",
         },
         {
           slug: "host",
           text: "Host",
           desc: "The `rb.host` table — OS, arch, hostname, user.",
+        },
+      ],
+    },
+    {
+      text: "Secrets",
+      entries: [
+        {
+          slug: "secrets",
+          text: "Secrets",
+          desc: "Pluggable secret providers — 1Password, embedding vs deferred writes.",
         },
       ],
     },

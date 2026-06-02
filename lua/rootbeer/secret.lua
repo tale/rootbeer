@@ -1,0 +1,61 @@
+--- @meta
+
+--- @class rootbeer.secret
+--- Pluggable secret providers. Each provider exposes two complementary
+--- shapes:
+---
+--- - A **sync read** that fetches the secret at plan time and returns the
+---   value as a Lua string — designed for embedding into config files you
+---   are composing in Lua (the dominant use case).
+--- - A **deferred write** that schedules a fetch-and-write for the apply
+---   phase — used when the secret is a binary blob (SSH key, certificate,
+---   GPG key, …) that should never transit Lua memory or the plan log.
+---
+--- All providers gate on an external CLI being installed and authenticated
+--- on the target machine. Missing or locked providers surface as a clear
+--- error at the call site.
+---
+--- ```lua
+--- -- 1Password: embed a field into a generated config file
+--- local cfg = {
+---     "api_url = " .. rb.secret.op("op://Development/WakaTime/url"),
+---     "api_key = " .. rb.secret.op("op://Development/WakaTime/credential"),
+--- }
+--- rb.file("~/.wakatime.cfg", table.concat(cfg, "\n"))
+---
+--- -- 1Password: materialise a binary document with strict perms
+--- rb.secret.op_document("op://Private/work-ssh-key", "~/.ssh/work_rsa", {
+---     mode = 0x180, -- 0o600
+--- })
+--- ```
+
+--- @class rootbeer.SecretDocumentOpts
+--- @field mode? integer File mode applied after the write (e.g. `0x180` for `0o600`). When set, a `Chmod` op is queued immediately after the deferred write.
+
+--- Reads a secret from 1Password via the `op` CLI. Runs **synchronously at
+--- plan time** so the value can be embedded into strings, file contents,
+--- or other config you compose in Lua. The `op` CLI must be installed and
+--- authenticated (Touch ID / biometrics may prompt).
+---
+--- Use the sync form when you need the value *in Lua* (templating, config
+--- composition). For raw binary files that should never enter Lua memory,
+--- use `rb.secret.op_document` instead.
+---
+--- @param reference string The `op://` reference (e.g. `"op://vault/item/field"`).
+--- @return string The secret value, with any trailing newline stripped.
+function rootbeer.secret.op(reference) end
+
+--- Materialises a 1Password document to disk via `op document get`. The
+--- fetch is **deferred to the apply stage** — the binary contents never
+--- enter Lua memory and the secret is never written to the plan log.
+---
+--- Supports `~` expansion and relative paths (anchored to the script
+--- directory). Parent directories are created automatically. When
+--- `opts.mode` is set, a chmod is queued immediately after the write
+--- (useful for SSH keys, GPG keys, certificates, etc. that require
+--- restricted permissions).
+---
+--- @param reference string The `op://` reference to the document (e.g. `"op://Private/work-ssh-key"`).
+--- @param dest string The destination path on disk (`~` expansion supported).
+--- @param opts? rootbeer.SecretDocumentOpts Optional settings.
+function rootbeer.secret.op_document(reference, dest, opts) end

@@ -4,6 +4,7 @@ The core module provides the low-level primitives that all other modules build
 on — writing files, creating symlinks, and serializing data formats.
 
 For system information, see [`rb.host`](/reference/host).
+For secrets (1Password and friends), see [Secrets](/reference/secrets).
 For per-machine configuration, see [Profiles](/guide/profiles).
 
 ```lua

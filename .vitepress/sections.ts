@@ -50,7 +50,7 @@ local rb = require("rootbeer")
 
 See also [data formats](/formats/) for codecs and [script writers](/scripts/)
 for executable script helpers.`,
-    categoryOrder: ["Core"],
+    categoryOrder: ["Core", "Secrets", "Module Authoring", "Data Formats", "Script Writers"],
   },
   formats: {
     title: "Data Formats",

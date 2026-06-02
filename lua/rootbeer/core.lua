@@ -92,27 +92,10 @@ function rootbeer.is_dir(path) end
 --- @param url string The desired remote URL (any git URL).
 function rootbeer.remote(url) end
 
---- @class rootbeer.Secret
+--- Pluggable secret providers (1Password and more).
+--- See `secret.lua` for the full type definition.
+--- @type rootbeer.secret
 rootbeer.secret = {}
-
---- Reads a secret from 1Password via the `op` CLI.
---- @param reference string The `op://` reference (e.g. `"op://vault/item/field"`).
---- @return string The secret value.
-function rootbeer.secret.op(reference) end
-
---- @class rootbeer.SecretDocumentOpts
---- @field mode? integer Optional file mode (e.g. `0x180` for `0o600`).
-
---- Materialises a 1Password document to disk via `op document get`.
---- The fetch is deferred to the apply stage — the binary contents never
---- enter Lua memory and the secret is not read during planning. Supports
---- `~` expansion and relative paths (anchored to the script dir). When
---- `opts.mode` is set, the file is chmodded after the write (useful for
---- SSH keys, GPG keys, certificates, etc.).
---- @param reference string The `op://` reference to the document (e.g. `"op://Private/work-ssh-key"`).
---- @param dest string The destination path on disk.
---- @param opts? rootbeer.SecretDocumentOpts Optional settings.
-function rootbeer.secret.op_document(reference, dest, opts) end
 
 --- JSON codec. See `json.lua` for the full type definition.
 --- @type rootbeer.json
