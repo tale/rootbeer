@@ -15,7 +15,7 @@ local tbl = require("rootbeer.tbl")
 --- @field merge_conflictstyle? string Merge conflict style (e.g. `"diff3"`).
 --- @field ignores? string[] Global gitignore patterns. Written next to the gitconfig.
 --- @field ignores_path? string Override path for the gitignore file. Defaults to `.gitignore` next to the gitconfig.
---- @field extra? table<string, table<string, string|boolean>> Additional gitconfig sections (e.g. `delta`, `interactive`).
+--- @field extra? table<string, table<string, string|boolean>> Additional gitconfig sections (e.g. `delta`, `interactive`). Merges into sections the other fields already wrote rather than replacing them, so `extra.core` keeps `excludesfile`. On a key conflict, `extra` wins.
 
 --- @class git.UserConfig
 --- @field name string Full name for commits.
@@ -24,16 +24,35 @@ local tbl = require("rootbeer.tbl")
 --- @class git.SigningConfig
 --- @field key string The signing key (e.g. an SSH public key).
 --- @field format? string Signing format. Defaults to `"ssh"`.
+--- @field allowed_signers? string[] Principals (usually emails) that `key` signs for. Writes an allowed signers file and points `gpg.ssh.allowedSignersFile` at it, which is what lets Git *verify* the signatures it creates. SSH format only.
+--- @field allowed_signers_path? string Override path for the allowed signers file. Defaults to `"~/.ssh/allowed_signers"`.
 
 --- Quotes a scalar for gitconfig format.
 --- Strings are double-quoted; booleans and numbers are left bare.
+--- Backslashes, quotes, and newlines are escaped so a value containing them
+--- cannot terminate the string early and corrupt the surrounding section.
 --- @param value string|number|boolean
 --- @return string
 local function quote(value)
-	if type(value) == "string" then
-		return '"' .. value .. '"'
+	if type(value) ~= "string" then
+		return tostring(value)
 	end
-	return tostring(value)
+
+	local escaped = value:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n")
+	return '"' .. escaped .. '"'
+end
+
+--- Recursively merges `src` into `dst`, with `src` winning on conflicts.
+--- @param dst table
+--- @param src table
+local function merge_into(dst, src)
+	for k, v in tbl.sorted_pairs(src) do
+		if type(v) == "table" and type(dst[k]) == "table" then
+			merge_into(dst[k], v)
+		else
+			dst[k] = v
+		end
+	end
 end
 
 --- Returns the directory portion of a path.
@@ -112,10 +131,24 @@ function M.config(cfg)
 
 	-- [commit], [tag], [gpg] via signing shortcut
 	if cfg.signing then
+		local format = cfg.signing.format or "ssh"
 		ini.user.signingkey = cfg.signing.key
-		ini.gpg = { format = cfg.signing.format or "ssh" }
+		ini.gpg = { format = format }
 		ini.commit = { gpgSign = true }
 		ini.tag = { gpgSign = true }
+
+		-- Signing without this produces commits Git can create but not verify.
+		if cfg.signing.allowed_signers and format == "ssh" then
+			local signers_path = cfg.signing.allowed_signers_path
+				or "~/.ssh/allowed_signers"
+			local lines = {}
+			for _, principal in ipairs(cfg.signing.allowed_signers) do
+				lines[#lines + 1] = principal .. " " .. cfg.signing.key
+			end
+
+			rb.file(signers_path, table.concat(lines, "\n") .. "\n")
+			ini.gpg.ssh = { allowedSignersFile = signers_path }
+		end
 	end
 
 	-- ignores
@@ -152,10 +185,13 @@ function M.config(cfg)
 		}
 	end
 
-	-- extra sections (delta, interactive, etc.)
+	-- extra sections (delta, interactive, etc.). These merge into whatever the
+	-- shortcuts above already wrote, so `extra.core` cannot drop `excludesfile`
+	-- and `extra.tag` cannot drop `gpgSign`. On a key conflict, `extra` wins.
 	if cfg.extra then
-		for section, values in pairs(cfg.extra) do
-			ini[section] = values
+		for section, values in tbl.sorted_pairs(cfg.extra) do
+			ini[section] = ini[section] or {}
+			merge_into(ini[section], values)
 		end
 	end
 
