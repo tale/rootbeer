@@ -273,13 +273,32 @@ fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
         ));
     }
 
-    let (_, body) = ureq::get(url)
-        .header("User-Agent", USER_AGENT)
+    let token = std::env::var("GITHUB_TOKEN").ok();
+    let (_, body) = http_request(url, token.as_deref())
         .call()
         .map_err(|e| io::Error::other(format!("failed to fetch {url}: {e}")))?
         .into_parts();
 
     Ok(Box::new(body.into_reader()))
+}
+
+fn http_request(
+    url: &str,
+    token: Option<&str>,
+) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .redirect_auth_headers(ureq::config::RedirectAuthHeaders::Never)
+        .build()
+        .into();
+    let request = agent.get(url).header("User-Agent", USER_AGENT);
+    let Some(token) = token.map(str::trim).filter(|token| !token.is_empty()) else {
+        return request;
+    };
+    if !url.starts_with("https://api.github.com/") {
+        return request;
+    }
+
+    request.header("Authorization", format!("Bearer {token}"))
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -300,6 +319,79 @@ mod tests {
 
     use super::*;
     use crate::store::hash_bytes;
+
+    #[test]
+    fn authenticates_only_https_github_api_requests() {
+        let url = "https://api.github.com/repos/owner/repo/releases/latest";
+        let request = http_request(url, Some("test-token"));
+        assert_eq!(
+            request.headers_ref().unwrap()["authorization"],
+            "Bearer test-token"
+        );
+
+        for url in [
+            "http://api.github.com/repos/owner/repo",
+            "https://api.github.com.evil.example/repos/owner/repo",
+            "https://api.github.com@evil.example/repos/owner/repo",
+            "https://github.com/owner/repo/releases/download/v1/tool",
+            "https://example.com/tool",
+        ] {
+            assert!(!http_request(url, Some("test-token"))
+                .headers_ref()
+                .unwrap()
+                .contains_key("authorization"));
+        }
+        for token in [None, Some(""), Some("  ")] {
+            assert!(!http_request(url, token)
+                .headers_ref()
+                .unwrap()
+                .contains_key("authorization"));
+        }
+    }
+
+    #[test]
+    fn strips_authorization_on_redirects() {
+        use std::io::{BufRead, BufReader};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let redirect = format!("HTTP/1.1 302 Found\r\nLocation: {url}/redirected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let server = std::thread::spawn(move || {
+            for is_redirected in [false, true] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = BufReader::new(&stream);
+                let mut headers = String::new();
+                loop {
+                    let mut line = String::new();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    headers.push_str(&line.to_ascii_lowercase());
+                }
+                assert_eq!(
+                    headers.contains("authorization: bearer test-token"),
+                    !is_redirected
+                );
+                let response = if is_redirected {
+                    "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                } else {
+                    &redirect
+                };
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+
+        http_request(&url, None)
+            .header("Authorization", "Bearer test-token")
+            .call()
+            .unwrap();
+        server.join().unwrap();
+    }
 
     #[test]
     fn materializes_file_url_into_content_addressed_cache() {
