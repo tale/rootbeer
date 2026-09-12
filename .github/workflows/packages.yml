@@ -42,6 +42,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - name: Test package engine
+        run: cargo test --locked --workspace --quiet
       - name: Build standalone rb
         run: cargo build --locked --release --bin rb
       - name: Validate catalog

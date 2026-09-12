@@ -1,4 +1,5 @@
 use std::io::{self, Write};
+use std::path::PathBuf;
 
 use clap::{Args as ClapArgs, Subcommand};
 use rootbeer_core::package::PackageCatalog;
@@ -19,6 +20,14 @@ enum Command {
     Check,
     /// Write a deterministic JSON catalog snapshot to stdout
     Index,
+    /// Compile a trusted source recipe into an installable local artifact
+    Build {
+        name: String,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(short, long, default_value_t = 2)]
+        jobs: usize,
+    },
 }
 
 pub fn run(args: Args) {
@@ -36,8 +45,15 @@ fn execute(args: Args) -> Result<(), String> {
             for package in catalog.packages.values() {
                 writeln!(
                     output,
-                    "{}\t{}\t{}",
-                    package.name, package.default_version, package.description
+                    "{}\t{}\t{}\t{}",
+                    package.name,
+                    package.default_version,
+                    if package.versions[&package.default_version].build.is_some() {
+                        "source"
+                    } else {
+                        "binary"
+                    },
+                    package.description
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -61,7 +77,10 @@ fn execute(args: Args) -> Result<(), String> {
                     output,
                     "\n{version} (revision {})\n  source: {}\n  systems: {}\n  commands: {}",
                     recipe.revision,
-                    recipe.source,
+                    recipe
+                        .source
+                        .as_deref()
+                        .unwrap_or("source build (binary not published)"),
                     recipe.systems.join(", "),
                     recipe.bins.join(", ")
                 )
@@ -79,6 +98,23 @@ fn execute(args: Args) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         }
         Command::Index => writeln!(output, "{}", catalog.to_json()?).map_err(|e| e.to_string())?,
+        Command::Build {
+            name,
+            output: destination,
+            jobs,
+        } => {
+            let artifact =
+                rootbeer_core::package::build_package(catalog, &name, &destination, jobs)?;
+            writeln!(
+                output,
+                "built {} for {}\nartifact: {}\ninstall: rb apply --script {}",
+                artifact.package.id(),
+                artifact.system,
+                destination.join("package.tar.gz").display(),
+                destination.join("install.lua").display()
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }

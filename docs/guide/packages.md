@@ -26,10 +26,24 @@ rb package show ripgrep
 rb package check
 ```
 
-The initial catalog contains `age`, `fd`, and `ripgrep`. It ships inside `rb` and
+The binary catalog contains `age`, `fd`, and `ripgrep`. XZ has an explicit source
+build recipe; `rb package list` distinguishes `binary` and `source` entries.
+The catalog ships inside `rb` and
 does not require a registry service. Requests for unknown names or versions fail;
 Rootbeer does not silently try another provider. Use `rb.package("ripgrep@15.2.0")`
 to select an approved version explicitly.
+
+To build XZ locally using the host compiler and Make:
+
+```sh
+rb package build xz --output /tmp/rootbeer-xz
+rb apply --script /tmp/rootbeer-xz/install.lua
+```
+
+This verifies the source hash, runs the upstream build and test steps, and creates
+an installable archive and build receipt. The output directory must be new. Builds
+execute trusted source code without OS sandboxing. Normal `rb.package("xz")`
+installation remains unavailable until binary publication is implemented.
 
 Rootbeer also supports `aqua:` registry recipes and `github:` release assets without
 requiring mise or Aqua to be installed. Prefer explicit versions when you know

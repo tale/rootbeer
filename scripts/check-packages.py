@@ -44,16 +44,30 @@ def main():
                     'local rb = require("rootbeer")\n'
                     f"rb.package({json.dumps(name + '@' + version)})\n"
                 )
+                if recipe.get("build"):
+                    destination = root / "artifact"
+                    subprocess.run(
+                        [rb, "package", "build", name + "@" + version, "--output", destination],
+                        env=environment, check=True, timeout=1500,
+                    )
+                    script = destination / "install.lua"
                 command = [rb, "apply", "--script", script]
                 subprocess.run(command, env=environment, check=True, timeout=300)
-                lock = (root / "rootbeer.lock").read_bytes()
-                resolution = next(iter(json.loads(lock)["resolutions"].values()))
-                proof = resolution["proof"]
-                assert proof["type"] == "catalog"
-                assert (proof["name"], proof["version"], proof["revision"]) == (
-                    name, version, recipe["revision"]
-                )
-                assert proof["source_proof"]
+                lock_path = script.parent / "rootbeer.lock"
+                lock = lock_path.read_bytes()
+                if recipe.get("build"):
+                    receipt = json.loads((script.parent / "receipt.json").read_bytes())
+                    assert receipt["build"] == recipe["build"]
+                    assert receipt["revision"] == recipe["revision"]
+                    assert receipt["package"]["name"] == name
+                else:
+                    resolution = next(iter(json.loads(lock)["resolutions"].values()))
+                    proof = resolution["proof"]
+                    assert proof["type"] == "catalog"
+                    assert (proof["name"], proof["version"], proof["revision"]) == (
+                        name, version, recipe["revision"]
+                    )
+                    assert proof["source_proof"]
                 profile = root / "state/rootbeer/profiles/default/current"
                 bins = profile / "bin"
                 assert set(path.name for path in bins.iterdir()) == set(recipe["bins"])
@@ -78,7 +92,7 @@ def main():
                 subprocess.run(
                     [*command, "--offline"], env=environment, check=True, timeout=60
                 )
-                assert (root / "rootbeer.lock").read_bytes() == lock
+                assert lock_path.read_bytes() == lock
                 assert all((bins / name).is_file() for name in recipe["bins"])
                 print(f"PASS {name}@{version}: commands, provenance, and offline reinstall", flush=True)
 

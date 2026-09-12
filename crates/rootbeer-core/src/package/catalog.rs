@@ -39,7 +39,10 @@ pub struct CatalogPackage {
 #[serde(deny_unknown_fields)]
 pub struct CatalogRecipe {
     pub revision: u32,
-    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<super::SourceBuild>,
     pub systems: Vec<String>,
     pub bins: Vec<String>,
     pub checks: Vec<Vec<String>>,
@@ -140,6 +143,7 @@ impl PackageCatalog {
                 }
             }
         }
+        super::build::validate_dependencies(self)?;
         Ok(())
     }
 
@@ -166,19 +170,26 @@ impl PackageCatalog {
 
 impl CatalogRecipe {
     fn validate(&self) -> Result<(), String> {
-        let request = PackageRequest::parse(&self.source);
-        if self.revision == 0
-            || !matches!(request.resolver.as_deref(), Some("aqua" | "github"))
-            || request
-                .version
-                .as_deref()
-                .is_none_or(|version| version == "latest")
-            || !request
-                .name
-                .split_once('/')
-                .is_some_and(|(owner, repo)| !owner.is_empty() && !repo.is_empty())
-        {
-            return Err("recipe needs a revision and an exact aqua: or github: source".into());
+        if self.revision == 0 || self.source.is_some() == self.build.is_some() {
+            return Err("recipe needs a revision and exactly one of source or build".into());
+        }
+        if let Some(build) = &self.build {
+            build.validate()?;
+        }
+        if let Some(source) = &self.source {
+            let request = PackageRequest::parse(source);
+            if !matches!(request.resolver.as_deref(), Some("aqua" | "github"))
+                || request
+                    .version
+                    .as_deref()
+                    .is_none_or(|version| version == "latest")
+                || !request
+                    .name
+                    .split_once('/')
+                    .is_some_and(|(owner, repo)| !owner.is_empty() && !repo.is_empty())
+            {
+                return Err("recipe needs a revision and an exact aqua: or github: source".into());
+            }
         }
         let systems: BTreeSet<_> = self.systems.iter().collect();
         if systems.is_empty()
@@ -279,7 +290,11 @@ impl PackageResolver for CatalogResolver {
                 package.name, context.system
             ));
         }
-        let source = PackageRequest::parse(&recipe.source);
+        let source = recipe.source.as_deref().ok_or_else(|| format!(
+            "{}@{version} has a source recipe but no published binary; use `rb package build {} --output <directory>` explicitly",
+            package.name, package.name
+        ))?;
+        let source = PackageRequest::parse(source);
         let resolution = self
             .backends
             .resolve_package(&source, context)
@@ -373,7 +388,7 @@ mod tests {
             .versions
             .get_mut("10.4.2")
             .unwrap()
-            .source = "aqua:sharkdp/fd@latest".into();
+            .source = Some("aqua:sharkdp/fd@latest".into());
         assert!(catalog.validate().unwrap_err().contains("exact"));
 
         let mut catalog = original.clone();

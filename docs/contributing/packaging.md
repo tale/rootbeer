@@ -11,8 +11,10 @@ for the recipe format and local smoke checks. The package workflow tests native
 Linux and macOS installs on Intel and ARM, followed by offline profile recreation.
 It runs only for public repositories and does not publish packages.
 
-This first catalog imports upstream release binaries. Dependency-aware source
-builds, signed remote indexes, and a public binary cache remain separate work.
+The catalog imports upstream release binaries and supports explicit Autotools
+source builds with ordered build dependencies. The first source recipe is XZ.
+Pinned toolchains, runtime dependencies, signed remote indexes, and a public binary
+cache remain separate work.
 
 ## Rootbeer Distribution
 
