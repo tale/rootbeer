@@ -89,9 +89,15 @@ fully analyze your config for correctness and then apply all changes in a single
 execution. If you want to see what would change without actually writing files,
 use `rb apply --dry-run` or `rb apply -n` to preview the planned changes.
 
-If your config declares packages with `rb.package()`, `rb apply` also maintains a
-`rootbeer.lock` beside your config. See [Packages](/guide/packages) for the
-`--locked`, `--offline`, and `--update` workflow.
+### Add Packages
+
+Open [the package catalog](/packages/), select your platform, and copy declarations
+for the tools you want into `init.lua`. Follow [the package guide](/guide/packages)
+to source Rootbeer's package environment from your shell.
+
+Run `rb apply`, then commit `rootbeer.lock` with your config. Normal applies keep
+matching selections stable. Use `rb apply --update` when you want to refresh them,
+or `rb apply --offline` when the lock and package contents are already cached.
 
 ### Editor Autocomplete
 
@@ -99,20 +105,8 @@ If your config declares packages with `rb.package()`, `rb apply` also maintains 
 full autocomplete and type checking for the Rootbeer API in any editor that has
 been configured to use Lua's Language Server.
 
-If you need to regenerate your `.luarc.json` or set it up manually, you can run:
-
-```sh
-rb lsp
-```
-
-::: details Internal Details
-Because `rb` ships as a single binary, the LSP command will also extract type
-definitions to `~/.local/share/rootbeer/typedefs/` since Lua expects modules to
-be files on disk. The `.luarc.json` is configured to look for modules in this
-directory.
-
-When updating Rootbeer, the type definitions will be updated as well.
-:::
+The generated `.luarc.json` points your editor at Rootbeer's Lua type definitions.
+No custom LuaLS plugin is required.
 
 ## Updating Rootbeer
 
@@ -124,6 +118,7 @@ rb update
 ```
 
 ## Next Steps
+
 You may want to brush up on some of the core concepts and features of Rootbeer.
 
 - [Core Concepts](/guide/what-is-rootbeer#core-concepts): Quick overview.

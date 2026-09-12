@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: "ROOTBEER"
-  tagline: Manage your system configuration with Lua.
+  tagline: Your packages and system configuration. Declared in Lua.
   actions:
     - theme: brand
       text: What is Rootbeer?
@@ -12,66 +12,52 @@ hero:
       text: Get Started
       link: /guide/getting-started
     - theme: alt
-      text: Browse Modules
-      link: /modules/
+      text: Find Packages
+      link: /packages/
 
 features:
-  - icon: 🧑‍💻
-    title: Config is Lua
-    details: Write real Lua instead of templates or YAML. Use variables, functions, loops, and conditionals when they help.
-    link: /guide/what-is-rootbeer#config-is-code
+  - title: Packages Are Configuration
+    details: Declare tools by name. Rootbeer installs verified binaries for your platform and records exact selections in your lockfile.
+    link: /guide/packages
+    linkText: Manage packages
+  - title: Config Is Lua
+    details: Use one language for packages, files, shell setup, and machine-specific configuration. Compose declarations with functions and modules.
+    link: /guide/what-is-rootbeer
     linkText: Learn the model
-  - icon: ⚡
-    title: Plan Before Apply
-    details: Rootbeer evaluates your config, builds a plan, and only writes changes when you run apply.
-    link: /guide/what-is-rootbeer#plan-then-execute
-    linkText: How it works
-  - icon: 📦
-    title: Modules for Real Tools
-    details: Configure zsh, git, SSH, Homebrew, macOS, Amp, Claude Code, and more from typed Lua tables.
-    link: /modules/
-    linkText: Browse modules
-  - icon: 🌐
-    title: Profiles for Every Machine
-    details: Keep one config repo and branch on roles like personal, work, server, or anything else you need.
+  - title: Deliberate Updates
+    details: Keep matching package locks stable. Refresh when you choose, review the changes, and replay cached installations offline.
+    link: /guide/package-locks
+    linkText: Control updates
+  - title: One Config, Many Machines
+    details: Share configuration across macOS and Linux, with profiles for personal, work, server, or any other role.
     link: /guide/profiles
     linkText: Use profiles
 ---
 
 <div class="home-code-preview">
 
-## Quick look
+## One place for your environment
+
+Start with [the package catalog](/packages/), copy the declarations for your tools,
+and configure how you use them through [Lua modules](/modules/). Keep everything
+in the same configuration repository, including `rootbeer.lock`.
 
 ```lua
-local rb  = require("rootbeer")
+local rb = require("rootbeer")
 local zsh = require("rootbeer.zsh")
-local git = require("rootbeer.git")
-
-rb.profile.define({
-    strategy = "hostname",
-    profiles = {
-        personal = { "Aarnavs-MBP" },
-        work     = { "tale-work" },
-    },
-})
 
 zsh.config({
-    env = { EDITOR = "nvim" },
-    aliases = { g = "git", v = "nvim" },
-    evals = { "mise activate zsh" },
-})
-
-git.config({
-    user = {
-        name = "Aarnav Tale",
-        email = rb.profile.select({
-            default = "aarnav@tale.me",
-            work    = "aarnav@company.com",
-        }),
-    },
-    signing = { key = "ssh-ed25519 AAAA..." },
-    lfs = true,
+    sources = { rb.env_export("sh") },
+    history = { size = 10000 },
 })
 ```
+
+```sh
+rb apply --dry-run
+rb apply
+```
+
+Rootbeer is a standalone binary. The package catalog grows independently of CLI
+releases, with verified upstream binaries and packages built by the index workflow.
 
 </div>

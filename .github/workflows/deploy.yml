@@ -133,8 +133,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Test catalog search
+        run: pnpm test:catalog
+
       - name: Build site
         run: pnpm build
+        env:
+          ROOTBEER_INDEX_URL: ${{ vars.ROOTBEER_INDEX_URL }}
+          ROOTBEER_INDEX_PUBLIC_KEY: ${{ vars.ROOTBEER_INDEX_PUBLIC_KEY }}
 
       - name: Download artifacts
         if: needs.changes.outputs.source == 'true'

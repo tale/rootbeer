@@ -28,15 +28,12 @@ for the complete walkthrough. The module exposes:
 
 ## `rb.package`
 
-`rb.package()` declares packages that are resolved into `rootbeer.lock` before
-apply. Prefer explicit resolver prefixes, such as `aqua:`, when names could
-overlap between package backends.
+`rb.package()` declares a tool as part of your desired system configuration.
+Canonical names select the official catalog; exact versions and explicit backend
+requests are available when needed. Apply records the selection in `rootbeer.lock`.
 
-```lua
-rb.package("aqua:BurntSushi/ripgrep@14.1.1")
-```
-
-See the [Packages guide](/guide/packages) for lock/update/offline behavior.
+Use [package search](/packages/) to find declarations and platform support, then
+follow the [package guide](/guide/packages) for installation and shell integration.
 
 ## API Reference
 

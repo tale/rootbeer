@@ -1,12 +1,13 @@
 # Rootbeer
 
-> Manage your dotfiles with Lua!
+> Declare your packages and system configuration in Lua.
 
-Rootbeer is a dotfile manager that lets you define your system configuration
-in Lua scripts. Think [chezmoi](https://www.chezmoi.io/), but with the full
-power of a real scripting language instead of Go templates.
+Rootbeer is a standalone tool for managing command-line packages, files, shell
+settings, and machine-specific configuration together. Its signed package catalog
+supplies verified platform binaries, while `rootbeer.lock` keeps installations
+stable until you choose to update.
 
-**[Documentation →](https://rootbeer.tale.me)**
+**[Documentation](https://rootbeer.tale.me) · [Package catalog](https://rootbeer.tale.me/packages/)**
 
 ## Quick Start
 
@@ -65,18 +66,21 @@ zsh.config({
     aliases = { g = "git", vim = "nvim" },
     prompt = '%F{cyan}%~%f %F{white}>%f ',
     history = { size = 10000 },
-    evals = { "mise activate zsh" },
+    sources = { rb.env_export("sh") },
 })
 
--- Conditionals — it's just Lua
-if rb.host.os == "macos" then
-    local brew = require("rootbeer.brew")
-    brew.config({
-        taps = { "homebrew/cask-fonts" },
-        formulae = { "lsd", "delta", "mise" },
-    })
-end
 ```
+
+## Packages
+
+Find a canonical name in the package catalog, copy its Lua declaration, and run
+`rb apply`. Source the generated package environment from your shell, and commit
+`rootbeer.lock` with your config. Matching locks stay stable; `rb apply --update`
+refreshes selections, and `rb apply --offline` replays cached contents.
+
+The index publishes independently of the CLI. Available versions can differ by
+platform, and exact version requests never silently fall back. See the
+[package guide](https://rootbeer.tale.me/guide/packages) for the complete workflow.
 
 ## Key Ideas
 
@@ -84,11 +88,11 @@ end
 - **Plan & apply** — `rb.file()`, `rb.link_file()`, and module calls queue operations. Nothing touches the filesystem until `rb apply`.
 - **Declarative modules** — zsh, git, SSH, Homebrew, macOS, and more. Describe the end state as a table, rootbeer generates the files.
 - **First-class profiles** — Declare valid profiles, resolve them from simple string matchers, and branch with `rb.profile.select`, `rb.profile.when`, and `rb.profile.config`. CLI typos get suggestions.
-- **Editor support** — `rb lsp` sets up lua-language-server for full autocomplete and type checking.
+- **Editor support** — `rb init` configures LuaLS autocomplete and type definitions.
 
 ## Building
 
-Requires Rust 1.79+.
+Requires Rust 1.93+.
 
 ```bash
 cargo build           # → ./target/debug/rb
