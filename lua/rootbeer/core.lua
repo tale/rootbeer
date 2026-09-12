@@ -84,7 +84,7 @@ function rootbeer.exec(cmd, args) end
 --- @class rootbeer.PackageSource
 --- @field path? string Local directory tree source. The `sha256` is a deterministic tree hash.
 --- @field file? string Local source file, usually an archive. The `sha256` is a byte hash.
---- @field url? string Remote or `file://` source URL. The `sha256` is a byte hash.
+--- @field url? string HTTPS, digest-pinned `ghcr://`, or `file://` source URL. The `sha256` is a byte hash.
 --- @field sha256 string Locked source hash.
 
 --- @class rootbeer.PackageInstall

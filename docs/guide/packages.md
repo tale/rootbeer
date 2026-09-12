@@ -94,7 +94,7 @@ rb.package("xz")
 Use the exact 64-character lowercase digest of `index.json`. The URL above is an
 example; Rootbeer does not yet operate a default hosted index. An absolute
 `file:///path/to/index.json` URL also works for a local bundle. Artifacts named
-inside the index must have HTTPS URLs.
+inside the index must have HTTPS URLs or immutable `ghcr://` blob references.
 
 The index supplies canonical names, aliases, versions, and available platform
 artifacts independently of your `rb` release. Unqualified and `rootbeer:` requests

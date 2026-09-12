@@ -156,7 +156,33 @@ for identical inputs and base URL regardless of receipt argument order.
 This command prepares files; it does not upload them. Select the resulting index
 with `rb.package_index({ url = "https://.../index.json", sha256 = "<digest>" })`
 before declaring packages. Local index files can use absolute `file:///` URLs;
-artifact URLs still refer to the configured HTTPS host. The printed SHA-256 covers the exact index bytes and is not a signature.
+artifact URLs still refer to the configured HTTPS host or GHCR repository. The printed SHA-256 covers the exact index bytes and is not a signature.
 Receipts are build records, not authenticated attestations: publication must accept
 outputs only from trusted, successful CI jobs. The client can verify an official signed manifest and cache snapshots automatically;
 GitHub publication and the release endpoint/public key remain to be configured.
+
+## GHCR Archives
+
+Use a GHCR repository as the bundle destination:
+
+```sh
+rb package bundle --receipt /tmp/rootbeer-xz/receipt.json \
+  --base-url ghcr://tale/rootbeer-packages/xz --output /tmp/rootbeer-bundle
+```
+
+The index records `ghcr://tale/rootbeer-packages/xz@sha256:<archive digest>`.
+The digest identifies the actual archive blob, **not** its enclosing OCI manifest.
+The publisher must upload the archive unchanged and retain an OCI manifest that
+references the blob. Keep those manifests reachable when publishing newer versions;
+older lockfiles must continue to work. Bundling still only prepares local files.
+
+`rb` obtains an anonymous repository-scoped pull token directly from GHCR and
+streams the blob through the normal hash-verified download cache. Public packages
+need no Docker, ORAS, GitHub login, or user token. Private registry authentication
+is not implemented. Offline replay uses cached bytes without contacting GHCR.
+
+Rootbeer's binary releases remain separate from package distribution. The planned
+package repository owns recipes, build/publish workflows, and signed snapshots
+served by GitHub Pages; GHCR owns archive blobs. Publishing packages should never
+create releases in `tale/rootbeer`. The existing documentation and nightly binary
+site also stays separate from the package-index Pages deployment.

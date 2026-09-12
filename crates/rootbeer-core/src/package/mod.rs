@@ -10,6 +10,7 @@ mod build;
 mod bundle;
 mod catalog;
 mod download;
+mod ghcr;
 mod github;
 mod index;
 mod inputs;

@@ -114,9 +114,18 @@ impl ArtifactIndex {
                     return Err(format!("{key}: invalid platform artifact contract"));
                 }
                 let LockedSource::Url { url, sha256 } = &package.source else {
-                    return Err(format!("{key}: index artifacts must use HTTPS URLs"));
+                    return Err(format!(
+                        "{key}: index artifacts must use HTTPS or GHCR URLs"
+                    ));
                 };
-                validate_https(url)?;
+                if url.starts_with("ghcr://") {
+                    let blob = super::ghcr::GhcrBlob::parse(url)?;
+                    if blob.sha256 != *sha256 {
+                        return Err(format!("{key}: GHCR digest does not match archive hash"));
+                    }
+                } else {
+                    validate_https(url)?;
+                }
                 if !is_sha256(sha256) {
                     return Err(format!("{key}: invalid archive SHA-256"));
                 }

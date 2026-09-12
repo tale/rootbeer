@@ -43,6 +43,20 @@ impl DownloadCache {
         url: &str,
         expected_sha256: Option<&str>,
     ) -> io::Result<DownloadedFile> {
+        let blob = url
+            .starts_with("ghcr://")
+            .then(|| super::ghcr::GhcrBlob::parse(url))
+            .transpose()
+            .map_err(io::Error::other)?;
+        if let Some(blob) = &blob {
+            if expected_sha256.is_some_and(|expected| expected != blob.sha256) {
+                return Err(io::Error::other(
+                    "GHCR reference digest does not match locked source hash",
+                ));
+            }
+        }
+        let expected_sha256 =
+            expected_sha256.or_else(|| blob.as_ref().map(|blob| blob.sha256.as_str()));
         fs::create_dir_all(&self.root)?;
 
         if let Some(sha256) = expected_sha256 {
@@ -241,6 +255,11 @@ fn copy_url_to_writer(url: &str, writer: &mut impl Write) -> io::Result<String> 
 }
 
 fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
+    if url.starts_with("ghcr://") {
+        return super::ghcr::GhcrBlob::parse(url)
+            .map_err(io::Error::other)?
+            .reader();
+    }
     if let Some(path) = url.strip_prefix("file://") {
         let file = fs::File::open(path)
             .map_err(|e| io::Error::new(e.kind(), format!("failed to read {url}: {e}")))?;

@@ -106,10 +106,14 @@ pub fn bundle_artifacts(
             .realize(&package)
             .map_err(|e| format!("{key}: {e}"))?;
         package.source = LockedSource::Url {
-            url: format!(
-                "{}/artifacts/{sha256}.tar.gz",
-                base_url.trim_end_matches('/')
-            ),
+            url: if base_url.starts_with("ghcr://") {
+                format!("{base_url}@sha256:{sha256}")
+            } else {
+                format!(
+                    "{}/artifacts/{sha256}.tar.gz",
+                    base_url.trim_end_matches('/')
+                )
+            },
             sha256: sha256.clone(),
         };
         let receipt_sha256 = hash_bytes(&bytes);
@@ -143,6 +147,9 @@ pub fn bundle_artifacts(
 }
 
 fn validate_base_url(url: &str) -> Result<(), String> {
+    if let Some(repository) = url.strip_prefix("ghcr://") {
+        return super::ghcr::validate_repository(repository);
+    }
     let uri: ureq::http::Uri = url
         .parse()
         .map_err(|e| format!("invalid bundle base URL: {e}"))?;
@@ -339,6 +346,31 @@ pub(crate) mod tests {
             .join("receipts")
             .join(format!("{}.json", artifact.receipt_sha256))
             .is_file());
+    }
+
+    #[test]
+    fn bundles_ghcr_archive_digests_without_container_manifests() {
+        let root = tempfile::tempdir().unwrap();
+        let (catalog, receipt) = fixture(root.path());
+        let output = root.path().join("ghcr");
+        bundle_artifacts(&catalog, &[receipt], "ghcr://tale/rootbeer/xz", &output).unwrap();
+        let mut index: ArtifactIndex =
+            serde_json::from_slice(&fs::read(output.join("index.json")).unwrap()).unwrap();
+        let package = &mut index
+            .artifacts
+            .values_mut()
+            .next()
+            .unwrap()
+            .values_mut()
+            .next()
+            .unwrap()
+            .package;
+        let LockedSource::Url { url, sha256 } = &mut package.source else {
+            panic!("expected GHCR source")
+        };
+        assert_eq!(url, &format!("ghcr://tale/rootbeer/xz@sha256:{sha256}"));
+        *url = format!("ghcr://tale/rootbeer/xz@sha256:{}", "0".repeat(64));
+        assert!(index.validate().unwrap_err().contains("does not match"));
     }
 
     #[test]
