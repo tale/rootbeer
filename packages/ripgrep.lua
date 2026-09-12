@@ -6,8 +6,14 @@ return {
 	default_version = "15.2.0",
 	versions = {
 		["15.2.0"] = {
-			revision = 1,
-			source = "aqua:BurntSushi/ripgrep@15.2.0",
+			revision = 2,
+			source = "github:BurntSushi/ripgrep@15.2.0",
+			assets = {
+				["aarch64-macos"] = "ripgrep-15.2.0-aarch64-apple-darwin.tar.gz",
+				["x86_64-macos"] = "ripgrep-15.2.0-x86_64-apple-darwin.tar.gz",
+				["aarch64-linux"] = "ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+				["x86_64-linux"] = "ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+			},
 			systems = {
 				"aarch64-macos",
 				"x86_64-macos",

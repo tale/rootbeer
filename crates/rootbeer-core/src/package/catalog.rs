@@ -44,6 +44,8 @@ pub struct CatalogRecipe {
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<super::SourceBuild>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub assets: BTreeMap<String, String>,
     pub systems: Vec<String>,
     pub bins: Vec<String>,
     pub checks: Vec<Vec<String>>,
@@ -227,6 +229,18 @@ impl CatalogRecipe {
         {
             return Err("recipe needs unique supported systems".into());
         }
+        if !self.assets.is_empty()
+            && (self
+                .source
+                .as_deref()
+                .is_none_or(|source| !source.starts_with("github:"))
+                || self.assets.len() != self.systems.len()
+                || self.assets.iter().any(|(system, asset)| {
+                    !self.systems.contains(system) || asset.trim().is_empty()
+                }))
+        {
+            return Err("assets must name one GitHub release asset per declared system".into());
+        }
         let bins: BTreeSet<_> = self.bins.iter().collect();
         if bins.is_empty()
             || bins.len() != self.bins.len()
@@ -328,7 +342,8 @@ impl PackageResolver for CatalogResolver {
             "{}@{version} has a source recipe but no published binary; use `rb package build {} --output <directory>` explicitly",
             package.name, package.name
         ))?;
-        let source = PackageRequest::parse(source);
+        let mut source = PackageRequest::parse(source);
+        source.asset = recipe.assets.get(&context.system).cloned();
         let resolution = self
             .backends
             .resolve_package(&source, context)
@@ -441,6 +456,32 @@ mod tests {
     }
 
     #[test]
+    fn validates_complete_github_asset_maps() {
+        let catalog = PackageCatalog::embedded().unwrap();
+        let original = catalog.packages["ripgrep"].versions["15.2.0"].clone();
+        assert!(original.validate().is_ok());
+
+        let mut recipe = original.clone();
+        recipe.assets.remove("x86_64-linux");
+        assert!(recipe
+            .validate()
+            .unwrap_err()
+            .contains("one GitHub release asset"));
+
+        let mut recipe = original.clone();
+        recipe.assets.insert("x86_64-linux".into(), " ".into());
+        assert!(recipe.validate().is_err());
+
+        let mut recipe = original.clone();
+        recipe.source = Some("aqua:BurntSushi/ripgrep@15.2.0".into());
+        assert!(recipe.validate().is_err());
+
+        let mut recipe = original;
+        recipe.assets.clear();
+        assert!(recipe.validate().is_ok());
+    }
+
+    #[test]
     fn recipe_evaluation_has_no_host_access_and_rejects_unknown_fields() {
         assert!(PackageCatalog::from_lua(&[("bad", "return os.getenv('HOME')")]).is_err());
         assert!(PackageCatalog::from_lua(&[("bad", "return require('rootbeer')")]).is_err());
@@ -460,7 +501,7 @@ mod tests {
 
     impl PackageResolver for LocalBackend {
         fn name(&self) -> &str {
-            "aqua"
+            "github"
         }
 
         fn resolve(
@@ -525,12 +566,16 @@ mod tests {
         let ResolutionProof::Catalog(proof) = &canonical.proof else {
             panic!("missing catalog provenance")
         };
-        assert_eq!(proof.revision, 1);
+        assert_eq!(proof.revision, 2);
         assert_eq!(
             proof.catalog_sha256,
             PackageCatalog::embedded().unwrap().sha256()
         );
         assert_eq!(proof.source.name, "BurntSushi/ripgrep");
+        assert_eq!(
+            proof.source.asset.as_deref(),
+            Some("ripgrep-15.2.0-aarch64-apple-darwin.tar.gz")
+        );
 
         let realizer = PackageRealizer::with_dirs(
             Store::new(dir.path().join("store")),

@@ -15,7 +15,13 @@ return {
     versions = {
         ["15.2.0"] = {
             revision = 1,
-            source = "aqua:BurntSushi/ripgrep@15.2.0",
+            source = "github:BurntSushi/ripgrep@15.2.0",
+            assets = {
+                ["aarch64-macos"] = "ripgrep-15.2.0-aarch64-apple-darwin.tar.gz",
+                ["x86_64-macos"] = "ripgrep-15.2.0-x86_64-apple-darwin.tar.gz",
+                ["aarch64-linux"] = "ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+                ["x86_64-linux"] = "ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+            },
             systems = { "aarch64-macos", "x86_64-macos", "aarch64-linux", "x86_64-linux" },
             bins = { "rg" },
             checks = { { "rg", "--version" } },
@@ -30,7 +36,9 @@ changing the recipe for an existing version. Keep older recipes when introducing
 a new version, and deliberately select `default_version`.
 
 Binary sources must use an explicit `aqua:` or `github:` backend and exact version/tag.
-The backend determines the artifact for the target system. Rootbeer never tries
+Prefer upstream GitHub releases when available. The optional `assets` map selects
+an exact GitHub asset for every declared system, avoiding ambiguity between GNU
+and musl archives. Without it, the backend determines the artifact for the target system. Rootbeer never tries
 another backend when that source fails. Only the declared commands are exported;
 the backend must supply all of them. Checks execute argument arrays directly,
 without a shell.
