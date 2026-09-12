@@ -253,7 +253,7 @@ impl PlannedPipeline {
                 op,
                 Op::Package {
                     intent: PackageIntent::Request(request)
-                } if request.resolver.as_deref().is_none_or(|resolver| resolver == "aqua")
+                } if request.resolver.as_deref().is_none_or(|resolver| matches!(resolver, "aqua" | "rootbeer"))
             )
         })
     }

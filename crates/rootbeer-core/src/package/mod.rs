@@ -6,6 +6,7 @@
 //! these locked package facts before apply.
 
 mod aqua;
+mod catalog;
 mod download;
 mod github;
 mod inputs;
@@ -18,6 +19,7 @@ mod resolve;
 mod spec;
 
 pub use aqua::AquaResolver;
+pub use catalog::{CatalogPackage, CatalogProof, CatalogRecipe, PackageCatalog};
 pub use github::GitHubResolver;
 pub use inputs::{GitHubRepositoryPin, PackageResolverInputs, ResolverInput};
 pub use intent::{PackageIntent, PackageLockInput};
@@ -38,6 +40,12 @@ pub fn default_resolver_stack() -> ResolverStack {
 }
 
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
+    let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
+    stack.push(catalog::CatalogResolver::new(inputs, backend_stack(inputs)));
+    stack
+}
+
+fn backend_stack(inputs: &PackageResolverInputs) -> ResolverStack {
     let mut stack = ResolverStack::new();
     stack.push(match inputs.aqua_registry() {
         Some(pin) => AquaResolver::from_registry_pin(pin),

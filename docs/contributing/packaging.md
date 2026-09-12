@@ -1,5 +1,21 @@
 # Packaging
 
+## Package Collection
+
+Canonical CLI package definitions live in `packages/*.lua`. Adding a definition
+requires no Rust changes. `rb package check` validates the embedded collection;
+`rb package index` exports its deterministic JSON snapshot.
+
+See the [collection authoring guide](https://github.com/tale/rootbeer/tree/main/packages)
+for the recipe format and local smoke checks. The package workflow tests native
+Linux and macOS installs on Intel and ARM, followed by offline profile recreation.
+It runs only for public repositories and does not publish packages.
+
+This first catalog imports upstream release binaries. Dependency-aware source
+builds, signed remote indexes, and a public binary cache remain separate work.
+
+## Rootbeer Distribution
+
 Rootbeer ships as a single binary (`rb`) with an optional set of Lua standard
 library files. How those files are delivered depends on the distribution
 channel.

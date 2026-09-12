@@ -6,6 +6,25 @@ use crate::plan::Op;
 use super::super::test_support::{run, vm_in};
 
 #[test]
+fn catalog_commands_are_available_while_planning_without_a_lock() {
+    let root = tempfile::tempdir().unwrap();
+    let vm = vm_in(
+        r#"
+        local rb = require("rootbeer")
+        rb.package("rg")
+        result = rb.which("rg")
+    "#,
+        root.path(),
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert_eq!(
+        PathBuf::from(result),
+        crate::package::profile::bin_path("rg")
+    );
+    assert!(!root.path().join("rootbeer.lock").exists());
+}
+
+#[test]
 fn rb_package_pushes_realize_package_op() {
     let ops = run(r#"
         rb.package({

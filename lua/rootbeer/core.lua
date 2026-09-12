@@ -100,7 +100,8 @@ function rootbeer.exec(cmd, args) end
 --- Declares a package to realize into the Rootbeer store and activate under
 --- Rootbeer's stable package profile. Passing a locked table uses that exact
 --- realization input; passing a string records a resolver request which is
---- pinned in `rootbeer.lock`. Supported resolver prefixes include
+--- pinned in `rootbeer.lock`. Unqualified names (such as `ripgrep`) use Rootbeer's
+--- canonical catalog and its approved default version. Supported resolver prefixes include
 --- `aqua:owner/repo@version` and `github:owner/repo@tag`.
 --- @param spec rootbeer.PackageSpec|string The locked package specification or resolver request.
 --- @param opts? rootbeer.PackageOptions Options for an explicit `github:` request.

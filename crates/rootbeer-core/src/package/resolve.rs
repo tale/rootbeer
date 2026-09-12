@@ -147,6 +147,7 @@ impl PackageResolution {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResolutionProof {
+    Catalog(super::CatalogProof),
     Snapshot(SnapshotProof),
     MetadataClosure(MetadataClosureProof),
     GitRelease(GitReleaseProof),
@@ -321,16 +322,23 @@ pub trait PackageRequestResolver {
 }
 
 /// Ordered resolver orchestration. This is the only policy encoded here:
-/// explicit requests use exactly one named resolver, while implicit requests
-/// try resolvers in configured order and surface every failed attempt.
+/// explicit requests use exactly one named resolver. Implicit requests use the
+/// configured authority, or try resolvers in order when none is configured.
 #[derive(Default)]
 pub struct ResolverStack {
     resolvers: Vec<Box<dyn PackageResolver>>,
+    implicit_resolver: Option<String>,
 }
 
 impl ResolverStack {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Routes unqualified names to one authoritative resolver without fallback.
+    pub fn with_implicit_resolver(mut self, name: impl Into<String>) -> Self {
+        self.implicit_resolver = Some(name.into());
+        self
     }
 
     pub fn push<R>(&mut self, resolver: R)
@@ -356,7 +364,11 @@ impl ResolverStack {
             return Err(ResolveError::NoResolvers);
         }
 
-        if let Some(explicit) = &request.resolver {
+        if let Some(explicit) = request
+            .resolver
+            .as_ref()
+            .or(self.implicit_resolver.as_ref())
+        {
             let Some(resolver) = self
                 .resolvers
                 .iter()

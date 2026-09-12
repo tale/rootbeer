@@ -19,6 +19,7 @@ pub struct PackageResolverInputs {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResolverInput {
     AquaRegistry(GitHubRepositoryPin),
+    Catalog { sha256: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +44,14 @@ impl PackageResolverInputs {
                 )?,
             }),
         );
+        resolvers.insert(
+            "rootbeer".into(),
+            ResolverInput::Catalog {
+                sha256: super::PackageCatalog::embedded()
+                    .map_err(io::Error::other)?
+                    .sha256(),
+            },
+        );
         Ok(Self { resolvers })
     }
 
@@ -53,6 +62,13 @@ impl PackageResolverInputs {
     pub fn aqua_registry(&self) -> Option<&GitHubRepositoryPin> {
         match self.resolvers.get("aqua") {
             Some(ResolverInput::AquaRegistry(pin)) => Some(pin),
+            _ => None,
+        }
+    }
+
+    pub fn catalog_sha256(&self) -> Option<&str> {
+        match self.resolvers.get("rootbeer") {
+            Some(ResolverInput::Catalog { sha256 }) => Some(sha256),
             _ => None,
         }
     }

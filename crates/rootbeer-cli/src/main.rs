@@ -2,6 +2,7 @@ mod apply;
 mod cd;
 mod edit;
 mod init;
+mod package;
 mod remote;
 mod typegen;
 mod update;
@@ -41,6 +42,9 @@ enum Commands {
     /// Show license notices for package backend libraries
     Licenses,
 
+    /// Inspect and export the canonical package catalog
+    Package(package::Args),
+
     /// Create or load a rootbeer configuration in the source directory
     Init(init::Args),
 
@@ -71,6 +75,7 @@ fn main() {
             include_str!("../../../licenses/zip.txt")
         ),
         Commands::Init(args) => init::run(args),
+        Commands::Package(args) => package::run(args),
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),
         Commands::Apply(args) => apply::run(args, cli.lua_dir.as_ref()),

@@ -8,7 +8,7 @@ source the profile from your shell.
 local rb = require("rootbeer")
 local zsh = require("rootbeer.zsh")
 
-rb.package("aqua:BurntSushi/ripgrep@14.1.1")
+rb.package("ripgrep")
 
 local package_env = rb.env_export("sh")
 zsh.config({
@@ -16,7 +16,22 @@ zsh.config({
 })
 ```
 
-Rootbeer supports `aqua:` registry recipes and `github:` release assets without
+Unqualified names use Rootbeer's canonical catalog. Each package has an approved
+default version, declared commands, and explicit platform support. `rg` is an
+alias for `ripgrep`; aliases retain the same canonical package identity.
+
+```sh
+rb package list
+rb package show ripgrep
+rb package check
+```
+
+The initial catalog contains `age`, `fd`, and `ripgrep`. It ships inside `rb` and
+does not require a registry service. Requests for unknown names or versions fail;
+Rootbeer does not silently try another provider. Use `rb.package("ripgrep@15.2.0")`
+to select an approved version explicitly.
+
+Rootbeer also supports `aqua:` registry recipes and `github:` release assets without
 requiring mise or Aqua to be installed. Prefer explicit versions when you know
 what you want. Unversioned Aqua requests use the pinned registry's package index;
 unversioned GitHub requests select the latest published stable release. Both
@@ -128,8 +143,12 @@ Resolvers do not all have to look like Aqua. If a resolver cannot pin one whole
 registry revision, Rootbeer records the metadata it used instead. A locked apply
 should make the same decision or fail, never drift silently.
 
-Prefer explicit resolver prefixes when a name could exist in more than one
-backend:
+Catalog resolutions additionally record the catalog digest, canonical identity,
+recipe revision, and underlying backend proof. A matching lock remains usable
+after upgrading `rb`. Resolving new requests against a different catalog requires
+the matching binary or an explicit `--update`.
+
+Use an explicit resolver prefix to bypass the canonical catalog:
 
 ```lua
 rb.package("aqua:cli/cli@v2.47.0")

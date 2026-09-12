@@ -8,7 +8,8 @@ use super::module::Module;
 use super::vm::{profile_bin_path, PackageBins};
 use crate::package::{
     lockfile::RootbeerLock, profile as package_profile, ArchiveFormat, LockedInstall,
-    LockedPackage, LockedSource, PackageIntent, PackageRequest, Provides, ResolveContext,
+    LockedPackage, LockedSource, PackageCatalog, PackageIntent, PackageRequest, Provides,
+    ResolveContext,
 };
 use crate::plan::{Op, WriteSource};
 
@@ -52,7 +53,9 @@ impl Module for Package {
                                 .expect("PackageBins not set")
                                 .insert(bin.clone(), profile_bin_path(bin));
                         }
-                        register_locked_request_bins(lua, &cx, &request);
+                        if !register_locked_request_bins(lua, &cx, &request) {
+                            register_catalog_request_bins(lua, &request)?;
+                        }
                         PackageIntent::request(request)
                     }
                     other => {
@@ -118,17 +121,45 @@ fn register_package_bins(lua: &Lua, package: &LockedPackage) {
     }
 }
 
-fn register_locked_request_bins(lua: &Lua, cx: &Ctx<'_>, request: &PackageRequest) {
+fn register_locked_request_bins(lua: &Lua, cx: &Ctx<'_>, request: &PackageRequest) -> bool {
     let lock_path = cx.runtime.script_dir.join("rootbeer.lock");
     let Ok(lock) = RootbeerLock::read(lock_path) else {
-        return;
+        return false;
     };
 
     let Ok(package) = lock.package_for_request(request, &ResolveContext::current()) else {
-        return;
+        return false;
     };
 
     register_package_bins(lua, package);
+    true
+}
+
+fn register_catalog_request_bins(lua: &Lua, request: &PackageRequest) -> LuaResult<()> {
+    if request
+        .resolver
+        .as_deref()
+        .is_some_and(|resolver| resolver != "rootbeer")
+    {
+        return Ok(());
+    }
+    let catalog = PackageCatalog::embedded().map_err(LuaError::RuntimeError)?;
+    let Some(package) = catalog.find(&request.name) else {
+        return Ok(());
+    };
+    let version = request.version.as_ref().unwrap_or(&package.default_version);
+    let Some(recipe) = package.versions.get(version) else {
+        return Ok(());
+    };
+    if !recipe.systems.contains(&ResolveContext::current().system) {
+        return Ok(());
+    }
+    for bin in &recipe.bins {
+        lua.app_data_ref::<PackageBins>()
+            .expect("PackageBins not set")
+            .insert(bin.clone(), profile_bin_path(bin));
+    }
+    Ok(())
 }
 
 fn parse_package(cx: &Ctx<'_>, spec: Table) -> LuaResult<LockedPackage> {

@@ -1,0 +1,52 @@
+name: Package catalog
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "crates/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "lua/**"
+      - "scripts/check-packages.py"
+      - ".github/workflows/packages.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "crates/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "lua/**"
+      - "scripts/check-packages.py"
+      - ".github/workflows/packages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: github.event.repository.private == false
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build standalone rb
+        run: cargo build --locked --release --bin rb
+      - name: Validate catalog
+        run: target/release/rb package check
+      - name: Install and check package commands
+        run: python3 scripts/check-packages.py --rb target/release/rb
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

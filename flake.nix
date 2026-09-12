@@ -26,8 +26,8 @@
         let
           craneLib = inputs.crane.mkLib pkgs;
 
-          # Include Rust sources + the lua/ directory needed by build.rs
-          luaFilter = path: _type: builtins.match ".*lua/.*" path != null;
+          # build.rs embeds the stdlib and package definitions.
+          luaFilter = path: _type: builtins.match ".*(lua|packages)/.*" path != null;
           src = lib.cleanSourceWith {
             src = ./.;
             filter = path: type: (luaFilter path type) || (craneLib.filterCargoSources path type);
