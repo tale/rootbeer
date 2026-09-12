@@ -12,6 +12,10 @@ use super::{
 };
 use crate::store::hash_bytes;
 
+mod recipe;
+
+pub use recipe::{CatalogPackage, CatalogRecipe};
+
 include!(concat!(env!("OUT_DIR"), "/package_catalog.rs"));
 
 /// A versioned snapshot of Rootbeer's canonical package definitions.
@@ -20,35 +24,6 @@ include!(concat!(env!("OUT_DIR"), "/package_catalog.rs"));
 pub struct PackageCatalog {
     pub schema: u32,
     pub packages: BTreeMap<String, CatalogPackage>,
-}
-
-/// The upstream identity and approved versions of a canonical package.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CatalogPackage {
-    pub name: String,
-    #[serde(default)]
-    pub aliases: Vec<String>,
-    pub description: String,
-    pub homepage: String,
-    pub default_version: String,
-    pub versions: BTreeMap<String, CatalogRecipe>,
-}
-
-/// An explicit backend request and its platform and command contract.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CatalogRecipe {
-    pub revision: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub build: Option<super::SourceBuild>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub assets: BTreeMap<String, String>,
-    pub systems: Vec<String>,
-    pub bins: Vec<String>,
-    pub checks: Vec<Vec<String>>,
 }
 
 /// Connects canonical identity to the exact backend resolution used to install it.
@@ -155,6 +130,17 @@ impl PackageCatalog {
             if !package.versions.contains_key(&package.default_version) {
                 return Err(format!("{name}: default version has no recipe"));
             }
+            for (system, version) in &package.default_versions {
+                if !package
+                    .versions
+                    .get(version)
+                    .is_some_and(|recipe| recipe.systems.contains(system))
+                {
+                    return Err(format!(
+                        "{name}: default for {system} must reference a supported recipe"
+                    ));
+                }
+            }
             for (version, recipe) in &package.versions {
                 recipe
                     .validate()
@@ -191,72 +177,6 @@ impl PackageCatalog {
     pub fn to_json(&self) -> Result<String, String> {
         self.validate()?;
         serde_json::to_string_pretty(self).map_err(|e| e.to_string())
-    }
-}
-
-impl CatalogRecipe {
-    fn validate(&self) -> Result<(), String> {
-        if self.revision == 0 || self.source.is_some() == self.build.is_some() {
-            return Err("recipe needs a revision and exactly one of source or build".into());
-        }
-        if let Some(build) = &self.build {
-            build.validate()?;
-        }
-        if let Some(source) = &self.source {
-            let request = PackageRequest::parse(source);
-            if !matches!(request.resolver.as_deref(), Some("aqua" | "github"))
-                || request
-                    .version
-                    .as_deref()
-                    .is_none_or(|version| version == "latest")
-                || !request
-                    .name
-                    .split_once('/')
-                    .is_some_and(|(owner, repo)| !owner.is_empty() && !repo.is_empty())
-            {
-                return Err("recipe needs a revision and an exact aqua: or github: source".into());
-            }
-        }
-        let systems: BTreeSet<_> = self.systems.iter().collect();
-        if systems.is_empty()
-            || systems.len() != self.systems.len()
-            || systems.iter().any(|system| {
-                !matches!(
-                    system.as_str(),
-                    "aarch64-macos" | "x86_64-macos" | "aarch64-linux" | "x86_64-linux"
-                )
-            })
-        {
-            return Err("recipe needs unique supported systems".into());
-        }
-        if !self.assets.is_empty()
-            && (self
-                .source
-                .as_deref()
-                .is_none_or(|source| !source.starts_with("github:"))
-                || self.assets.len() != self.systems.len()
-                || self.assets.iter().any(|(system, asset)| {
-                    !self.systems.contains(system) || asset.trim().is_empty()
-                }))
-        {
-            return Err("assets must name one GitHub release asset per declared system".into());
-        }
-        let bins: BTreeSet<_> = self.bins.iter().collect();
-        if bins.is_empty()
-            || bins.len() != self.bins.len()
-            || bins.iter().any(|bin| !valid_name(bin))
-        {
-            return Err("recipe needs unique exported command names".into());
-        }
-        if self.checks.is_empty()
-            || self
-                .checks
-                .iter()
-                .any(|check| check.first().is_none_or(|bin| !bins.contains(bin)))
-        {
-            return Err("checks must execute declared commands".into());
-        }
-        Ok(())
     }
 }
 
@@ -319,7 +239,7 @@ impl PackageResolver for CatalogResolver {
         let version = request
             .version
             .as_deref()
-            .unwrap_or(&package.default_version);
+            .unwrap_or_else(|| package.default_version_for(&context.system));
         let recipe = package.versions.get(version).ok_or_else(|| {
             format!(
                 "{}@{version} is not in the catalog; available: {}",
@@ -479,6 +399,48 @@ mod tests {
         let mut recipe = original;
         recipe.assets.clear();
         assert!(recipe.validate().is_ok());
+    }
+
+    #[test]
+    fn platform_defaults_preserve_exact_requests_and_validate_support() {
+        let mut catalog = PackageCatalog::embedded().unwrap().clone();
+        let package = catalog.packages.get_mut("ripgrep").unwrap();
+        let recipe = package.versions["15.2.0"].clone();
+        package.versions.insert("15.1.0".into(), recipe);
+        package
+            .default_versions
+            .insert("x86_64-macos".into(), "15.1.0".into());
+        catalog.validate().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("rg");
+        std::fs::write(&source, "test executable").unwrap();
+        let resolver = local_resolver(source).with_catalog(&catalog);
+        for (system, request, expected) in [
+            ("x86_64-macos", "rg", "15.1.0"),
+            ("aarch64-macos", "rg", "15.2.0"),
+            ("x86_64-macos", "rg@15.2.0", "15.2.0"),
+        ] {
+            let result = resolver
+                .resolve(
+                    &PackageRequest::parse(request),
+                    &ResolveContext::new(system),
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.package.version, expected);
+        }
+        let package = catalog.packages.get_mut("ripgrep").unwrap();
+        package
+            .default_versions
+            .insert("x86_64-macos".into(), "missing".into());
+        assert!(catalog.validate().unwrap_err().contains("supported recipe"));
+        let package = catalog.packages.get_mut("ripgrep").unwrap();
+        package.default_versions.clear();
+        package
+            .default_versions
+            .insert("unsupported-platform".into(), "15.2.0".into());
+        assert!(catalog.validate().unwrap_err().contains("supported recipe"));
     }
 
     #[test]

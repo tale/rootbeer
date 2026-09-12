@@ -33,7 +33,18 @@ return {
 The filename must match the canonical name. Names and aliases are unique across
 the collection. Versions identify upstream releases; increment `revision` when
 changing the recipe for an existing version. Keep older recipes when introducing
-a new version, and deliberately select `default_version`.
+a new version. Choose the newest upstream release for each platform. Set
+`default_version` to the newest release, with a `default_versions` map for platforms
+whose newest supported release differs:
+
+```lua
+default_version = "0.19.2",
+default_versions = { ["x86_64-macos"] = "0.18.2" },
+```
+
+Each override must reference a recipe supporting that platform. Unversioned requests
+use these defaults; explicit `name@version` requests and existing locks stay exact.
+The map is part of the signed catalog and requires an engine that supports it.
 
 Binary sources must use an explicit `aqua:` or `github:` backend and exact version/tag.
 Prefer upstream GitHub releases when available. The optional `assets` map selects

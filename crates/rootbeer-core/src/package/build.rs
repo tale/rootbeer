@@ -136,7 +136,10 @@ fn find_recipe<'a>(
     let package = catalog
         .find(&request.name)
         .ok_or_else(|| format!("unknown package `{}`", request.name))?;
-    let version = request.version.as_ref().unwrap_or(&package.default_version);
+    let version = request
+        .version
+        .as_deref()
+        .unwrap_or_else(|| package.default_version_for(&ResolveContext::current().system));
     let (version, recipe) = package
         .versions
         .get_key_value(version)

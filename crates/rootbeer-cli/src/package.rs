@@ -119,13 +119,15 @@ fn execute(args: Args) -> Result<(), String> {
     let mut output = io::stdout().lock();
     match args.command {
         Command::List => {
+            let system = rootbeer_core::package::ResolveContext::current().system;
             for package in catalog.packages.values() {
+                let version = package.default_version_for(&system);
                 writeln!(
                     output,
                     "{}\t{}\t{}\t{}",
                     package.name,
-                    package.default_version,
-                    if package.versions[&package.default_version].build.is_some() {
+                    version,
+                    if package.versions[version].build.is_some() {
                         "source"
                     } else {
                         "binary"
@@ -149,6 +151,9 @@ fn execute(args: Args) -> Result<(), String> {
                 package.aliases.join(", ")
             )
             .map_err(|e| e.to_string())?;
+            for (system, version) in &package.default_versions {
+                writeln!(output, "default for {system}: {version}").map_err(|e| e.to_string())?;
+            }
             for (version, recipe) in &package.versions {
                 writeln!(
                     output,

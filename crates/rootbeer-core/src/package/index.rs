@@ -228,7 +228,10 @@ impl PackageResolver for IndexResolver {
             .catalog
             .find(&request.name)
             .ok_or_else(|| format!("unknown index package `{}`", request.name))?;
-        let version = request.version.as_ref().unwrap_or(&entry.default_version);
+        let version = request
+            .version
+            .as_deref()
+            .unwrap_or_else(|| entry.default_version_for(&context.system));
         let key = format!("{}@{version}", entry.name);
         let artifact = index
             .artifacts
@@ -299,6 +302,40 @@ mod tests {
             downloads: DownloadCache::new(root.join("downloads")),
             index: OnceLock::new(),
         }
+    }
+
+    #[test]
+    fn published_index_uses_platform_default_without_changing_exact_pins() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut index, _) = fixture(root.path());
+        let entry = index.catalog.packages.get_mut("new-tool").unwrap();
+        let original = entry.default_version.clone();
+        entry
+            .versions
+            .insert("99.0.0".into(), entry.versions[&original].clone());
+        entry.default_version = "99.0.0".into();
+        entry
+            .default_versions
+            .insert("aarch64-linux".into(), original.clone());
+        index.catalog_sha256 = index.catalog.sha256();
+        let bytes = serde_json::to_vec(&index).unwrap();
+        let path = root.path().join("platform-index.json");
+        fs::write(&path, &bytes).unwrap();
+        let pin = PackageIndexPin {
+            url: format!("file://{}", path.display()),
+            sha256: hash_bytes(&bytes),
+        };
+        let resolver = resolver(&pin, root.path());
+        let context = ResolveContext::new("aarch64-linux");
+        let result = resolver
+            .resolve(&PackageRequest::parse("new-alias"), &context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.package.version, original);
+        assert!(resolver
+            .resolve(&PackageRequest::parse("new-alias@99.0.0"), &context)
+            .unwrap_err()
+            .contains("no published artifact"));
     }
 
     #[test]
