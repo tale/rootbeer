@@ -1,6 +1,7 @@
 use std::io::{self, Read};
 
 const BASE_URL: &str = "https://rootbeer.tale.me/nightly";
+const USER_AGENT: &str = concat!("rootbeer/", env!("CARGO_PKG_VERSION"));
 
 pub fn run() {
     let platform = detect_platform();
@@ -19,6 +20,7 @@ pub fn run() {
 
     let old_version = env!("RB_BUILD_TIMESTAMP");
     let new_version = ureq::get(&version_url)
+        .header("User-Agent", USER_AGENT)
         .call()
         .ok()
         .and_then(|resp| resp.into_body().read_to_string().ok());
@@ -36,6 +38,7 @@ pub fn run() {
 
     println!("downloading rootbeer nightly for {platform}...");
     let archive = match ureq::get(&url)
+        .header("User-Agent", USER_AGENT)
         .call()
         .ok()
         .and_then(|resp| resp.into_body().read_to_vec().ok())

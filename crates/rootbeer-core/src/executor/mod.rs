@@ -47,6 +47,14 @@ pub enum OpResult {
     RemoteUnchanged {
         url: String,
     },
+    PackageRealized {
+        name: String,
+        version: String,
+        store_path: Option<PathBuf>,
+    },
+    PackagePlanned {
+        spec: String,
+    },
 }
 
 /// Receives lifecycle events during pipeline execution.
@@ -64,5 +72,7 @@ pub struct ExecutionReport {
     pub results: Vec<OpResult>,
 }
 
+#[cfg(test)]
 pub use apply::apply;
+pub use apply::{apply_with_options, ApplyOptions};
 pub use dry_run::dry_run;

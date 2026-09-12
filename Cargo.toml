@@ -7,4 +7,4 @@ resolver = "2"
 # Windows is not supported
 
 [workspace.package]
-rust-version = "1.79"
+rust-version = "1.93"

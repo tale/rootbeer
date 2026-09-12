@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::package::{LockedPackage, PackageIntent};
+
 /// Where the bytes for a [`Op::WriteFile`] come from.
 ///
 /// Most writes are `Bytes` — content produced during planning (Lua strings,
@@ -80,5 +82,11 @@ pub enum Op {
     SetRemoteUrl {
         dir: PathBuf,
         url: String,
+    },
+    Package {
+        intent: PackageIntent,
+    },
+    RealizePackage {
+        package: LockedPackage,
     },
 }

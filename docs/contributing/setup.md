@@ -11,7 +11,7 @@ mise install
 
 This installs the pinned versions of:
 
-- **Rust** (with rustfmt, clippy, and rust-analyzer)
+- **Rust 1.93+** (with rustfmt, clippy, and rust-analyzer)
 - **Node + pnpm** (for the docs site)
 - **lua-language-server** (for Lua type checking and doc generation)
 - **lefthook** (git hooks)
