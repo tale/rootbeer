@@ -19,6 +19,12 @@ rootbeer.profile = {}
 --- @type string
 rootbeer.source_dir = ""
 
+--- Reads a UTF-8 file during planning. Relative paths resolve from the source
+--- directory; paths starting with `~` expand to the home directory.
+--- @param path string File to read.
+--- @return string content File contents, including whitespace.
+function rootbeer.read_file(path) end
+
 --- Writes content to a file. Parent directories are created automatically.
 --- Paths starting with `~` are expanded to `$HOME`; relative paths resolve
 --- from the script directory.

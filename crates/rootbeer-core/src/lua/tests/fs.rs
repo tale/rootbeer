@@ -235,3 +235,22 @@ fn path_predicates_return_correct_values() {
         tmp.path(),
     );
 }
+
+#[test]
+fn rb_read_file_preserves_contents_without_writes() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("function.zsh"),
+        "echo hello\n\necho done\n",
+    )
+    .unwrap();
+    let ops = run_in(
+        r#"
+        assert(rb.read_file("function.zsh") == "echo hello\n\necho done\n")
+        local ok, message = pcall(rb.read_file, "missing.zsh")
+        assert(not ok and tostring(message):find("failed to read 'missing.zsh'", 1, true))
+        "#,
+        root.path(),
+    );
+    assert!(ops.is_empty());
+}

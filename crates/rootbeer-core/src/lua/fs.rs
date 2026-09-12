@@ -11,6 +11,11 @@ impl Module for Fs {
 
     fn build(lua: &Lua, t: &Table) -> LuaResult<()> {
         t.set(
+            "read_file",
+            lua.create_function(|lua, path: String| Ctx::from(lua).slurp(&path))?,
+        )?;
+
+        t.set(
             "file",
             lua.create_function(|lua, (path, content): (String, String)| {
                 Ctx::from(lua).write(&path, content);
