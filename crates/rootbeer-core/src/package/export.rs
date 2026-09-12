@@ -9,6 +9,10 @@ use super::lockfile::{PackageLockEntry, RootbeerLock};
 use super::*;
 use crate::store::{hash_bytes, Store};
 
+mod cache;
+
+pub use cache::ExportCache;
+
 /// Builds or imports the current platform's recipes and tests their locked offline outputs.
 /// Exports a platform bundle only after every applicable package passes.
 pub fn export_catalog(
@@ -16,6 +20,17 @@ pub fn export_catalog(
     registry: &str,
     output: &Path,
     jobs: usize,
+) -> Result<(), String> {
+    export_catalog_with_cache(catalog, registry, output, jobs, None)
+}
+
+/// Exports a complete platform bundle, optionally reusing previously verified package results.
+pub fn export_catalog_with_cache(
+    catalog: &PackageCatalog,
+    registry: &str,
+    output: &Path,
+    jobs: usize,
+    cache_options: Option<&ExportCache>,
 ) -> Result<(), String> {
     catalog.validate()?;
     super::ghcr::validate_repository(registry)?;
@@ -26,39 +41,65 @@ pub fn export_catalog(
     let destination = staging.path().join("bundle");
     publication::create_bundle(&destination)?;
     let context = ResolveContext::current();
+    let cache = cache_options.map(cache::Cache::new).transpose()?;
     let mut index = ArtifactIndex {
         schema: 1,
         catalog: catalog.clone(),
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),
     };
-    let mut inputs = if catalog.packages.values().any(|package| {
-        package
-            .versions
-            .values()
-            .any(|recipe| recipe.source.is_some() && recipe.systems.contains(&context.system))
-    }) {
-        PackageResolverInputs::resolve_current().map_err(|e| e.to_string())?
-    } else {
-        PackageResolverInputs::default()
-    };
-    inputs.resolvers.insert(
-        "rootbeer".into(),
-        ResolverInput::Catalog {
-            sha256: catalog.sha256(),
-        },
-    );
-    let mut resolver = super::backend_stack(&inputs).with_implicit_resolver("rootbeer");
-    resolver.push(
-        super::catalog::CatalogResolver::new(&inputs, super::backend_stack(&inputs))
-            .with_catalog(catalog),
-    );
+    let mut backend = None;
     for package in catalog.packages.values() {
         for (version, recipe) in &package.versions {
             if !recipe.systems.contains(&context.system) {
                 continue;
             }
             let key = format!("{}@{version}", package.name);
+            let fingerprint = cache
+                .as_ref()
+                .map(|cache| cache.fingerprint(catalog, &key, &context.system, registry))
+                .transpose()?;
+            if let (Some(cache), Some(fingerprint)) = (&cache, &fingerprint) {
+                if let Some(artifact) =
+                    cache.restore(fingerprint, &key, &context.system, &destination)?
+                {
+                    index
+                        .artifacts
+                        .entry(key.clone())
+                        .or_default()
+                        .insert(context.system.clone(), artifact);
+                    eprintln!("REUSE {key} on {}", context.system);
+                    continue;
+                }
+            }
+            if backend.is_none() {
+                let mut inputs = if catalog.packages.values().any(|package| {
+                    package.versions.values().any(|recipe| {
+                        recipe
+                            .source
+                            .as_deref()
+                            .is_some_and(|source| source.starts_with("aqua:"))
+                            && recipe.systems.contains(&context.system)
+                    })
+                }) {
+                    PackageResolverInputs::resolve_current().map_err(|e| e.to_string())?
+                } else {
+                    PackageResolverInputs::default()
+                };
+                inputs.resolvers.insert(
+                    "rootbeer".into(),
+                    ResolverInput::Catalog {
+                        sha256: catalog.sha256(),
+                    },
+                );
+                let mut resolver = super::backend_stack(&inputs).with_implicit_resolver("rootbeer");
+                resolver.push(
+                    super::catalog::CatalogResolver::new(&inputs, super::backend_stack(&inputs))
+                        .with_catalog(catalog),
+                );
+                backend = Some((inputs, resolver));
+            }
+            let (inputs, resolver) = backend.as_ref().unwrap();
             let work = tempfile::tempdir_in(staging.path()).map_err(|e| e.to_string())?;
             let root = work.path();
             let downloads = root.join("downloads");
@@ -182,6 +223,16 @@ pub fn export_catalog(
                 receipt_bytes,
             )
             .map_err(|e| e.to_string())?;
+            if let (Some(cache), Some(fingerprint)) = (&cache, &fingerprint) {
+                cache.save(
+                    fingerprint,
+                    &key,
+                    &context.system,
+                    catalog,
+                    &artifact,
+                    &destination,
+                )?;
+            }
             index
                 .artifacts
                 .entry(key.clone())

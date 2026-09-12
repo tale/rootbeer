@@ -74,6 +74,20 @@ and the platform index appear only after every applicable recipe passes. Catalog
 `main`, only in public repositories and using standard runners;
 it has no publication permissions or persistent artifact uploads.
 
+## Reusing verified exports
+
+`rb package export --cache <directory> --cache-context <build-environment-id>`
+reuses successful package results when the recipe, transitive dependency recipes,
+platform, registry, engine executable, and declared build environment match.
+Unrelated catalog changes do not rebuild packages. The output remains a complete
+platform index, with original receipts and hash-verified source archives.
+
+Use only trusted caches and identify the OS image and build tools in the context.
+A miss builds and verifies normally; corruption fails the export. `--recheck`
+bypasses reuse and refreshes successful entries. Without cache options, export
+continues to perform full verification. Cache entries do not replace signed indexes
+or provide a hermetic toolchain, and CI still transfers complete platform bundles.
+
 ## Index and provenance
 
 `rb package index` emits deterministic schema-1 JSON. `rb package check` prints

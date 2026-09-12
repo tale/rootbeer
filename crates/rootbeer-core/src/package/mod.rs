@@ -29,7 +29,7 @@ pub use aqua::AquaResolver;
 pub use build::{build_package, BuildArtifact, BuildBackend, SourceBuild};
 pub use bundle::{bundle_artifacts, ArtifactIndex, PublishedArtifact};
 pub use catalog::{CatalogPackage, CatalogProof, CatalogRecipe, PackageCatalog};
-pub use export::export_catalog;
+pub use export::{export_catalog, export_catalog_with_cache, ExportCache};
 pub use github::GitHubResolver;
 pub use index::{PackageIndexPin, PublishedIndexProof};
 pub use inputs::{GitHubRepositoryPin, PackageResolverInputs, ResolverInput};

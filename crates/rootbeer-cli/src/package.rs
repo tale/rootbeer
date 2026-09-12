@@ -40,6 +40,15 @@ enum Command {
         output: PathBuf,
         #[arg(short, long, default_value_t = 2)]
         jobs: usize,
+        /// Reuse verified results from this trusted cache directory
+        #[arg(long, requires = "cache_context")]
+        cache: Option<PathBuf>,
+        /// Identity of the runner image and build toolchain
+        #[arg(long, requires = "cache")]
+        cache_context: Option<String>,
+        /// Rebuild and recheck every package, refreshing cached results
+        #[arg(long, requires = "cache")]
+        recheck: bool,
     },
     /// Merge platform bundles and require complete version/platform coverage
     Assemble {
@@ -202,7 +211,23 @@ fn execute(args: Args) -> Result<(), String> {
             registry,
             output,
             jobs,
-        } => rootbeer_core::package::export_catalog(catalog, &registry, &output, jobs)?,
+            cache,
+            cache_context,
+            recheck,
+        } => {
+            let cache = cache.map(|directory| rootbeer_core::package::ExportCache {
+                directory,
+                context: cache_context.unwrap(),
+                recheck,
+            });
+            rootbeer_core::package::export_catalog_with_cache(
+                catalog,
+                &registry,
+                &output,
+                jobs,
+                cache.as_ref(),
+            )?;
+        }
         Command::Assemble { inputs, output } => {
             rootbeer_core::package::assemble_indexes(&inputs, &output)?
         }

@@ -21,7 +21,7 @@ pub struct ArtifactIndex {
 }
 
 /// Immutable artifact facts and the digest of its accompanying build receipt.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublishedArtifact {
     pub revision: u32,

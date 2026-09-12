@@ -238,10 +238,14 @@ pub fn build_package(
         workspace.path().join("install"),
     );
     let downloads = DownloadCache::new(crate::state_dir().join("downloads"));
-    let mut inputs = if order
-        .iter()
-        .any(|key| find_recipe(catalog, key).is_ok_and(|(_, _, recipe)| recipe.source.is_some()))
-    {
+    let mut inputs = if order.iter().any(|key| {
+        find_recipe(catalog, key).is_ok_and(|(_, _, recipe)| {
+            recipe
+                .source
+                .as_deref()
+                .is_some_and(|source| source.starts_with("aqua:"))
+        })
+    }) {
         PackageResolverInputs::resolve_current().map_err(|e| e.to_string())?
     } else {
         PackageResolverInputs::default()
