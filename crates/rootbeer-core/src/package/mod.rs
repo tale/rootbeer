@@ -32,7 +32,7 @@ pub use index::{PackageIndexPin, PublishedIndexProof};
 pub use inputs::{GitHubRepositoryPin, PackageResolverInputs, ResolverInput};
 pub use intent::{PackageIntent, PackageLockInput};
 pub use lock::{LockBuildError, PackageLockBuilder, PackageRealizerBackend};
-pub use official::{IndexSelection, OfficialIndexSource};
+pub use official::{sign_index, IndexSelection, OfficialIndexSource};
 pub use realize::{PackageRealizer, RealizedPackage};
 pub use resolve::{
     ArtifactProof, DependencyProof, ExternalManagerProof, GitReleaseProof, MetadataClosureProof,

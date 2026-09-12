@@ -1226,6 +1226,7 @@ dependencies = [
  "clap",
  "owo-colors",
  "rootbeer-core",
+ "serde_json",
  "time",
  "ureq",
  "zip",

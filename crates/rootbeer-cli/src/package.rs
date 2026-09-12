@@ -32,6 +32,28 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Validate an artifact index, optionally requiring every declared platform
+    VerifyIndex {
+        index: PathBuf,
+        #[arg(long)]
+        complete: bool,
+    },
+    /// Sign a complete artifact index with an Ed25519 PKCS#8 DER key
+    SignIndex {
+        index: PathBuf,
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        sequence: u64,
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long)]
+        public_key: String,
+        #[arg(long)]
+        previous: Option<PathBuf>,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Compile a trusted source recipe into an installable local artifact
     Build {
         name: String,
@@ -135,6 +157,48 @@ fn execute(args: Args) -> Result<(), String> {
                 destination.join("index.json").display()
             )
             .map_err(|e| e.to_string())?;
+        }
+        Command::VerifyIndex { index, complete } => {
+            let index: rootbeer_core::package::ArtifactIndex =
+                serde_json::from_slice(&std::fs::read(index).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            if complete {
+                index.validate_complete()?;
+            } else {
+                index.validate()?;
+            }
+            writeln!(output, "verified artifact index").map_err(|e| e.to_string())?;
+        }
+        Command::SignIndex {
+            index,
+            url,
+            sequence,
+            key,
+            public_key,
+            previous,
+            output: destination,
+        } => {
+            let bytes = std::fs::read(index).map_err(|e| e.to_string())?;
+            let key = std::fs::read(key).map_err(|e| e.to_string())?;
+            let previous = previous
+                .map(std::fs::read)
+                .transpose()
+                .map_err(|e| e.to_string())?;
+            let manifest = rootbeer_core::package::sign_index(
+                &bytes,
+                &url,
+                sequence,
+                &key,
+                &public_key,
+                previous.as_deref(),
+            )?;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(destination)
+                .map_err(|e| e.to_string())?;
+            file.write_all(&manifest).map_err(|e| e.to_string())?;
+            file.sync_all().map_err(|e| e.to_string())?;
         }
         Command::Build {
             name,

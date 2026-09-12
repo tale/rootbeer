@@ -32,6 +32,10 @@ jobs:
         id: diff
         shell: bash
         run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "source=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           base='${{ steps.nightly.outputs.sha }}'
 
           if [[ -z "$base" ]]; then
@@ -39,7 +43,7 @@ jobs:
             exit 0
           fi
 
-          if git diff --quiet "$base" HEAD -- crates lua Cargo.toml Cargo.lock; then
+          if git diff --quiet "$base" HEAD -- crates lua packages Cargo.toml Cargo.lock .github/workflows/deploy.yml; then
             echo "source=false" >> "$GITHUB_OUTPUT"
           else
             echo "source=true" >> "$GITHUB_OUTPUT"
@@ -87,8 +91,17 @@ jobs:
           key: cargo-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          if [ -z "$ROOTBEER_INDEX_URL" ] && [ -z "$ROOTBEER_INDEX_PUBLIC_KEY" ]; then
+            unset ROOTBEER_INDEX_URL ROOTBEER_INDEX_PUBLIC_KEY
+          else
+            [[ "$ROOTBEER_INDEX_URL" == https://* ]]
+            [[ "$ROOTBEER_INDEX_PUBLIC_KEY" =~ ^[0-9a-f]{64}$ ]]
+          fi
+          cargo build --locked --release --target ${{ matrix.target }}
         env:
+          ROOTBEER_INDEX_URL: ${{ vars.ROOTBEER_INDEX_URL }}
+          ROOTBEER_INDEX_PUBLIC_KEY: ${{ vars.ROOTBEER_INDEX_PUBLIC_KEY }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
           RB_BUILD_TIMESTAMP: ${{ needs.changes.outputs.timestamp }}

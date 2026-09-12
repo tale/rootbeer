@@ -51,8 +51,14 @@ and snapshot hash. A corrupt cache fails rather than silently losing its rollbac
 history. Sequence checks protect relative to retained local history; fresh installs
 have no earlier sequence to compare, and the manifest has no expiry policy yet.
 
-The GitHub publisher, signing-key provisioning, and release configuration remain
-the deployment step. No private signing key belongs in this repository or binary.
+The separate `tale/rootbeer-index` repository contains native recipe checks,
+complete-platform assembly, GHCR upload, and signed Pages publication. The signer
+is `rb package sign-index`; `rb package verify-index --complete` checks coverage.
+Signing-key provisioning and release configuration remain the deployment step.
+Set the `ROOTBEER_INDEX_URL` and `ROOTBEER_INDEX_PUBLIC_KEY` repository variables
+for Rootbeer's nightly deployment, then manually dispatch Deploy to rebuild with
+the new public trust configuration. Empty variables keep the embedded fallback.
+Package publication never creates releases in the Rootbeer repository. No private signing key belongs in this repository or binary.
 
 ## Rootbeer Distribution
 

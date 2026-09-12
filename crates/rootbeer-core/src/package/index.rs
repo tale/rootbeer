@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use super::download::DownloadCache;
 use super::{
-    ArchiveFormat, ArtifactIndex, LockedInstall, LockedSource, PackageRequest, PackageResolution,
-    PackageResolver, ResolutionProof, ResolveContext,
+    ArtifactIndex, LockedInstall, LockedSource, PackageRequest, PackageResolution, PackageResolver,
+    ResolutionProof, ResolveContext,
 };
 
 /// An explicitly trusted index URL and SHA-256 of its exact JSON bytes.
@@ -62,6 +62,26 @@ pub(super) fn validate_https(url: &str) -> Result<(), String> {
 }
 
 impl ArtifactIndex {
+    /// Requires an artifact for every declared version and platform before publication.
+    pub fn validate_complete(&self) -> Result<(), String> {
+        self.validate()?;
+        for package in self.catalog.packages.values() {
+            for (version, recipe) in &package.versions {
+                let key = format!("{}@{version}", package.name);
+                for system in &recipe.systems {
+                    if !self
+                        .artifacts
+                        .get(&key)
+                        .is_some_and(|systems| systems.contains_key(system))
+                    {
+                        return Err(format!("incomplete publication: missing {key} on {system}"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validates the catalog and every advertised artifact without executing recipes.
     pub fn validate(&self) -> Result<(), String> {
         self.catalog.validate()?;
@@ -100,18 +120,32 @@ impl ArtifactIndex {
                         .output_sha256
                         .as_deref()
                         .is_none_or(|hash| !is_sha256(hash))
-                    || package.install
-                        != (LockedInstall::Archive {
-                            format: ArchiveFormat::TarGz,
-                            strip_prefix: None,
-                        })
                     || package.provides.bins.len() != recipe.bins.len()
-                    || recipe.bins.iter().any(|bin| {
-                        package.provides.bins.get(bin)
-                            != Some(&std::path::PathBuf::from("bin").join(bin))
-                    })
+                    || recipe
+                        .bins
+                        .iter()
+                        .any(|bin| !package.provides.bins.contains_key(bin))
                 {
                     return Err(format!("{key}: invalid platform artifact contract"));
+                }
+                for path in package.provides.bins.values() {
+                    super::realize::validate_relative_path("index command", path)
+                        .map_err(|e| e.to_string())?;
+                }
+                match &package.install {
+                    LockedInstall::Archive { strip_prefix, .. } => {
+                        if let Some(path) = strip_prefix {
+                            super::realize::validate_relative_path("index archive prefix", path)
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                    LockedInstall::Binary { path } => {
+                        super::realize::validate_relative_path("index binary", path)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    LockedInstall::Directory { .. } => {
+                        return Err("index artifacts cannot install local directories".into())
+                    }
                 }
                 let LockedSource::Url { url, sha256 } = &package.source else {
                     return Err(format!(
