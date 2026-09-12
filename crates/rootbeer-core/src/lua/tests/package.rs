@@ -111,12 +111,13 @@ fn rb_env_export_writes_package_env_file_and_returns_path() {
     let result: String = vm.lua.globals().get("result").unwrap();
     let ops = super::super::test_support::drain(vm);
 
-    let [Op::WriteFile { path, content }] = ops.as_slice() else {
+    let [Op::WriteFile { path, source }] = ops.as_slice() else {
         panic!("expected one WriteFile op, got {ops:?}");
     };
 
     assert_eq!(result, path.to_string_lossy());
     assert!(path.ends_with("profiles/default/current/env.sh"));
+    let content = source.as_str().expect("inline package environment");
     assert!(content.contains("_rootbeer_package_bin="));
     assert!(content.contains("export PATH=\"$_rootbeer_package_bin:$PATH\""));
 }

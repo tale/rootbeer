@@ -10,7 +10,7 @@ use crate::package::{
     lockfile::RootbeerLock, profile as package_profile, ArchiveFormat, LockedInstall,
     LockedPackage, LockedSource, PackageIntent, PackageRequest, Provides, ResolveContext,
 };
-use crate::plan::Op;
+use crate::plan::{Op, WriteSource};
 
 pub(crate) struct Package;
 
@@ -97,7 +97,7 @@ impl Module for Package {
                 let path = package_profile::env_path();
                 Ctx::from(lua).push(Op::WriteFile {
                     path: path.clone(),
-                    content: package_profile::env_contents(),
+                    source: WriteSource::text(package_profile::env_contents()),
                 });
 
                 Ok(path.to_string_lossy().to_string())
