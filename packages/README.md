@@ -45,14 +45,13 @@ target/release/rb package check
 target/release/rb package list
 target/release/rb package show rg
 target/release/rb package index > /tmp/rootbeer-index.json
-python3 scripts/check-packages.py --rb target/release/rb
+target/release/rb package --catalog packages export --registry tale/rootbeer-index --output /tmp/rootbeer-export
 ```
 
-The checks use temporary home/state directories, execute installed commands, and
-recreate their store and profile offline from cached downloads and an unchanged
-lockfile. They require network
-access for initial resolution and downloads. `--package ripgrep` selects one
-package. Catalog CI runs on relevant pushes to `main` and pull requests targeting
+The native exporter uses temporary stores and profiles, executes declared commands,
+and recreates outputs offline from cached downloads and unchanged locked facts.
+It requires network access for initial resolution and downloads. Exported receipts
+and the platform index appear only after every applicable recipe passes. Catalog CI runs on relevant pushes to `main` and pull requests targeting
 `main`, only in public repositories and using standard runners;
 it has no publication permissions or persistent artifact uploads.
 

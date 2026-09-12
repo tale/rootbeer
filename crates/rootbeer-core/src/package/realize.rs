@@ -52,7 +52,7 @@ impl PackageRealizer {
         Self::with_dirs_and_offline(store, downloads, temp_dir, false)
     }
 
-    fn with_dirs_and_offline(
+    pub(super) fn with_dirs_and_offline(
         store: Store,
         downloads: impl Into<PathBuf>,
         temp_dir: impl Into<PathBuf>,

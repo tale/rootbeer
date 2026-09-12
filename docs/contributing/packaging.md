@@ -52,8 +52,11 @@ history. Sequence checks protect relative to retained local history; fresh insta
 have no earlier sequence to compare, and the manifest has no expiry policy yet.
 
 The separate `tale/rootbeer-index` repository contains native recipe checks,
-complete-platform assembly, GHCR upload, and signed Pages publication. The signer
-is `rb package sign-index`; `rb package verify-index --complete` checks coverage.
+complete-platform assembly, GHCR upload, and signed Pages publication. Package operations run in Rust: `rb package export` builds and tests native
+outputs, `rb package assemble` checks and merges platform bundles, and
+`rb package publish` uploads source blobs with ORAS and prepares signed Pages
+snapshots. CI owns authentication, Git commits, and Pages deployment. The lower-level
+`sign-index` and `verify-index --complete` commands remain available.
 Signing-key provisioning and release configuration remain the deployment step.
 Set the `ROOTBEER_INDEX_URL` and `ROOTBEER_INDEX_PUBLIC_KEY` repository variables
 for Rootbeer's nightly deployment, then manually dispatch Deploy to rebuild with

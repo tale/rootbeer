@@ -501,7 +501,7 @@ fn compile(
     Ok(artifact)
 }
 
-fn run(
+pub(super) fn run(
     args: &[String],
     source: &Path,
     environment: &BTreeMap<&str, String>,

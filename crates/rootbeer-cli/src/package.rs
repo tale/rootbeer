@@ -32,6 +32,41 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Build, check, and export the current platform's package recipes
+    Export {
+        #[arg(long)]
+        registry: String,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(short, long, default_value_t = 2)]
+        jobs: usize,
+    },
+    /// Merge platform bundles and require complete version/platform coverage
+    Assemble {
+        #[arg(long)]
+        inputs: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Upload GHCR blobs and prepare the signed Pages directory (requires ORAS)
+    Publish {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        site: PathBuf,
+        #[arg(long)]
+        site_url: String,
+        #[arg(long)]
+        registry: String,
+        #[arg(long)]
+        repository_url: String,
+        #[arg(long)]
+        sequence: u64,
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long)]
+        public_key: String,
+    },
     /// Validate an artifact index, optionally requiring every declared platform
     VerifyIndex {
         index: PathBuf,
@@ -157,6 +192,35 @@ fn execute(args: Args) -> Result<(), String> {
                 destination.join("index.json").display()
             )
             .map_err(|e| e.to_string())?;
+        }
+        Command::Export {
+            registry,
+            output,
+            jobs,
+        } => rootbeer_core::package::export_catalog(catalog, &registry, &output, jobs)?,
+        Command::Assemble { inputs, output } => {
+            rootbeer_core::package::assemble_indexes(&inputs, &output)?
+        }
+        Command::Publish {
+            bundle,
+            site,
+            site_url,
+            registry,
+            repository_url,
+            sequence,
+            key,
+            public_key,
+        } => {
+            rootbeer_core::package::publish_index(&rootbeer_core::package::PublishOptions {
+                bundle: &bundle,
+                site: &site,
+                site_url: &site_url,
+                registry: &registry,
+                repository_url: &repository_url,
+                sequence,
+                key: &key,
+                public_key: &public_key,
+            })?;
         }
         Command::VerifyIndex { index, complete } => {
             let index: rootbeer_core::package::ArtifactIndex =

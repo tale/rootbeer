@@ -9,7 +9,6 @@ on:
       - "Cargo.lock"
       - "Cargo.toml"
       - "lua/**"
-      - "scripts/check-packages.py"
       - ".github/workflows/packages.yml"
   pull_request:
     branches: [main]
@@ -19,7 +18,6 @@ on:
       - "Cargo.lock"
       - "Cargo.toml"
       - "lua/**"
-      - "scripts/check-packages.py"
       - ".github/workflows/packages.yml"
   workflow_dispatch:
 
@@ -49,6 +47,6 @@ jobs:
       - name: Validate catalog
         run: target/release/rb package check
       - name: Install and check package commands
-        run: python3 scripts/check-packages.py --rb target/release/rb
+        run: target/release/rb package --catalog packages export --registry tale/rootbeer-index --output result
         env:
           GITHUB_TOKEN: ${{ github.token }}
