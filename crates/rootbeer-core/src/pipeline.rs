@@ -211,7 +211,7 @@ impl PlannedPipeline {
         }
 
         let inputs = match self.opts.package_lock {
-            PackageLockMode::Update if self.has_package_requests() => {
+            PackageLockMode::Update if self.needs_aqua_registry() => {
                 PackageResolverInputs::resolve_current()?
             }
             PackageLockMode::Update => PackageResolverInputs::default(),
@@ -220,7 +220,7 @@ impl PlannedPipeline {
                 .and_then(|lock| (!lock.inputs.is_empty()).then(|| lock.inputs.clone()))
                 .map(Ok)
                 .unwrap_or_else(|| {
-                    if self.has_package_requests() {
+                    if self.needs_aqua_registry() {
                         PackageResolverInputs::resolve_current()
                     } else {
                         Ok(PackageResolverInputs::default())
@@ -247,13 +247,13 @@ impl PlannedPipeline {
         Ok(actual == expected)
     }
 
-    fn has_package_requests(&self) -> bool {
+    fn needs_aqua_registry(&self) -> bool {
         self.ops.iter().any(|op| {
             matches!(
                 op,
                 Op::Package {
-                    intent: PackageIntent::Request(_)
-                }
+                    intent: PackageIntent::Request(request)
+                } if request.resolver.as_deref().is_none_or(|resolver| resolver == "aqua")
             )
         })
     }

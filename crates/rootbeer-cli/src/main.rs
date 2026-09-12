@@ -38,6 +38,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Show license notices for package backend libraries
+    Licenses,
+
     /// Create or load a rootbeer configuration in the source directory
     Init(init::Args),
 
@@ -61,6 +64,12 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Licenses => print!(
+            "aqua-registry (mise)\n{}\nlzma-rust2\n{}\nzip\n{}",
+            include_str!("../../../licenses/aqua-registry.txt"),
+            include_str!("../../../licenses/lzma-rust2.txt"),
+            include_str!("../../../licenses/zip.txt")
+        ),
         Commands::Init(args) => init::run(args),
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),

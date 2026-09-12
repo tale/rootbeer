@@ -15,6 +15,10 @@ pub struct PackageRequest {
     pub name: String,
     pub version: Option<String>,
     pub resolver: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub bins: BTreeMap<String, std::path::PathBuf>,
 }
 
 impl DeterministicInput for PackageRequest {
@@ -43,6 +47,8 @@ impl PackageRequest {
             name: name.into(),
             version: None,
             resolver: None,
+            asset: None,
+            bins: BTreeMap::new(),
         }
     }
 
@@ -65,6 +71,8 @@ impl PackageRequest {
             name,
             version,
             resolver,
+            asset: None,
+            bins: BTreeMap::new(),
         }
     }
 
@@ -245,7 +253,7 @@ pub enum ResolveError {
         available: Vec<String>,
     },
     NotFound {
-        request: PackageRequest,
+        request: Box<PackageRequest>,
         attempts: Vec<ResolveAttempt>,
     },
 }
@@ -363,12 +371,12 @@ impl ResolverStack {
             return match resolver.resolve(request, context) {
                 Ok(Some(package)) => Ok(package),
                 Ok(None) => Err(ResolveError::NotFound {
-                    request: request.clone(),
+                    request: Box::new(request.clone()),
                     attempts: vec![ResolveAttempt::not_found(resolver.name())],
                 }),
 
                 Err(reason) => Err(ResolveError::NotFound {
-                    request: request.clone(),
+                    request: Box::new(request.clone()),
                     attempts: vec![ResolveAttempt::failed(resolver.name(), reason)],
                 }),
             };
@@ -384,7 +392,7 @@ impl ResolverStack {
         }
 
         Err(ResolveError::NotFound {
-            request: request.clone(),
+            request: Box::new(request.clone()),
             attempts,
         })
     }

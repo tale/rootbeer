@@ -2,13 +2,16 @@
 name = "rootbeer-core"
 version = "0.1.0"
 edition = "2021"
+rust-version.workspace = true
 
 [features]
 default = ["embedded-stdlib"]
 embedded-stdlib = []
 
 [dependencies]
+aqua-registry = "=2026.9.1"
 flate2 = "1"
+lzma-rust2 = { version = "0.20", default-features = false, features = ["std", "xz"] }
 libc = "0.2.182"
 mlua = { version = "0.11.5", features = ["luau-jit", "serialize"] }
 serde = { version = "1", features = ["derive"] }
@@ -20,5 +23,7 @@ sha2 = "0.10"
 tar = "0.4"
 tempfile = "3"
 ureq = "3"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+lzma-rust2 = { version = "0.20", default-features = false, features = ["std", "xz", "encoder"] }

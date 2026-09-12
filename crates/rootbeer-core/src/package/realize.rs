@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 
 use flate2::read::GzDecoder;
@@ -76,6 +77,18 @@ impl PackageRealizer {
         let source = self.fetch_source(&package.source)?;
         let extracted;
         let install_source = match (&source, &package.install) {
+            (SourceMaterial::File(source), LockedInstall::Binary { path }) => {
+                validate_relative_path("binary path", path)?;
+                fs::create_dir_all(&self.temp_dir)?;
+                extracted = tempfile::Builder::new()
+                    .prefix("realize-")
+                    .tempdir_in(&self.temp_dir)?;
+                let dest = extracted.path().join(path);
+                fs::create_dir_all(dest.parent().unwrap())?;
+                fs::copy(source, &dest)?;
+                fs::set_permissions(dest, fs::Permissions::from_mode(0o755))?;
+                extracted.path()
+            }
             (SourceMaterial::Tree(path), LockedInstall::Directory { .. }) => path.as_path(),
             (SourceMaterial::File(path), LockedInstall::Archive { format, .. }) => {
                 fs::create_dir_all(&self.temp_dir)?;
@@ -86,10 +99,13 @@ impl PackageRealizer {
                 extracted.path()
             }
 
-            (SourceMaterial::Tree(_), LockedInstall::Archive { .. }) => {
+            (
+                SourceMaterial::Tree(_),
+                LockedInstall::Archive { .. } | LockedInstall::Binary { .. },
+            ) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "archive install requires a file or URL source",
+                    "archive or binary install requires a file or URL source",
                 ));
             }
 
@@ -103,6 +119,14 @@ impl PackageRealizer {
 
         let install_root = install_root(install_source, &package.install)?;
         validate_provides(&install_root, &package.provides)?;
+        if matches!(source, SourceMaterial::File(_)) {
+            for relative in package.provides.bins.values() {
+                fs::set_permissions(
+                    install_root.join(relative),
+                    fs::Permissions::from_mode(0o755),
+                )?;
+            }
+        }
 
         let store_entry =
             self.store
@@ -222,6 +246,7 @@ enum SourceMaterial {
 
 fn install_root(source_root: &Path, install: &LockedInstall) -> io::Result<PathBuf> {
     match install {
+        LockedInstall::Binary { .. } => Ok(source_root.to_path_buf()),
         LockedInstall::Directory { strip_prefix } | LockedInstall::Archive { strip_prefix, .. } => {
             let root = match strip_prefix {
                 Some(prefix) => {
@@ -260,25 +285,63 @@ fn verify_file_hash(path: &Path, sha256: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn extract_archive(archive: &Path, format: ArchiveFormat, dest: &Path) -> io::Result<()> {
-    match format {
-        ArchiveFormat::TarGz => {
-            let file = fs::File::open(archive)?;
-            let decoder = GzDecoder::new(file);
-            let mut archive = tar::Archive::new(decoder);
+pub(super) fn extract_archive(
+    archive: &Path,
+    format: ArchiveFormat,
+    dest: &Path,
+) -> io::Result<()> {
+    let file = fs::File::open(archive)?;
+    let reader: Box<dyn io::Read> = match format {
+        ArchiveFormat::TarGz => Box::new(GzDecoder::new(file)),
+        ArchiveFormat::TarXz => Box::new(lzma_rust2::XzReader::new(file, true)),
+        ArchiveFormat::Zip => return extract_zip(file, dest),
+    };
+    let mut archive = tar::Archive::new(reader);
 
-            for entry in archive.entries()? {
-                let mut entry = entry?;
-                if !entry.unpack_in(dest)? {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "archive entry escapes extraction directory",
-                    ));
-                }
-            }
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        if !entry.unpack_in(dest)? {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "archive entry escapes extraction directory",
+            ));
         }
     }
 
+    Ok(())
+}
+
+fn extract_zip(file: fs::File, dest: &Path) -> io::Result<()> {
+    let mut archive = zip::ZipArchive::new(file)?;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let relative = entry.enclosed_name().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "zip entry escapes extraction directory",
+            )
+        })?;
+        let mode = entry.unix_mode().unwrap_or(0o644);
+        if mode & 0o170000 == 0o120000 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "zip symlinks are unsupported",
+            ));
+        }
+        let path = dest.join(relative);
+        if entry.is_dir() {
+            fs::create_dir_all(path)?;
+            continue;
+        }
+
+        fs::create_dir_all(path.parent().unwrap())?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        io::copy(&mut entry, &mut file)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode & 0o777))?;
+    }
     Ok(())
 }
 
@@ -286,11 +349,12 @@ fn extract_archive(archive: &Path, format: ArchiveFormat, dest: &Path) -> io::Re
 /// validates that the provided binaries exist in the install root and have
 /// valid relative paths.
 fn validate_provides(root: &Path, provides: &Provides) -> io::Result<()> {
+    let canonical_root = root.canonicalize()?;
     for (name, rel) in &provides.bins {
-        if name.is_empty() {
+        if name.is_empty() || name == "." || name == ".." || name.contains('/') {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "provided binary name cannot be empty",
+                "provided binary name must be a single filename",
             ));
         }
 
@@ -306,12 +370,18 @@ fn validate_provides(root: &Path, provides: &Provides) -> io::Result<()> {
                 ),
             ));
         }
+        if !path.canonicalize()?.starts_with(&canonical_root) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("provided binary `{name}` escapes the install root"),
+            ));
+        }
     }
 
     Ok(())
 }
 
-fn validate_relative_path(label: &str, path: &Path) -> io::Result<()> {
+pub(super) fn validate_relative_path(label: &str, path: &Path) -> io::Result<()> {
     let mut has_component = false;
     for component in path.components() {
         match component {
@@ -424,6 +494,117 @@ mod tests {
             },
             output_sha256: None,
         }
+    }
+
+    #[test]
+    fn realizes_raw_binary_and_reuses_it_offline() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("download");
+        fs::write(&file, b"#!/bin/sh\n").unwrap();
+        let mut package = archive_package(&file, hash_file(&file).unwrap());
+        package.install = LockedInstall::Binary {
+            path: PathBuf::from("bin/demo"),
+        };
+        let realized = realizer(root.path()).realize(&package).unwrap();
+        assert_eq!(
+            fs::read(realized.bins.get("demo").unwrap()).unwrap(),
+            b"#!/bin/sh\n"
+        );
+        package.output_sha256 = Some(realized.store_entry.output_sha256.clone());
+        fs::remove_file(file).unwrap();
+        assert_eq!(
+            realizer(root.path()).realize(&package).unwrap().store_entry,
+            realized.store_entry
+        );
+    }
+
+    #[test]
+    fn realizes_tar_xz_without_external_decoder() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("demo.tar.xz");
+        let encoder =
+            lzma_rust2::XzWriter::new(fs::File::create(&path).unwrap(), Default::default())
+                .unwrap();
+        let mut tar = tar::Builder::new(encoder);
+        let body = b"#!/bin/sh\n";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(body.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        tar.append_data(&mut header, "bin/demo", &body[..]).unwrap();
+        tar.into_inner().unwrap().finish().unwrap();
+        let mut package = archive_package(&path, hash_file(&path).unwrap());
+        package.install = LockedInstall::Archive {
+            format: ArchiveFormat::TarXz,
+            strip_prefix: None,
+        };
+        let realized = realizer(root.path()).realize(&package).unwrap();
+        assert_eq!(fs::read(&realized.bins["demo"]).unwrap(), body);
+    }
+
+    #[test]
+    fn realizes_zip_and_marks_declared_binary_executable() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("demo.zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+        zip.start_file(
+            "bin/demo",
+            zip::write::SimpleFileOptions::default().unix_permissions(0o644),
+        )
+        .unwrap();
+        io::Write::write_all(&mut zip, b"#!/bin/sh\n").unwrap();
+        zip.finish().unwrap();
+        let mut package = archive_package(&path, hash_file(&path).unwrap());
+        package.install = LockedInstall::Archive {
+            format: ArchiveFormat::Zip,
+            strip_prefix: None,
+        };
+        let realized = realizer(root.path()).realize(&package).unwrap();
+        assert_eq!(
+            fs::metadata(&realized.bins["demo"])
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+    }
+
+    #[test]
+    fn rejects_zip_traversal_and_symlinks() {
+        for name in ["../escape", "/absolute"] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("bad.zip");
+            let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            io::Write::write_all(&mut zip, b"bad").unwrap();
+            zip.finish().unwrap();
+            assert!(extract_archive(&path, ArchiveFormat::Zip, &root.path().join("out")).is_err());
+        }
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("link.zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+        zip.add_symlink("link", "/tmp", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.finish().unwrap();
+        assert!(extract_archive(&path, ArchiveFormat::Zip, &root.path().join("out")).is_err());
+    }
+
+    #[test]
+    fn rejects_binary_symlink_outside_package() {
+        let root = tempfile::tempdir().unwrap();
+        let source = source_tree();
+        let outside = root.path().join("outside");
+        fs::write(&outside, b"outside").unwrap();
+        fs::remove_file(source.path().join("pkg/bin/demo")).unwrap();
+        std::os::unix::fs::symlink(outside, source.path().join("pkg/bin/demo")).unwrap();
+        let package = package(source.path(), hash_tree(source.path()).unwrap());
+        assert!(realizer(root.path())
+            .realize(&package)
+            .unwrap_err()
+            .to_string()
+            .contains("escapes"));
     }
 
     #[test]

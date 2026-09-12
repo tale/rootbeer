@@ -64,6 +64,9 @@ pub enum LockedSource {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LockedInstall {
+    /// Install a single executable at a relative path in the output tree.
+    Binary { path: PathBuf },
+
     /// Install a directory tree from the source. `strip_prefix`, when present,
     /// selects a relative subdirectory from the source as the output root.
     Directory { strip_prefix: Option<PathBuf> },
@@ -79,6 +82,8 @@ pub enum LockedInstall {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArchiveFormat {
     TarGz,
+    TarXz,
+    Zip,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

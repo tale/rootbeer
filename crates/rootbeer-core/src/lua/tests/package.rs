@@ -120,3 +120,32 @@ fn rb_env_export_writes_package_env_file_and_returns_path() {
     assert!(content.contains("_rootbeer_package_bin="));
     assert!(content.contains("export PATH=\"$_rootbeer_package_bin:$PATH\""));
 }
+
+#[test]
+fn github_options_remain_declarative() {
+    let ops = run(r#"
+        rb.package("github:owner/tool@v1", {
+            asset = "tool-darwin-arm64.tar.gz",
+            bins = { tool = "release/bin/tool" },
+        })
+    "#);
+    let [Op::Package {
+        intent: PackageIntent::Request(request),
+    }] = ops.as_slice()
+    else {
+        panic!("expected a package request");
+    };
+    assert_eq!(request.asset.as_deref(), Some("tool-darwin-arm64.tar.gz"));
+    assert_eq!(request.bins["tool"], PathBuf::from("release/bin/tool"));
+}
+
+#[test]
+fn accepts_raw_and_additional_archive_formats() {
+    let ops = run(r#"
+        for _, install in ipairs({ { binary = "bin/demo" }, { archive = "zip" }, { archive = "tar.xz" } }) do
+            rb.package({ name = "demo", version = "1", source = { file = "asset", sha256 = "hash" },
+                install = install, bins = { demo = "bin/demo" } })
+        end
+    "#);
+    assert_eq!(ops.len(), 3);
+}

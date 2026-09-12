@@ -16,9 +16,63 @@ zsh.config({
 })
 ```
 
-Package resolver support is currently Aqua-backed. Prefer explicit versions when
-you know what you want; unversioned requests follow the locked resolver input
-until you update the lock.
+Rootbeer supports `aqua:` registry recipes and `github:` release assets without
+requiring mise or Aqua to be installed. Prefer explicit versions when you know
+what you want. Unversioned Aqua requests use the pinned registry's package index;
+unversioned GitHub requests select the latest published stable release. Both
+reuse `rootbeer.lock` until you update it.
+
+## Choose a Backend
+
+Use Aqua when the registry has a recipe. Rootbeer uses mise's `aqua-registry`
+library for templates, version constraints, and platform overrides:
+
+```lua
+rb.package("aqua:junegunn/fzf")
+rb.package("aqua:cli/cli")
+rb.package("aqua:neovim/neovim")
+rb.package("aqua:1password/cli")
+```
+
+Use GitHub for projects publishing binaries directly. Explicit versions are exact
+release tags, including a leading `v` when the upstream tag uses one:
+
+```lua
+rb.package("github:BurntSushi/ripgrep@15.2.0")
+```
+
+Rootbeer selects assets matching the OS and architecture. Ambiguous matches
+fail instead of guessing (for example, a Linux release with both glibc and musl
+builds). Supply an exact filename and, optionally, the binaries to expose:
+
+```lua
+rb.package("github:BurntSushi/ripgrep@15.2.0", {
+    asset = "ripgrep-15.2.0-aarch64-apple-darwin.tar.gz",
+    bins = { rg = "ripgrep-15.2.0-aarch64-apple-darwin/rg" },
+})
+```
+
+Without `bins`, GitHub archives expose regular executable files under their
+original filenames; duplicate names fail. Raw assets use the repository name as
+the command name. Overrides are part of the locked request.
+
+Both backends support tar.gz, tar.xz, ZIP, and raw executable downloads. Archive
+contents stay together in the store so accompanying runtime files are preserved.
+ZIP symlinks and Aqua recipes requiring builds, custom installation, or Rosetta
+are currently unsupported.
+
+## Replacing Homebrew
+
+These backends cover tools with self-contained upstream binaries, such as
+chezmoi, fzf, gh, delta, git-lfs, jq, lsd, mise, mkcert, Neovim, rage, ripgrep,
+and the 1Password CLI. Declare them with `rb.package`, then source
+`rb.env_export("sh")` from your shell configuration as shown above.
+
+Aqua and GitHub release downloads do not replace Homebrew's dependency solving,
+services, cask installers, or Mac App Store handling. Formulae that require
+source builds or shared libraries need another installation strategy. Keep
+those entries in [the brew module](/modules/brew) until an alternative exists.
+Declaring a package in Rootbeer does not uninstall its Homebrew copy.
 
 ## Apply and Commit
 
@@ -80,3 +134,13 @@ backend:
 ```lua
 rb.package("aqua:cli/cli@v2.47.0")
 ```
+
+## Verification
+
+Every downloaded artifact is hashed when creating the lock, and subsequent
+installs verify that hash. The GitHub backend also checks an asset's SHA-256
+digest when GitHub supplies one. Aqua signature, attestation, and checksum-file
+verification are not yet implemented; hashing the first download records its
+contents, but does not independently authenticate that initial download.
+
+License notices for the package backend libraries are available with `rb licenses`.

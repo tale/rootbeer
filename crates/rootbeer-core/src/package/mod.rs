@@ -7,6 +7,7 @@
 
 mod aqua;
 mod download;
+mod github;
 mod inputs;
 mod intent;
 mod lock;
@@ -17,6 +18,7 @@ mod resolve;
 mod spec;
 
 pub use aqua::AquaResolver;
+pub use github::GitHubResolver;
 pub use inputs::{GitHubRepositoryPin, PackageResolverInputs, ResolverInput};
 pub use intent::{PackageIntent, PackageLockInput};
 pub use lock::{LockBuildError, PackageLockBuilder, PackageRealizerBackend};
@@ -41,5 +43,6 @@ pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStac
         Some(pin) => AquaResolver::from_registry_pin(pin),
         None => AquaResolver::new(),
     });
+    stack.push(GitHubResolver::new());
     stack
 }

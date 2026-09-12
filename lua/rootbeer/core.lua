@@ -83,16 +83,22 @@ function rootbeer.exec(cmd, args) end
 
 --- @class rootbeer.PackageInstall
 --- @field directory? boolean Install a directory tree source.
---- @field archive? "tar.gz"|"tgz" Install an archive source.
+--- @field archive? "tar.gz"|"tgz"|"tar.xz"|"txz"|"zip" Install an archive source.
+--- @field binary? string Install a raw executable at this relative path.
 --- @field strip_prefix? string Relative subdirectory to use as the install root.
+
+--- @class rootbeer.PackageOptions
+--- @field asset? string Exact GitHub release asset filename. Required when platform selection is ambiguous.
+--- @field bins? table<string, string> Binary name → relative path in the GitHub asset. Defaults to executable discovery for archives, or the repository name for raw binaries.
 
 --- Declares a package to realize into the Rootbeer store and activate under
 --- Rootbeer's stable package profile. Passing a locked table uses that exact
 --- realization input; passing a string records a resolver request which is
 --- pinned in `rootbeer.lock`. Supported resolver prefixes include
---- `aqua:owner/repo@version`.
+--- `aqua:owner/repo@version` and `github:owner/repo@tag`.
 --- @param spec rootbeer.PackageSpec|string The locked package specification or resolver request.
-function rootbeer.package(spec) end
+--- @param opts? rootbeer.PackageOptions Options for an explicit `github:` request.
+function rootbeer.package(spec, opts) end
 
 --- Returns the stable Rootbeer profile path for a managed binary, or `nil`
 --- when the binary is not provided by the current plan/profile. This never

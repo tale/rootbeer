@@ -233,7 +233,11 @@ impl RootbeerLock {
                 .ok_or_else(|| LockError::MissingPackage { id: id.clone() });
         }
 
-        if let Some(version) = &request.version {
+        if let Some(version) = request
+            .version
+            .as_ref()
+            .filter(|_| request.asset.is_none() && request.bins.is_empty())
+        {
             let id = package_id_for_request_version(request, version);
             if let Some(package) = self.packages.get(&id) {
                 return Ok(package);
@@ -337,6 +341,22 @@ mod tests {
             inputs: BTreeMap::new(),
             notes: vec!["test resolver".to_string()],
         })
+    }
+
+    #[test]
+    fn changed_github_options_do_not_fall_back_to_version_only() {
+        let request = PackageRequest::parse("github:owner/demo@1.0.0");
+        let context = ResolveContext::new("aarch64-macos");
+        let entry = PackageLockEntry::resolved(
+            &request,
+            &context,
+            PackageResolution::new(package(), proof("github")),
+        )
+        .unwrap();
+        let lock = RootbeerLock::from_package_entries([entry]).unwrap();
+        let mut changed = request;
+        changed.asset = Some("different.tar.gz".to_string());
+        assert!(lock.package_for_request(&changed, &context).is_err());
     }
 
     #[test]

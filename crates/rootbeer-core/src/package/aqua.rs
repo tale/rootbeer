@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use aqua_registry::{AquaPackage, AquaPackageType};
 use serde::Deserialize;
 
 use super::download::{read_url, DownloadCache};
@@ -70,8 +71,8 @@ impl AquaResolver {
 
         let mut documents = Vec::new();
         let version = match &request.version {
-            Some(version) => version.clone(),
-            None => {
+            Some(version) if version != "latest" => version.clone(),
+            _ => {
                 let (version, document) = self.latest_version(owner, repo)?;
                 documents.push(document);
                 version
@@ -81,60 +82,70 @@ impl AquaResolver {
         let (registry, document) = self.registry(owner, repo)?;
         documents.push(document);
         let Some(package) = registry.packages.into_iter().find(|package| {
-            matches!(
-                package.package_type.as_deref(),
-                Some("github_release" | "http")
-            ) && package.repo_owner.as_deref().unwrap_or(owner) == owner
-                && package.repo_name.as_deref().unwrap_or(repo) == repo
+            package.name.as_deref() == Some(request.name.as_str())
+                || (package.repo_owner == owner && package.repo_name == repo)
         }) else {
             return Ok(None);
         };
-
-        let package = package.package_for(&version, context)?;
-        package.validate_env(context)?;
-        let format = package
-            .format
-            .clone()
-            .unwrap_or_else(|| "tar.gz".to_string());
-
-        if format != "tar.gz" && format != "tgz" {
+        let (arch, os) = context
+            .system
+            .split_once('-')
+            .ok_or_else(|| format!("invalid target system `{}`", context.system))?;
+        let os = aqua_os(os);
+        let arch = aqua_arch(arch);
+        if !package.version_constraint_ok(&[&version]) {
             return Err(format!(
-                "aqua package `{}` resolved to unsupported format `{format}`",
+                "aqua package `{}` does not support version `{version}`",
                 request.name
             ));
         }
-
-        let vars = TemplateVars::new(&version, context, &format, &package.replacements);
-        let source_url = match package.package_type.as_deref() {
-            Some("github_release") => {
-                let asset = render(
-                    package
-                        .asset
-                        .as_deref()
-                        .ok_or_else(|| format!("aqua package `{}` has no asset", request.name))?,
-                    &vars,
-                );
-                let owner = package.repo_owner.as_deref().unwrap_or(owner);
-                let repo = package.repo_name.as_deref().unwrap_or(repo);
-                format!("https://github.com/{owner}/{repo}/releases/download/{version}/{asset}")
+        let package = package.with_version(&[&version], os, arch);
+        validate_package(&package, os, arch)?;
+        let format = package
+            .format(&version, os, arch)
+            .map_err(|e| e.to_string())?;
+        let source_url = match package.package_type() {
+            AquaPackageType::GithubRelease => {
+                let asset = package
+                    .asset(&version, os, arch)
+                    .map_err(|e| e.to_string())?;
+                format!(
+                    "https://github.com/{}/{}/releases/download/{version}/{asset}",
+                    package.repo_owner, package.repo_name
+                )
             }
-
-            Some("http") => render(
-                package
-                    .url
-                    .as_deref()
-                    .ok_or_else(|| format!("aqua package `{}` has no url", request.name))?,
-                &vars,
-            ),
-            _ => return Ok(None),
+            AquaPackageType::Http => package.url(&version, os, arch).map_err(|e| e.to_string())?,
+            other => return Err(format!("unsupported aqua package type `{other}`")),
+        };
+        let bins = package_bins(&package, repo, &version, os, arch)?;
+        let install = match format {
+            "raw" => {
+                if bins.len() != 1 {
+                    return Err("raw aqua packages must provide exactly one binary".to_string());
+                }
+                LockedInstall::Binary {
+                    path: bins.values().next().unwrap().clone(),
+                }
+            }
+            "tar.gz" | "tgz" => LockedInstall::Archive {
+                format: ArchiveFormat::TarGz,
+                strip_prefix: None,
+            },
+            "tar.xz" | "txz" => LockedInstall::Archive {
+                format: ArchiveFormat::TarXz,
+                strip_prefix: None,
+            },
+            "zip" => LockedInstall::Archive {
+                format: ArchiveFormat::Zip,
+                strip_prefix: None,
+            },
+            other => return Err(format!("unsupported aqua archive format `{other}`")),
         };
 
         let source = self
             .downloads
             .materialize(&source_url, None)
             .map_err(|e| format!("failed to fetch {source_url}: {e}"))?;
-        let asset_without_ext = asset_without_ext(&source_url);
-        let vars = vars.with_asset_without_ext(asset_without_ext);
 
         let package = LockedPackage {
             name: request.name.clone(),
@@ -143,13 +154,8 @@ impl AquaResolver {
                 url: source_url,
                 sha256: source.sha256,
             },
-            install: LockedInstall::Archive {
-                format: ArchiveFormat::TarGz,
-                strip_prefix: None,
-            },
-            provides: Provides {
-                bins: package.provides(repo, &vars),
-            },
+            install,
+            provides: Provides { bins },
             output_sha256: None,
         };
         let proof = ResolutionProof::Snapshot(SnapshotProof {
@@ -252,184 +258,48 @@ struct AquaRegistry {
     packages: Vec<AquaPackage>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-struct AquaPackage {
-    #[serde(rename = "type")]
-    package_type: Option<String>,
-    repo_owner: Option<String>,
-    repo_name: Option<String>,
-    asset: Option<String>,
-    url: Option<String>,
-    format: Option<String>,
-    #[serde(default)]
-    files: Vec<AquaFile>,
-    #[serde(default)]
-    replacements: BTreeMap<String, String>,
-    #[serde(default)]
-    supported_envs: Vec<String>,
-    #[serde(default)]
-    version_overrides: Vec<AquaPackage>,
-    version_constraint: Option<String>,
-    no_asset: Option<bool>,
-}
-
-impl AquaPackage {
-    fn package_for(&self, version: &str, context: &ResolveContext) -> Result<Self, String> {
-        let mut package = self.clone();
-        if let Some(override_package) = self
-            .version_overrides
+fn validate_package(package: &AquaPackage, os: &str, arch: &str) -> Result<(), String> {
+    if package.no_asset.unwrap_or(false) {
+        return Err("aqua package version has no downloadable asset".to_string());
+    }
+    if let Some(message) = &package.error_message {
+        return Err(message.clone());
+    }
+    if package.rosetta2.unwrap_or(false) && os == "darwin" && arch == "arm64" {
+        return Err("aqua package requires Rosetta; native builds only are supported".to_string());
+    }
+    if !package.supported_envs.is_empty()
+        && !package
+            .supported_envs
             .iter()
-            .find(|candidate| candidate.matches_exact_version(version))
-            .or_else(|| {
-                self.version_overrides
-                    .iter()
-                    .find(|candidate| candidate.version_constraint.as_deref() == Some("true"))
-            })
-        {
-            package.apply(override_package);
-        }
-
-        if package.no_asset.unwrap_or(false) {
-            return Err(format!(
-                "aqua package version `{version}` does not provide a downloadable asset"
-            ));
-        }
-
-        if package.asset.is_none() && package.url.is_none() {
-            return Err(format!(
-                "aqua package version `{version}` has no asset for {}",
-                context.system
-            ));
-        }
-
-        Ok(package)
+            .any(|env| env == "all" || env == os || env == arch || env == &format!("{os}/{arch}"))
+    {
+        return Err(format!("aqua package does not support {os}/{arch}"));
     }
-
-    fn apply(&mut self, other: &AquaPackage) {
-        self.package_type = other
-            .package_type
-            .clone()
-            .or_else(|| self.package_type.clone());
-        self.repo_owner = other.repo_owner.clone().or_else(|| self.repo_owner.clone());
-        self.repo_name = other.repo_name.clone().or_else(|| self.repo_name.clone());
-        self.asset = other.asset.clone().or_else(|| self.asset.clone());
-        self.url = other.url.clone().or_else(|| self.url.clone());
-        self.format = other.format.clone().or_else(|| self.format.clone());
-        if !other.files.is_empty() {
-            self.files = other.files.clone();
-        }
-        self.replacements.extend(other.replacements.clone());
-        if !other.supported_envs.is_empty() {
-            self.supported_envs = other.supported_envs.clone();
-        }
-        self.no_asset = other.no_asset.or(self.no_asset);
-    }
-
-    fn matches_exact_version(&self, version: &str) -> bool {
-        let Some(constraint) = &self.version_constraint else {
-            return false;
-        };
-        constraint == &format!("Version == \"{version}\"")
-    }
-
-    fn validate_env(&self, context: &ResolveContext) -> Result<(), String> {
-        if self.supported_envs.is_empty() {
-            return Ok(());
-        }
-
-        let Some((arch, os)) = context.system.split_once('-') else {
-            return Ok(());
-        };
-        let aqua_os = aqua_os(os);
-        let aqua_arch = aqua_arch(arch);
-        if self.supported_envs.iter().any(|env| {
-            env == "all"
-                || env == aqua_os
-                || env == aqua_arch
-                || env == &format!("{aqua_os}/{aqua_arch}")
-        }) {
-            return Ok(());
-        }
-
-        Err(format!(
-            "aqua package does not support {}; supported envs: {}",
-            context.system,
-            self.supported_envs.join(", ")
-        ))
-    }
-
-    fn provides(&self, repo: &str, vars: &TemplateVars) -> BTreeMap<String, PathBuf> {
-        if self.files.is_empty() {
-            return BTreeMap::from([(repo.to_string(), PathBuf::from(repo))]);
-        }
-
-        self.files
-            .iter()
-            .map(|file| {
-                let name = file.name.clone();
-                let src = file.src.as_deref().unwrap_or(&file.name);
-                (name, PathBuf::from(render(src, vars)))
-            })
-            .collect()
-    }
+    Ok(())
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct AquaFile {
-    name: String,
-    src: Option<String>,
-}
-
-#[derive(Debug)]
-struct TemplateVars {
-    version: String,
-    os: String,
-    arch: String,
-    format: String,
-    asset_without_ext: String,
-}
-
-impl TemplateVars {
-    fn new(
-        version: &str,
-        context: &ResolveContext,
-        format: &str,
-        replacements: &BTreeMap<String, String>,
-    ) -> Self {
-        let (arch, os) = context.system.split_once('-').unwrap_or(("amd64", "linux"));
-        let mut os = aqua_os(os).to_string();
-        let mut arch = aqua_arch(arch).to_string();
-
-        if let Some(replacement) = replacements.get(&os) {
-            os = replacement.clone();
-        }
-        if let Some(replacement) = replacements.get(&arch) {
-            arch = replacement.clone();
-        }
-
-        Self {
-            version: version.to_string(),
-            os,
-            arch,
-            format: format.to_string(),
-            asset_without_ext: String::new(),
-        }
+fn package_bins(
+    package: &AquaPackage,
+    repo: &str,
+    version: &str,
+    os: &str,
+    arch: &str,
+) -> Result<BTreeMap<String, PathBuf>, String> {
+    if package.files.is_empty() {
+        return Ok(BTreeMap::from([(repo.to_string(), PathBuf::from(repo))]));
     }
-
-    fn with_asset_without_ext(mut self, asset_without_ext: String) -> Self {
-        self.asset_without_ext = asset_without_ext;
-        self
-    }
-}
-
-fn render(template: &str, vars: &TemplateVars) -> String {
-    template
-        .replace("{{.Version}}", &vars.version)
-        .replace("{{trimV .Version}}", vars.version.trim_start_matches('v'))
-        .replace("{{.OS}}", &vars.os)
-        .replace("{{.Arch}}", &vars.arch)
-        .replace("{{.Format}}", &vars.format)
-        .replace("{{.AssetWithoutExt}}", &vars.asset_without_ext)
+    package
+        .files
+        .iter()
+        .map(|file| {
+            let src = file
+                .src(package, version, os, arch)
+                .map_err(|e| e.to_string())?
+                .unwrap_or_else(|| file.name.clone());
+            Ok((file.name.clone(), PathBuf::from(src)))
+        })
+        .collect()
 }
 
 fn aqua_os(os: &str) -> &str {
@@ -445,16 +315,6 @@ fn aqua_arch(arch: &str) -> &str {
         "x86_64" => "amd64",
         other => other,
     }
-}
-
-fn asset_without_ext(url: &str) -> String {
-    let asset = url.rsplit('/').next().unwrap_or(url);
-    asset
-        .strip_suffix(".tar.gz")
-        .or_else(|| asset.strip_suffix(".tgz"))
-        .or_else(|| asset.strip_suffix(".zip"))
-        .unwrap_or(asset)
-        .to_string()
 }
 
 #[cfg(test)]
@@ -531,24 +391,48 @@ packages:
         };
         assert_eq!(proof.resolver, "aqua");
         assert_eq!(proof.documents.len(), 2);
+        let latest = resolver
+            .resolve(
+                &PackageRequest::new("owner/tool").version("latest"),
+                &ResolveContext::new("aarch64-macos"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.package.version, "v1.0.0");
     }
 
     #[test]
-    fn renders_replacements_and_asset_without_ext() {
-        let vars = TemplateVars::new(
-            "v1.2.3",
-            &ResolveContext::new("x86_64-macos"),
-            "tar.gz",
-            &BTreeMap::from([("darwin".to_string(), "apple-darwin".to_string())]),
+    fn applies_semver_and_platform_overrides() {
+        let package: AquaPackage = serde_yml::from_str(
+            r#"
+repo_owner: neovim
+repo_name: neovim
+version_constraint: "false"
+version_overrides:
+  - version_constraint: semver(">= 0.10.0")
+    asset: nvim-{{.OS}}-{{.Arch}}.tar.gz
+    replacements:
+      darwin: macos
+    files:
+      - name: nvim
+        src: "{{.AssetWithoutExt}}/bin/nvim"
+    overrides:
+      - goos: darwin
+        replacements:
+          arm64: arm64
+"#,
         )
-        .with_asset_without_ext("tool-v1.2.3".to_string());
-
+        .unwrap();
+        assert!(package.version_constraint_ok(&["v0.11.0"]));
+        assert!(!package.version_constraint_ok(&["v0.1.0"]));
+        let package = package.with_version(&["v0.11.0"], "darwin", "arm64");
         assert_eq!(
-            render(
-                "tool_{{trimV .Version}}_{{.OS}}_{{.Arch}}/{{.AssetWithoutExt}}",
-                &vars
-            ),
-            "tool_1.2.3_apple-darwin_amd64/tool-v1.2.3"
+            package.asset("v0.11.0", "darwin", "arm64").unwrap(),
+            "nvim-macos-arm64.tar.gz"
+        );
+        assert_eq!(
+            package_bins(&package, "neovim", "v0.11.0", "darwin", "arm64").unwrap()["nvim"],
+            PathBuf::from("nvim-macos-arm64/bin/nvim")
         );
     }
 }

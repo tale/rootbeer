@@ -20,8 +20,13 @@ impl Module for Package {
     fn build(lua: &Lua, t: &Table) -> LuaResult<()> {
         t.set(
             "package",
-            lua.create_function(|lua, spec: Value| {
+            lua.create_function(|lua, (spec, opts): (Value, Option<Table>)| {
                 let cx = Ctx::from(lua);
+                if opts.is_some() && !matches!(&spec, Value::String(_)) {
+                    return Err(LuaError::RuntimeError(
+                        "package options require a request string".to_string(),
+                    ));
+                }
                 let intent = match spec {
                     Value::Table(spec) => {
                         let package = parse_package(&cx, spec)?;
@@ -29,7 +34,24 @@ impl Module for Package {
                         PackageIntent::locked(package)
                     }
                     Value::String(spec) => {
-                        let request = PackageRequest::parse(spec.to_str()?.as_ref());
+                        let mut request = PackageRequest::parse(spec.to_str()?.as_ref());
+                        if let Some(opts) = opts {
+                            request.asset = optional(&opts, "asset")?;
+                            if let Some(bins) = optional::<Table>(&opts, "bins")? {
+                                request.bins = parse_provides(bins)?.bins;
+                            }
+                            if request.resolver.as_deref() != Some("github") {
+                                return Err(LuaError::RuntimeError(
+                                    "package options currently require the github resolver"
+                                        .to_string(),
+                                ));
+                            }
+                        }
+                        for bin in request.bins.keys() {
+                            lua.app_data_ref::<PackageBins>()
+                                .expect("PackageBins not set")
+                                .insert(bin.clone(), profile_bin_path(bin));
+                        }
                         register_locked_request_bins(lua, &cx, &request);
                         PackageIntent::request(request)
                     }
@@ -155,6 +177,17 @@ fn parse_source(cx: &Ctx<'_>, source: Table) -> LuaResult<LockedSource> {
 fn parse_install(install: Table) -> LuaResult<LockedInstall> {
     let strip_prefix = optional::<String>(&install, "strip_prefix")?.map(PathBuf::from);
 
+    if let Some(path) = optional::<String>(&install, "binary")? {
+        if strip_prefix.is_some() {
+            return Err(LuaError::RuntimeError(
+                "binary install cannot use strip_prefix".to_string(),
+            ));
+        }
+        return Ok(LockedInstall::Binary {
+            path: PathBuf::from(path),
+        });
+    }
+
     if optional::<bool>(&install, "directory")?.unwrap_or(false) {
         return Ok(LockedInstall::Directory { strip_prefix });
     }
@@ -162,6 +195,8 @@ fn parse_install(install: Table) -> LuaResult<LockedInstall> {
     if let Some(archive) = optional::<String>(&install, "archive")? {
         let format = match archive.as_str() {
             "tar.gz" | "tgz" => ArchiveFormat::TarGz,
+            "tar.xz" | "txz" => ArchiveFormat::TarXz,
+            "zip" => ArchiveFormat::Zip,
             other => {
                 return Err(LuaError::RuntimeError(format!(
                     "unsupported package archive format `{other}`"
@@ -176,7 +211,7 @@ fn parse_install(install: Table) -> LuaResult<LockedInstall> {
     }
 
     Err(LuaError::RuntimeError(
-        "package install requires `directory = true` or `archive = \"tar.gz\"`".to_string(),
+        "package install requires `directory`, `archive`, or `binary`".to_string(),
     ))
 }
 
