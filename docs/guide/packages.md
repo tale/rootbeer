@@ -42,14 +42,74 @@ rb apply --script /tmp/rootbeer-xz/install.lua
 
 This verifies the source hash, runs the upstream build and test steps, and creates
 an installable archive and build receipt. The output directory must be new. Builds
-execute trusted source code without OS sandboxing. Normal `rb.package("xz")`
-installation remains unavailable until binary publication is implemented.
+execute trusted source code without OS sandboxing. The embedded catalog has no
+XZ binary; use the generated installation script or select an artifact index below.
 
 Rootbeer also supports `aqua:` registry recipes and `github:` release assets without
 requiring mise or Aqua to be installed. Prefer explicit versions when you know
 what you want. Unversioned Aqua requests use the pinned registry's package index;
 unversioned GitHub requests select the latest published stable release. Both
 reuse `rootbeer.lock` until you update it.
+
+## Official Catalog and Cache
+
+Release builds can select Rootbeer's official signed index automatically for
+ordinary `rb.package("name")` declarations. A matching lock skips catalog fetching.
+When resolution is needed, `rb` fetches the latest signed manifest, verifies its
+Ed25519 signature and snapshot hash, validates the index, and stores the snapshot.
+
+If the network is unavailable, resolution uses the last verified cached snapshot.
+Without one, it uses the embedded catalog. Both fallbacks produce a notice.
+Invalid signatures, malformed snapshots, and rollback attempts fail instead.
+A missing package or platform in the selected index also fails without fallback.
+
+`rb apply --update` requires a successful refresh. `--offline` requires a matching
+lock and cached package artifacts, and never refreshes the index. An explicit
+`rb.package_index` declaration bypasses the official index and its fallback policy.
+
+The cache lives under `$XDG_STATE_HOME/rootbeer/indexes` (normally
+`~/.local/state/rootbeer/indexes`). It records the latest verified manifest and
+fetch time; immutable snapshot bytes live in the download cache. Cache records
+are scoped to the endpoint and verification key. Updates use atomic writes and a
+process lock. Signed sequence numbers reject rollback relative to the cached record.
+
+The GitHub endpoint and release verification key are not configured yet. Current
+builds report embedded fallback for new canonical resolutions and reject an official
+refresh. The publication setup will enable the remote default.
+
+## Use a Pinned Package Index
+
+Select an artifact index before declaring packages:
+
+```lua
+local rb = require("rootbeer")
+
+rb.package_index({
+    url = "https://packages.example/rootbeer/snapshots/example/index.json",
+    sha256 = "<SHA-256 from the trusted publisher>",
+})
+rb.package("xz")
+```
+
+Use the exact 64-character lowercase digest of `index.json`. The URL above is an
+example; Rootbeer does not yet operate a default hosted index. An absolute
+`file:///path/to/index.json` URL also works for a local bundle. Artifacts named
+inside the index must have HTTPS URLs.
+
+The index supplies canonical names, aliases, versions, and available platform
+artifacts independently of your `rb` release. Unqualified and `rootbeer:` requests
+use this index; explicit `aqua:` and `github:` requests still use those backends.
+Missing packages or platform artifacts fail without compiling or switching providers.
+
+Planning does not download the index. Apply verifies its exact bytes, artifact
+hashes, and installed-tree hashes. The lock records the index pin and artifact
+provenance. Changing or removing the declaration makes the lock stale;
+`--locked` and `--offline` reject that change. `--update` keeps the explicitly
+selected pin. A matching offline lock needs cached artifacts, but no index download.
+
+A pin grants trust to those index bytes; it is not a publisher signature. Obtain
+it through a trusted channel. `rb.which` can discover index package commands from
+a matching lock or existing profile; they may be unavailable during the first plan.
 
 ## Choose a Backend
 

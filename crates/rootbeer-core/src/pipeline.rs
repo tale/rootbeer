@@ -4,7 +4,9 @@ use std::{fs, io};
 
 use crate::executor::{self, ApplyOptions, ExecutionHandler, ExecutionReport};
 use crate::package::lockfile::{LockError, RootbeerLock};
-use crate::package::{PackageIntent, PackageLockBuilder, PackageResolverInputs};
+use crate::package::{
+    PackageIndexPin, PackageIntent, PackageLockBuilder, PackageResolverInputs, ResolverInput,
+};
 use crate::plan::Op;
 use crate::{Error, Runtime};
 
@@ -121,10 +123,15 @@ impl Pipeline {
             return Err(e.into());
         }
 
+        let package_index = vm
+            .lua
+            .app_data_ref::<PackageIndexPin>()
+            .map(|pin| pin.clone());
         let ops = vm.drain_ops();
 
         Ok(PlannedPipeline {
             opts: self.opts,
+            package_index,
             ops,
         })
     }
@@ -132,6 +139,7 @@ impl Pipeline {
 
 /// A pipeline that has been planned — ops are collected, ready to execute.
 pub struct PlannedPipeline {
+    package_index: Option<PackageIndexPin>,
     opts: Options,
     ops: Vec<Op>,
 }
@@ -153,7 +161,7 @@ impl PlannedPipeline {
     pub fn execute(self, handler: &mut impl ExecutionHandler) -> Result<ExecutionReport, Error> {
         let report = match self.opts.mode {
             Mode::Apply => {
-                let ops = self.locked_ops_for_apply()?;
+                let ops = self.locked_ops_for_apply(&mut |notice| handler.on_output(notice))?;
                 executor::apply_with_options(
                     &ops,
                     self.opts.force,
@@ -169,7 +177,7 @@ impl PlannedPipeline {
         Ok(report)
     }
 
-    fn locked_ops_for_apply(&self) -> Result<Vec<Op>, Error> {
+    fn locked_ops_for_apply(&self, notice: &mut dyn FnMut(&str)) -> Result<Vec<Op>, Error> {
         if !RootbeerLock::has_package_ops(&self.ops) {
             return Ok(self.ops.clone());
         }
@@ -210,25 +218,42 @@ impl PlannedPipeline {
             }
         }
 
-        let inputs = match self.opts.package_lock {
-            PackageLockMode::Update if self.needs_aqua_registry() => {
-                PackageResolverInputs::resolve_current()?
-            }
-            PackageLockMode::Update => PackageResolverInputs::default(),
-            PackageLockMode::Auto => existing
+        let should_refresh = self.opts.package_lock == PackageLockMode::Update;
+        let mut inputs = if should_refresh {
+            PackageResolverInputs::default()
+        } else {
+            existing
                 .as_ref()
-                .and_then(|lock| (!lock.inputs.is_empty()).then(|| lock.inputs.clone()))
-                .map(Ok)
-                .unwrap_or_else(|| {
-                    if self.needs_aqua_registry() {
-                        PackageResolverInputs::resolve_current()
-                    } else {
-                        Ok(PackageResolverInputs::default())
-                    }
-                })?,
-            PackageLockMode::Locked | PackageLockMode::Offline => unreachable!(),
+                .map(|lock| lock.inputs.clone())
+                .unwrap_or_default()
         };
-
+        if let Some(pin) = &self.package_index {
+            inputs.resolvers.insert(
+                "rootbeer".into(),
+                ResolverInput::PublishedIndex(pin.clone()),
+            );
+        } else if self.has_canonical_requests() {
+            let selection = crate::package::official::select_default(should_refresh)
+                .map_err(io::Error::other)?;
+            if let Some(message) = &selection.notice {
+                notice(message);
+            }
+            inputs.resolvers.insert("rootbeer".into(), selection.input);
+        } else {
+            inputs.resolvers.remove("rootbeer");
+        }
+        let needs_aqua = self.ops.iter().any(|op| {
+            matches!(op,
+                Op::Package { intent: PackageIntent::Request(request) }
+                    if request.resolver.as_deref() == Some("aqua")
+            )
+        });
+        if needs_aqua && (should_refresh || inputs.aqua_registry().is_none()) {
+            let current = PackageResolverInputs::resolve_current()?;
+            inputs
+                .resolvers
+                .insert("aqua".into(), current.resolvers["aqua"].clone());
+        }
         let builder = PackageLockBuilder::current_system_with_inputs(inputs);
         let input = builder.lock_input_from_ops(&self.ops);
         let lock = builder.build(&input)?;
@@ -237,6 +262,9 @@ impl PlannedPipeline {
     }
 
     fn lock_matches_plan(&self, lock: &RootbeerLock) -> Result<bool, Error> {
+        if lock.inputs.explicit_package_index() != self.package_index.as_ref() {
+            return Ok(false);
+        }
         let Some(expected) = lock.input_fingerprint.as_deref() else {
             return Ok(true);
         };
@@ -247,13 +275,11 @@ impl PlannedPipeline {
         Ok(actual == expected)
     }
 
-    fn needs_aqua_registry(&self) -> bool {
+    fn has_canonical_requests(&self) -> bool {
         self.ops.iter().any(|op| {
-            matches!(
-                op,
-                Op::Package {
-                    intent: PackageIntent::Request(request)
-                } if request.resolver.as_deref().is_none_or(|resolver| matches!(resolver, "aqua" | "rootbeer"))
+            matches!(op,
+                Op::Package { intent: PackageIntent::Request(request) }
+                    if request.resolver.as_deref().is_none_or(|name| name == "rootbeer")
             )
         })
     }
@@ -318,6 +344,7 @@ mod tests {
     fn apply_attempts_to_build_lock_when_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let planned = PlannedPipeline {
+            package_index: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
                 intent: PackageIntent::Locked(package()),
@@ -339,13 +366,14 @@ mod tests {
             .write(tmp.path().join("rootbeer.lock"))
             .unwrap();
         let planned = PlannedPipeline {
+            package_index: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
                 intent: PackageIntent::Locked(package()),
             }],
         };
 
-        let ops = planned.locked_ops_for_apply().unwrap();
+        let ops = planned.locked_ops_for_apply(&mut |_| {}).unwrap();
 
         let [Op::RealizePackage { package }] = ops.as_slice() else {
             panic!("expected package op");
@@ -365,13 +393,14 @@ mod tests {
             .write(tmp.path().join("rootbeer.lock"))
             .unwrap();
         let planned = PlannedPipeline {
+            package_index: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
                 intent: PackageIntent::Locked(planned_package),
             }],
         };
 
-        let err = planned.locked_ops_for_apply().unwrap_err();
+        let err = planned.locked_ops_for_apply(&mut |_| {}).unwrap_err();
 
         assert!(matches!(err, Error::LockBuild(_)));
     }
@@ -382,13 +411,14 @@ mod tests {
         let mut opts = opts(tmp.path().to_path_buf(), Mode::Apply);
         opts.package_lock = PackageLockMode::Locked;
         let planned = PlannedPipeline {
+            package_index: None,
             opts,
             ops: vec![Op::Package {
                 intent: PackageIntent::Locked(package()),
             }],
         };
 
-        let err = planned.locked_ops_for_apply().unwrap_err();
+        let err = planned.locked_ops_for_apply(&mut |_| {}).unwrap_err();
 
         assert!(matches!(
             err,
@@ -409,14 +439,137 @@ mod tests {
         let mut opts = opts(tmp.path().to_path_buf(), Mode::Apply);
         opts.package_lock = PackageLockMode::Locked;
         let planned = PlannedPipeline {
+            package_index: None,
             opts,
             ops: vec![Op::Package {
                 intent: PackageIntent::Locked(package()),
             }],
         };
 
-        let err = planned.locked_ops_for_apply().unwrap_err();
+        let err = planned.locked_ops_for_apply(&mut |_| {}).unwrap_err();
 
         assert!(matches!(err, Error::Lock(LockError::StaleLockfile { .. })));
+    }
+    fn plan_index_script(directory: &Path, source: &str) -> PlannedPipeline {
+        let script = directory.join("init.lua");
+        fs::write(&script, source).unwrap();
+        let mut options = Options::from_script(&script).unwrap();
+        options.package_lock = PackageLockMode::Offline;
+        Pipeline::new(options).plan().unwrap()
+    }
+
+    #[test]
+    fn index_planning_is_offline_and_pin_changes_invalidate_locks() {
+        let root = tempfile::tempdir().unwrap();
+        let source = format!("local rb = require('rootbeer')\nrb.package_index({{url='https://unavailable.invalid/index.json', sha256='{}'}})\nrb.package('new-tool')", "a".repeat(64));
+        let planned = plan_index_script(root.path(), &source);
+        assert!(planned.has_canonical_requests());
+        let mut inputs = PackageResolverInputs::default();
+        inputs.resolvers.insert(
+            "rootbeer".into(),
+            ResolverInput::PublishedIndex(planned.package_index.clone().unwrap()),
+        );
+        let builder = PackageLockBuilder::current_system_with_inputs(inputs.clone());
+        let fingerprint = builder
+            .fingerprint_input(&builder.lock_input_from_ops(&planned.ops))
+            .unwrap();
+        let mut lock = RootbeerLock::from_packages(std::iter::empty::<LockedPackage>())
+            .unwrap()
+            .with_input_fingerprint(fingerprint);
+        lock.inputs = inputs;
+        assert!(planned.lock_matches_plan(&lock).unwrap());
+        lock.write(root.path().join("rootbeer.lock")).unwrap();
+        let changed = plan_index_script(
+            root.path(),
+            &source.replace(&"a".repeat(64), &"b".repeat(64)),
+        );
+        assert!(!changed.lock_matches_plan(&lock).unwrap());
+        assert!(matches!(
+            changed.locked_ops_for_apply(&mut |_| {}).unwrap_err(),
+            Error::Lock(LockError::StaleLockfile { .. })
+        ));
+        let removed = plan_index_script(
+            root.path(),
+            "local rb = require('rootbeer'); rb.package('new-tool')",
+        );
+        assert!(!removed.lock_matches_plan(&lock).unwrap());
+        assert!(removed.has_canonical_requests());
+        let mixed = plan_index_script(root.path(), &(source + "\nrb.package('aqua:owner/repo@1')"));
+        assert!(mixed.has_canonical_requests());
+    }
+
+    #[test]
+    fn index_declarations_require_valid_pins_and_precede_packages() {
+        let root = tempfile::tempdir().unwrap();
+        let pin = format!(
+            "rb.package_index({{url='https://example.org/index.json', sha256='{}'}})",
+            "a".repeat(64)
+        );
+        for source in [
+            format!("{pin}; {pin}"),
+            format!("rb.package('age'); {pin}"),
+            pin.replace(&"a".repeat(64), "invalid"),
+            pin.replace("https://", "http://"),
+        ] {
+            let script = root.path().join("init.lua");
+            fs::write(&script, format!("local rb = require('rootbeer'); {source}")).unwrap();
+            assert!(Pipeline::new(Options::from_script(&script).unwrap())
+                .plan()
+                .is_err());
+        }
+    }
+    #[test]
+    fn official_locks_replay_without_an_override_or_catalog_fetch() {
+        use crate::package::lockfile::PackageLockEntry;
+        use crate::package::{
+            PackageRequest, PackageResolution, PublishedIndexProof, ResolutionProof, ResolveContext,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let mut planned = plan_index_script(
+            root.path(),
+            "local rb = require('rootbeer'); rb.package('demo')",
+        );
+        let pin = PackageIndexPin {
+            url: "https://unavailable.invalid/index.json".into(),
+            sha256: "a".repeat(64),
+        };
+        let context = ResolveContext::current();
+        let entry = PackageLockEntry::resolved(
+            &PackageRequest::parse("demo"),
+            &context,
+            PackageResolution::new(
+                package(),
+                ResolutionProof::PublishedIndex(PublishedIndexProof {
+                    index: pin.clone(),
+                    catalog_sha256: "b".repeat(64),
+                    revision: 1,
+                    system: context.system.clone(),
+                    receipt_sha256: "c".repeat(64),
+                }),
+            ),
+        )
+        .unwrap();
+        let mut lock = RootbeerLock::from_package_entries([entry]).unwrap();
+        lock.inputs
+            .resolvers
+            .insert("rootbeer".into(), ResolverInput::OfficialIndex(pin));
+        let builder = PackageLockBuilder::current_system_with_inputs(lock.inputs.clone());
+        lock.input_fingerprint = Some(
+            builder
+                .fingerprint_input(&builder.lock_input_from_ops(&planned.ops))
+                .unwrap(),
+        );
+        lock.write(root.path().join("rootbeer.lock")).unwrap();
+        for mode in [
+            PackageLockMode::Auto,
+            PackageLockMode::Locked,
+            PackageLockMode::Offline,
+        ] {
+            planned.opts.package_lock = mode;
+            let ops = planned
+                .locked_ops_for_apply(&mut |_| panic!("matching lock attempted catalog selection"))
+                .unwrap();
+            assert!(matches!(ops.as_slice(), [Op::RealizePackage { .. }]));
+        }
     }
 }

@@ -20,6 +20,8 @@ pub struct PackageResolverInputs {
 pub enum ResolverInput {
     AquaRegistry(GitHubRepositoryPin),
     Catalog { sha256: String },
+    PublishedIndex(super::PackageIndexPin),
+    OfficialIndex(super::PackageIndexPin),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +55,22 @@ impl PackageResolverInputs {
             },
         );
         Ok(Self { resolvers })
+    }
+
+    pub fn package_index(&self) -> Option<&super::PackageIndexPin> {
+        match self.resolvers.get("rootbeer") {
+            Some(ResolverInput::PublishedIndex(pin) | ResolverInput::OfficialIndex(pin)) => {
+                Some(pin)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn explicit_package_index(&self) -> Option<&super::PackageIndexPin> {
+        match self.resolvers.get("rootbeer") {
+            Some(ResolverInput::PublishedIndex(pin)) => Some(pin),
+            _ => None,
+        }
     }
 
     pub fn is_empty(&self) -> bool {

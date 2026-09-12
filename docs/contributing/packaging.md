@@ -12,8 +12,9 @@ an existing binary.
 --output <new-directory>` assembles source artifacts, receipts, and an index for
 hosting. Repeat `--receipt` for additional versions or platforms. It checks catalog
 inputs and archive/output hashes without executing binaries. Only supplied builds
-appear as available artifacts. Bundling does not upload files or enable client
-index consumption.
+appear as available artifacts. Bundling does not upload files. Consumers select
+an exact snapshot with [`rb.package_index`](../guide/packages#use-a-pinned-package-index),
+using its URL and SHA-256.
 
 See the [collection authoring guide](https://github.com/tale/rootbeer/tree/main/packages)
 for the recipe format and local smoke checks. The package workflow tests native
@@ -24,6 +25,34 @@ The catalog imports upstream release binaries and supports explicit Autotools
 source builds with ordered build dependencies. The first source recipe is XZ.
 Pinned toolchains, runtime dependencies, signed remote indexes, and a public binary
 cache remain separate work.
+
+## Official Index Trust Configuration
+
+Release builds embed `ROOTBEER_INDEX_URL` and `ROOTBEER_INDEX_PUBLIC_KEY` at compile
+time. Set both together; the key is 32 bytes encoded as 64 lowercase hex characters.
+These are public configuration values. Runtime environment variables cannot replace
+the release trust root. Builds without either value use an explicitly reported
+embedded fallback; an official `--update` fails until configured.
+
+The HTTPS endpoint serves a JSON manifest containing `schema` (1), a positive
+monotonically increasing `sequence`, `index` (`url` and `sha256`), and `signature`
+(64 Ed25519 signature bytes encoded as 128 lowercase hex characters). Sign the
+UTF-8 bytes of this compact JSON array, with no trailing newline:
+
+```text
+["rootbeer-index-v1",sequence,"index URL","index SHA-256"]
+```
+
+The snapshot URL must use HTTPS. Publish immutable snapshot bytes before updating
+the manifest. Never reuse a sequence for different snapshot coordinates. The
+client verifies signatures and index contents before updating its latest record;
+network failures do not replace that record. Cache fallback rechecks its signature
+and snapshot hash. A corrupt cache fails rather than silently losing its rollback
+history. Sequence checks protect relative to retained local history; fresh installs
+have no earlier sequence to compare, and the manifest has no expiry policy yet.
+
+The GitHub publisher, signing-key provisioning, and release configuration remain
+the deployment step. No private signing key belongs in this repository or binary.
 
 ## Rootbeer Distribution
 

@@ -8,8 +8,8 @@ use super::module::Module;
 use super::vm::{profile_bin_path, PackageBins};
 use crate::package::{
     lockfile::RootbeerLock, profile as package_profile, ArchiveFormat, LockedInstall,
-    LockedPackage, LockedSource, PackageCatalog, PackageIntent, PackageRequest, Provides,
-    ResolveContext,
+    LockedPackage, LockedSource, PackageCatalog, PackageIndexPin, PackageIntent, PackageRequest,
+    Provides, ResolveContext,
 };
 use crate::plan::{Op, WriteSource};
 
@@ -19,6 +19,31 @@ impl Module for Package {
     const NAME: &'static str = "";
 
     fn build(lua: &Lua, t: &Table) -> LuaResult<()> {
+        t.set(
+            "package_index",
+            lua.create_function(|lua, spec: Table| {
+                let cx = Ctx::from(lua);
+                if lua.app_data_ref::<PackageIndexPin>().is_some()
+                    || cx
+                        .run
+                        .lock()
+                        .iter()
+                        .any(|op| matches!(op, Op::Package { .. }))
+                {
+                    return Err(LuaError::RuntimeError(
+                        "declare package_index once, before packages".into(),
+                    ));
+                }
+                let pin = PackageIndexPin {
+                    url: required(&spec, "url")?,
+                    sha256: required(&spec, "sha256")?,
+                };
+                pin.validate().map_err(LuaError::RuntimeError)?;
+                drop(cx);
+                lua.set_app_data(pin);
+                Ok(())
+            })?,
+        )?;
         t.set(
             "package",
             lua.create_function(|lua, (spec, opts): (Value, Option<Table>)| {
@@ -127,6 +152,9 @@ fn register_locked_request_bins(lua: &Lua, cx: &Ctx<'_>, request: &PackageReques
         return false;
     };
 
+    if lock.inputs.explicit_package_index() != lua.app_data_ref::<PackageIndexPin>().as_deref() {
+        return false;
+    }
     let Ok(package) = lock.package_for_request(request, &ResolveContext::current()) else {
         return false;
     };
@@ -136,6 +164,13 @@ fn register_locked_request_bins(lua: &Lua, cx: &Ctx<'_>, request: &PackageReques
 }
 
 fn register_catalog_request_bins(lua: &Lua, request: &PackageRequest) -> LuaResult<()> {
+    if lua.app_data_ref::<PackageIndexPin>().is_some()
+        || crate::package::OfficialIndexSource::configured()
+            .map_err(LuaError::RuntimeError)?
+            .is_some()
+    {
+        return Ok(());
+    }
     if request
         .resolver
         .as_deref()

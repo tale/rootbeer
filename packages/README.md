@@ -68,7 +68,7 @@ needs resolution against a different embedded catalog, use the matching binary
 or explicitly refresh the resolver inputs with `rb apply --update`.
 
 The initial catalog travels with `rb`; exported indexes are inspection/build
-artifacts, not remotely consumed indexes. Keep this collection here until its
+artifacts. Publication bundles provide the separate consumable artifact index. Keep this collection here until its
 format is exercised before extracting a separately published repository.
 
 ## Remaining build and publication work
@@ -116,8 +116,8 @@ The recipe fixes source bytes, but recording compiler versions does not pin the
 compiler or SDK. Archive metadata is normalized; byte-identical compilation across
 hosts is not promised. Linux libc and macOS SDK baselines still need qualification.
 
-`rb.package("xz")` fails until a binary is published; it never silently invokes a
-compiler. Building is explicitly requested through `rb package build`, and the
+`rb.package("xz")` requires an index with an available binary; it never silently
+invokes a compiler. Building is explicitly requested through `rb package build`, and the
 generated installation script consumes the already-built artifact. This keeps
 ordinary installation independent of the builder's compiler and Make.
 
@@ -153,8 +153,10 @@ not advertise an available binary. Artifact URLs use `--base-url`. Receipts reta
 original build provenance, including builder-local paths. Index bytes are stable
 for identical inputs and base URL regardless of receipt argument order.
 
-This command prepares files; it does not upload them or configure `rb` to consume
-the index. The printed SHA-256 covers the exact index bytes and is not a signature.
+This command prepares files; it does not upload them. Select the resulting index
+with `rb.package_index({ url = "https://.../index.json", sha256 = "<digest>" })`
+before declaring packages. Local index files can use absolute `file:///` URLs;
+artifact URLs still refer to the configured HTTPS host. The printed SHA-256 covers the exact index bytes and is not a signature.
 Receipts are build records, not authenticated attestations: publication must accept
-outputs only from trusted, successful CI jobs. Signed publication and client index
-consumption are the next pieces of the pipeline.
+outputs only from trusted, successful CI jobs. The client can verify an official signed manifest and cache snapshots automatically;
+GitHub publication and the release endpoint/public key remain to be configured.

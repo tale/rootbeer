@@ -76,6 +76,30 @@ def main():
                     ).hexdigest() == archive_sha256
                     assert (bundle / "index.sha256").read_text().split()[0] == hashlib.sha256(index_bytes).hexdigest()
                     assert published["package"]["output_sha256"] == receipt["package"]["output_sha256"]
+                    downloads = root / "state/rootbeer/downloads"
+                    downloads.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(
+                        bundle / "artifacts" / (archive_sha256 + ".tar.gz"),
+                        downloads / ("sha256-" + archive_sha256),
+                    )
+                    script = root / "published" / "init.lua"
+                    script.parent.mkdir()
+                    script.write_text(
+                        'local rb = require("rootbeer")\n'
+                        'rb.package_index({url = '
+                        + json.dumps((bundle / "index.json").as_uri())
+                        + ', sha256 = ' + json.dumps(hashlib.sha256(index_bytes).hexdigest())
+                        + '})\n' + f"rb.package({json.dumps(name + '@' + version)})\n"
+                    )
+                    command = [rb, "apply", "--script", script]
+                    subprocess.run(command, env=environment, check=True, timeout=120)
+                    lock_path = script.parent / "rootbeer.lock"
+                    lock = lock_path.read_bytes()
+                    proof = next(iter(json.loads(lock)["resolutions"].values()))["proof"]
+                    assert proof["type"] == "published_index"
+                    assert proof["index"]["sha256"] == hashlib.sha256(index_bytes).hexdigest()
+                    shutil.rmtree(bundle)
+                    (downloads / ("sha256-" + hashlib.sha256(index_bytes).hexdigest())).unlink()
                 else:
                     resolution = next(iter(json.loads(lock)["resolutions"].values()))
                     proof = resolution["proof"]

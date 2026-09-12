@@ -129,6 +129,7 @@ pub fn bundle_artifacts(
             },
         );
     }
+    index.validate()?;
     let bytes = serde_json::to_vec_pretty(&index).map_err(|e| e.to_string())?;
     let digest = hash_bytes(&bytes);
     fs::write(destination.join("index.json"), bytes).map_err(|e| e.to_string())?;
@@ -226,14 +227,14 @@ fn validate_receipt(catalog: &PackageCatalog, receipt: &BuildArtifact) -> Result
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::package::{PackageResolverInputs, Provides};
     use crate::store::hash_tree;
     use flate2::{write::GzEncoder, Compression};
     use std::os::unix::fs::PermissionsExt;
 
-    fn fixture(root: &Path) -> (PackageCatalog, PathBuf) {
+    pub(crate) fn fixture(root: &Path) -> (PackageCatalog, PathBuf) {
         let catalog = PackageCatalog::embedded().unwrap().clone();
         let entry = &catalog.packages["xz"];
         let recipe = &entry.versions[&entry.default_version];

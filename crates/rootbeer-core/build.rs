@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::{env, fs};
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=ROOTBEER_INDEX_URL");
+    println!("cargo:rerun-if-env-changed=ROOTBEER_INDEX_PUBLIC_KEY");
     #[cfg(not(unix))]
     compile_error!("rootbeer only supports unix-like systems (macOS, Linux)");
 

@@ -97,11 +97,21 @@ function rootbeer.exec(cmd, args) end
 --- @field asset? string Exact GitHub release asset filename. Required when platform selection is ambiguous.
 --- @field bins? table<string, string> Binary name → relative path in the GitHub asset. Defaults to executable discovery for archives, or the repository name for raw binaries.
 
+--- @class rootbeer.PackageIndex
+--- @field url string HTTPS index URL, or an explicit absolute `file:///` URL.
+--- @field sha256 string Lowercase SHA-256 of the exact index JSON bytes.
+
+--- Selects a pinned artifact index for canonical package requests. Call once,
+--- before declaring packages. Planning performs no index downloads; apply verifies
+--- the index and records its pin in `rootbeer.lock`.
+--- @param spec rootbeer.PackageIndex
+function rootbeer.package_index(spec) end
+
 --- Declares a package to realize into the Rootbeer store and activate under
 --- Rootbeer's stable package profile. Passing a locked table uses that exact
 --- realization input; passing a string records a resolver request which is
 --- pinned in `rootbeer.lock`. Unqualified names (such as `ripgrep`) use Rootbeer's
---- canonical catalog and its approved default version. Supported resolver prefixes include
+--- selected index (when configured) or embedded catalog and its approved default version. Supported resolver prefixes include
 --- `aqua:owner/repo@version` and `github:owner/repo@tag`.
 --- @param spec rootbeer.PackageSpec|string The locked package specification or resolver request.
 --- @param opts? rootbeer.PackageOptions Options for an explicit `github:` request.

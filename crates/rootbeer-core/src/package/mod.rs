@@ -11,10 +11,12 @@ mod bundle;
 mod catalog;
 mod download;
 mod github;
+mod index;
 mod inputs;
 mod intent;
 mod lock;
 pub mod lockfile;
+pub(crate) mod official;
 pub mod profile;
 mod realize;
 mod resolve;
@@ -25,9 +27,11 @@ pub use build::{build_package, BuildArtifact, BuildBackend, SourceBuild};
 pub use bundle::{bundle_artifacts, ArtifactIndex, PublishedArtifact};
 pub use catalog::{CatalogPackage, CatalogProof, CatalogRecipe, PackageCatalog};
 pub use github::GitHubResolver;
+pub use index::{PackageIndexPin, PublishedIndexProof};
 pub use inputs::{GitHubRepositoryPin, PackageResolverInputs, ResolverInput};
 pub use intent::{PackageIntent, PackageLockInput};
 pub use lock::{LockBuildError, PackageLockBuilder, PackageRealizerBackend};
+pub use official::{IndexSelection, OfficialIndexSource};
 pub use realize::{PackageRealizer, RealizedPackage};
 pub use resolve::{
     ArtifactProof, DependencyProof, ExternalManagerProof, GitReleaseProof, MetadataClosureProof,
@@ -45,7 +49,10 @@ pub fn default_resolver_stack() -> ResolverStack {
 
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
     let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
-    stack.push(catalog::CatalogResolver::new(inputs, backend_stack(inputs)));
+    match inputs.package_index() {
+        Some(pin) => stack.push(index::IndexResolver::new(pin)),
+        None => stack.push(catalog::CatalogResolver::new(inputs, backend_stack(inputs))),
+    };
     stack
 }
 
