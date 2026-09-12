@@ -120,3 +120,41 @@ hosts is not promised. Linux libc and macOS SDK baselines still need qualificati
 compiler. Building is explicitly requested through `rb package build`, and the
 generated installation script consumes the already-built artifact. This keeps
 ordinary installation independent of the builder's compiler and Make.
+
+## Preparing a publication bundle
+
+Contributors can validate and build a recipe directory using an existing `rb`:
+
+```sh
+rb package --catalog ./packages check
+rb package --catalog ./packages build xz --output /tmp/rootbeer-xz
+rb package --catalog ./packages bundle \
+  --receipt /tmp/rootbeer-xz/receipt.json \
+  --base-url https://packages.example/rootbeer/snapshots/example \
+  --output /tmp/rootbeer-bundle
+```
+
+`--catalog` replaces the embedded collection for package subcommands; it does not
+change `rb apply` resolution. The directory uses the same Lua sandbox and schema
+validation as the embedded collection. `rb package index` still exports recipes.
+
+Repeat `--receipt` to combine successful builds from native platform runners.
+Keep each receipt beside its `package.tar.gz`; recorded builder paths are ignored.
+All receipts must match the selected catalog, recipe revision, build inputs, and
+command contract. Duplicate package/version/platform entries fail. The bundler
+verifies archive and installed-tree hashes without executing binaries, so artifacts
+from different platforms can be assembled on one runner.
+
+The new output directory contains `index.json`, `index.sha256`,
+`artifacts/<sha256>.tar.gz`, and `receipts/<sha256>.json`. The index includes the
+catalog snapshot and an `artifacts` map keyed by `name@version`, then system.
+Only supplied builds appear in that map; a catalog platform declaration alone does
+not advertise an available binary. Artifact URLs use `--base-url`. Receipts retain
+original build provenance, including builder-local paths. Index bytes are stable
+for identical inputs and base URL regardless of receipt argument order.
+
+This command prepares files; it does not upload them or configure `rb` to consume
+the index. The printed SHA-256 covers the exact index bytes and is not a signature.
+Receipts are build records, not authenticated attestations: publication must accept
+outputs only from trusted, successful CI jobs. Signed publication and client index
+consumption are the next pieces of the pipeline.

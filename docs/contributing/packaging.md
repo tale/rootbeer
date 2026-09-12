@@ -4,7 +4,16 @@
 
 Canonical CLI package definitions live in `packages/*.lua`. Adding a definition
 requires no Rust changes. `rb package check` validates the embedded collection;
-`rb package index` exports its deterministic JSON snapshot.
+`rb package index` exports its deterministic JSON snapshot. Use
+`rb package --catalog ./packages check` or `build` to work from recipe files with
+an existing binary.
+
+`rb package bundle --receipt <build>/receipt.json --base-url <https-url>
+--output <new-directory>` assembles source artifacts, receipts, and an index for
+hosting. Repeat `--receipt` for additional versions or platforms. It checks catalog
+inputs and archive/output hashes without executing binaries. Only supplied builds
+appear as available artifacts. Bundling does not upload files or enable client
+index consumption.
 
 See the [collection authoring guide](https://github.com/tale/rootbeer/tree/main/packages)
 for the recipe format and local smoke checks. The package workflow tests native

@@ -6,6 +6,9 @@ use rootbeer_core::package::PackageCatalog;
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
+    /// Read recipes from a directory instead of the embedded catalog
+    #[arg(long, global = true)]
+    catalog: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -16,10 +19,19 @@ enum Command {
     List,
     /// Show a package's identity and version recipes, accepting aliases
     Show { name: String },
-    /// Validate the embedded catalog and print its digest
+    /// Validate the selected catalog and print its digest
     Check,
     /// Write a deterministic JSON catalog snapshot to stdout
     Index,
+    /// Assemble verified source artifacts into a directory ready for hosting
+    Bundle {
+        #[arg(long, required = true)]
+        receipt: Vec<PathBuf>,
+        #[arg(long)]
+        base_url: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Compile a trusted source recipe into an installable local artifact
     Build {
         name: String,
@@ -38,7 +50,15 @@ pub fn run(args: Args) {
 }
 
 fn execute(args: Args) -> Result<(), String> {
-    let catalog = PackageCatalog::embedded()?;
+    let local_catalog = args
+        .catalog
+        .as_deref()
+        .map(PackageCatalog::from_directory)
+        .transpose()?;
+    let catalog = match &local_catalog {
+        Some(catalog) => catalog,
+        None => PackageCatalog::embedded()?,
+    };
     let mut output = io::stdout().lock();
     match args.command {
         Command::List => {
@@ -98,6 +118,24 @@ fn execute(args: Args) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         }
         Command::Index => writeln!(output, "{}", catalog.to_json()?).map_err(|e| e.to_string())?,
+        Command::Bundle {
+            receipt,
+            base_url,
+            output: destination,
+        } => {
+            let digest = rootbeer_core::package::bundle_artifacts(
+                catalog,
+                &receipt,
+                &base_url,
+                &destination,
+            )?;
+            writeln!(
+                output,
+                "index: {}\nsha256:{digest}",
+                destination.join("index.json").display()
+            )
+            .map_err(|e| e.to_string())?;
+        }
         Command::Build {
             name,
             output: destination,

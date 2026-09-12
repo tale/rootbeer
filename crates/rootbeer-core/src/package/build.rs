@@ -235,7 +235,7 @@ pub fn build_package(
         workspace.path().join("install"),
     );
     let downloads = DownloadCache::new(crate::state_dir().join("downloads"));
-    let inputs = if order
+    let mut inputs = if order
         .iter()
         .any(|key| find_recipe(catalog, key).is_ok_and(|(_, _, recipe)| recipe.source.is_some()))
     {
@@ -243,7 +243,17 @@ pub fn build_package(
     } else {
         PackageResolverInputs::default()
     };
-    let backends = super::resolver_stack_for_inputs(&inputs);
+    inputs.resolvers.insert(
+        "rootbeer".into(),
+        super::ResolverInput::Catalog {
+            sha256: catalog.sha256(),
+        },
+    );
+    let mut backends = super::backend_stack(&inputs).with_implicit_resolver("rootbeer");
+    backends.push(
+        super::catalog::CatalogResolver::new(&inputs, super::backend_stack(&inputs))
+            .with_catalog(catalog),
+    );
     let mut resolved = BTreeMap::<String, LockedPackage>::new();
     let mut dependency_bins = BTreeMap::new();
     let mut root_artifact = None;

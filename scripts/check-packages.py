@@ -1,6 +1,7 @@
 """Exercise catalog installs and locked offline replay in an isolated profile."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -60,6 +61,21 @@ def main():
                     assert receipt["build"] == recipe["build"]
                     assert receipt["revision"] == recipe["revision"]
                     assert receipt["package"]["name"] == name
+                    bundle = root / "bundle"
+                    subprocess.run(
+                        [rb, "package", "bundle", "--receipt", script.parent / "receipt.json",
+                         "--base-url", "https://packages.example/rootbeer", "--output", bundle],
+                        env=environment, check=True, timeout=120,
+                    )
+                    index_bytes = (bundle / "index.json").read_bytes()
+                    index = json.loads(index_bytes)
+                    published = index["artifacts"][name + "@" + version][system]
+                    archive_sha256 = published["package"]["source"]["Url"]["sha256"]
+                    assert hashlib.sha256(
+                        (bundle / "artifacts" / (archive_sha256 + ".tar.gz")).read_bytes()
+                    ).hexdigest() == archive_sha256
+                    assert (bundle / "index.sha256").read_text().split()[0] == hashlib.sha256(index_bytes).hexdigest()
+                    assert published["package"]["output_sha256"] == receipt["package"]["output_sha256"]
                 else:
                     resolution = next(iter(json.loads(lock)["resolutions"].values()))
                     proof = resolution["proof"]

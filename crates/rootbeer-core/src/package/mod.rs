@@ -7,6 +7,7 @@
 
 mod aqua;
 mod build;
+mod bundle;
 mod catalog;
 mod download;
 mod github;
@@ -21,6 +22,7 @@ mod spec;
 
 pub use aqua::AquaResolver;
 pub use build::{build_package, BuildArtifact, BuildBackend, SourceBuild};
+pub use bundle::{bundle_artifacts, ArtifactIndex, PublishedArtifact};
 pub use catalog::{CatalogPackage, CatalogProof, CatalogRecipe, PackageCatalog};
 pub use github::GitHubResolver;
 pub use inputs::{GitHubRepositoryPin, PackageResolverInputs, ResolverInput};

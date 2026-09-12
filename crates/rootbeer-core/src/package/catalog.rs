@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -67,6 +68,29 @@ impl PackageCatalog {
             .get_or_init(|| Self::from_lua(EMBEDDED_RECIPES))
             .as_ref()
             .map_err(Clone::clone)
+    }
+
+    /// Loads a recipe directory without rebuilding the executable.
+    pub fn from_directory(directory: &Path) -> Result<Self, String> {
+        let mut recipes = BTreeMap::new();
+        for entry in std::fs::read_dir(directory).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.extension().is_none_or(|extension| extension != "lua") {
+                continue;
+            }
+            let name = path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| format!("invalid recipe filename: {}", path.display()))?;
+            let source =
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            recipes.insert(name.to_string(), source);
+        }
+        let recipes: Vec<_> = recipes
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect();
+        Self::from_lua(&recipes)
     }
 
     fn from_lua(recipes: &[(&str, &str)]) -> Result<Self, String> {
@@ -230,13 +254,20 @@ fn valid_name(name: &str) -> bool {
 }
 
 pub(super) struct CatalogResolver {
+    catalog: Option<PackageCatalog>,
     inputs: PackageResolverInputs,
     backends: ResolverStack,
 }
 
 impl CatalogResolver {
+    pub(super) fn with_catalog(mut self, catalog: &PackageCatalog) -> Self {
+        self.catalog = Some(catalog.clone());
+        self
+    }
+
     pub(super) fn new(inputs: &PackageResolverInputs, backends: ResolverStack) -> Self {
         Self {
+            catalog: None,
             inputs: inputs.clone(),
             backends,
         }
@@ -253,7 +284,10 @@ impl PackageResolver for CatalogResolver {
         request: &PackageRequest,
         context: &ResolveContext,
     ) -> Result<Option<PackageResolution>, String> {
-        let catalog = PackageCatalog::embedded()?;
+        let catalog = match &self.catalog {
+            Some(catalog) => catalog,
+            None => PackageCatalog::embedded()?,
+        };
         let Some(package) = catalog.find(&request.name) else {
             return Err(format!("unknown catalog package `{}`; use `rb package list` or an explicit backend request", request.name));
         };
@@ -505,6 +539,52 @@ mod tests {
         );
         let realized = realizer.realize(&canonical.package).unwrap();
         assert!(realized.bins["rg"].is_file());
+    }
+
+    #[test]
+    fn resolves_new_catalog_names_without_rebuilding_the_binary() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("rg");
+        std::fs::write(&source, "test executable").unwrap();
+        let mut catalog = PackageCatalog::embedded().unwrap().clone();
+        let mut package = catalog.packages.remove("ripgrep").unwrap();
+        package.name = "new-search".into();
+        package.aliases.clear();
+        catalog.packages.insert(package.name.clone(), package);
+        catalog.validate().unwrap();
+        let resolver = local_resolver(source).with_catalog(&catalog);
+        let resolution = resolver
+            .resolve(
+                &PackageRequest::parse("new-search"),
+                &ResolveContext::new("aarch64-linux"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolution.package.name, "new-search");
+        let ResolutionProof::Catalog(proof) = resolution.proof else {
+            panic!("expected catalog proof")
+        };
+        assert_eq!(proof.catalog_sha256, catalog.sha256());
+    }
+
+    #[test]
+    fn loads_directory_recipes_with_the_same_validation_and_digest() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, source) in EMBEDDED_RECIPES.iter().rev() {
+            std::fs::write(directory.path().join(format!("{name}.lua")), source).unwrap();
+        }
+        std::fs::write(directory.path().join("README.md"), "ignored").unwrap();
+        let catalog = PackageCatalog::from_directory(directory.path()).unwrap();
+        assert_eq!(
+            catalog.sha256(),
+            PackageCatalog::embedded().unwrap().sha256()
+        );
+        std::fs::write(
+            directory.path().join("invalid.lua"),
+            "return os.execute('false')",
+        )
+        .unwrap();
+        assert!(PackageCatalog::from_directory(directory.path()).is_err());
     }
 
     #[test]
