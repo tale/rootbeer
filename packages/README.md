@@ -3,44 +3,42 @@
 Each Lua file defines one canonical package. Definitions are evaluated with no
 globals or host I/O, validated, and embedded in `rb`. Adding a definition requires
 no Rust changes. The collection supports upstream release binaries and explicit
-Autotools source builds. It does not publish artifacts yet.
+Autotools source builds. This is the embedded fallback; the [official index](https://github.com/tale/rootbeer-index)
+owns the complete collection and signed publication.
 
 ```lua
 return {
-    name = "ripgrep",
-    aliases = { "rg" },
-    description = "Search file contents with regular expressions",
-    homepage = "https://github.com/BurntSushi/ripgrep",
-    upstream = {
-        provider = "github",
-        repository = "BurntSushi/ripgrep",
-    },
-    default_version = "15.2.0",
-    versions = {
-        ["15.2.0"] = {
-            revision = 1,
-            source = "github:BurntSushi/ripgrep@15.2.0",
-            assets = {
-                ["aarch64-macos"] = "ripgrep-15.2.0-aarch64-apple-darwin.tar.gz",
-                ["x86_64-macos"] = "ripgrep-15.2.0-x86_64-apple-darwin.tar.gz",
-                ["aarch64-linux"] = "ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
-                ["x86_64-linux"] = "ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
-            },
-            systems = { "aarch64-macos", "x86_64-macos", "aarch64-linux", "x86_64-linux" },
-            bins = { "rg" },
-            checks = { { "rg", "--version" } },
+    name = "jq",
+    description = "Query and transform JSON",
+    default_version = "1.8.2",
+    source = {
+        github = "jqlang/jq",
+        tag = "jq-{version}",
+        repository_id = 5101141,
+        assets = {
+            ["aarch64-linux"] = "jq-linux-arm64",
+            ["aarch64-macos"] = "jq-macos-arm64",
+            ["x86_64-linux"] = "jq-linux-amd64",
+            ["x86_64-macos"] = "jq-macos-amd64",
         },
+    },
+    systems = { "aarch64-macos", "x86_64-macos", "aarch64-linux", "x86_64-linux" },
+    bins = { "jq" },
+    checks = {
+        { "jq", "--version" },
+        { "jq", "--null-input", "--exit-status", "[1,2,3] | add == 6" },
+    },
+    versions = {
+        ["1.8.2"] = {},
     },
 }
 ```
 
-The optional `upstream` block keeps update discovery in the same file as approved
-versions. It inherits identity, commands, checks, and platforms from the package.
-Discovery saves the GitHub repository ID and reusable asset patterns in this block.
-These authoring rules are validated but excluded from catalog snapshots and build
-fingerprints. Run `rb package --catalog packages updates --cache <directory>
---output <new-directory>` to generate complete candidate files. See the
-[contribution guide](../docs/contributing/packaging.md) for filters and batch imports.
+The shared `source` drives both version expansion and update discovery. Commands
+and checks are declared once; versions override only historical differences.
+GitHub asset patterns infer platforms unless `systems` is explicit. Revisions
+default to 1, and source builds keep a verified checksum per version. See the
+[definition API](../docs/contributing/packaging.md) for inheritance and templates.
 
 The filename must match the canonical name. Names and aliases are unique across
 the collection. Versions identify upstream releases; increment `revision` when
@@ -203,7 +201,7 @@ before declaring packages. Local index files can use absolute `file:///` URLs;
 artifact URLs still refer to the configured HTTPS host or GHCR repository. The printed SHA-256 covers the exact index bytes and is not a signature.
 Receipts are build records, not authenticated attestations: publication must accept
 outputs only from trusted, successful CI jobs. The client can verify an official signed manifest and cache snapshots automatically;
-GitHub publication and the release endpoint/public key remain to be configured.
+The official index configures publication and the endpoint/public key.
 
 ## GHCR Archives
 
@@ -225,8 +223,8 @@ streams the blob through the normal hash-verified download cache. Public package
 need no Docker, ORAS, GitHub login, or user token. Private registry authentication
 is not implemented. Offline replay uses cached bytes without contacting GHCR.
 
-Rootbeer's binary releases remain separate from package distribution. The planned
-package repository owns recipes, build/publish workflows, and signed snapshots
+Rootbeer's binary releases remain separate from package distribution. The official
+package repository owns definitions, build/publish workflows, and signed snapshots
 served by GitHub Pages; GHCR owns archive blobs. Publishing packages should never
 create releases in `tale/rootbeer`. The existing documentation and nightly binary
 site also stays separate from the package-index Pages deployment.

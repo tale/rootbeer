@@ -47,7 +47,7 @@ impl CatalogPackage {
 }
 
 impl CatalogRecipe {
-    pub(super) fn validate(&self) -> Result<(), String> {
+    pub(in crate::package) fn validate(&self) -> Result<(), String> {
         if self.revision == 0 || self.source.is_some() == self.build.is_some() {
             return Err("recipe needs a revision and exactly one of source or build".into());
         }

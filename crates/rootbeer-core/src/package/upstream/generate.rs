@@ -212,8 +212,6 @@ pub(super) fn package(
         recipe.systems.sort();
         if let Some(previous) = package.versions.get(&version) {
             if previous.source != recipe.source
-                || previous.bins != recipe.bins
-                || previous.checks != recipe.checks
                 || recipe.assets.iter().any(|(system, asset)| {
                     previous.assets.get(system) != Some(asset) || !previous.systems.contains(system)
                 })
@@ -428,7 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_rewriting_pinned_versions_and_missing_targets() {
+    fn preserves_pinned_contracts_and_rejects_missing_targets() {
         let releases = vec![release(
             "v1",
             &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
@@ -436,11 +434,23 @@ mod tests {
         let mut upstream = upstream();
         let previous = package(&mut upstream, &repository(), &releases, None).unwrap();
         upstream.checks = vec![vec!["tool".into(), "--help".into()]];
-        assert!(
-            package(&mut upstream, &repository(), &releases, Some(&previous))
-                .unwrap_err()
-                .contains("revise it manually")
+        let unchanged = package(&mut upstream, &repository(), &releases, Some(&previous)).unwrap();
+        assert_eq!(
+            serde_json::to_value(&unchanged).unwrap(),
+            serde_json::to_value(&previous).unwrap()
         );
+        let newer = package(
+            &mut upstream,
+            &repository(),
+            &[release(
+                "v2",
+                &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
+            )],
+            Some(&previous),
+        )
+        .unwrap();
+        assert_eq!(newer.versions["2"].checks, upstream.checks);
+        assert_eq!(newer.versions["1"].checks, previous.versions["1"].checks);
         let releases = vec![release("v1", &["tool-darwin-arm64.tar.gz"])];
         assert!(package(&mut upstream, &repository(), &releases, None)
             .unwrap_err()

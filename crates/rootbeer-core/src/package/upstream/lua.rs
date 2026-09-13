@@ -56,6 +56,10 @@ fn quote(value: &str) -> String {
 }
 
 fn render(value: &Value, depth: usize) -> String {
+    render_field(value, depth, 0)
+}
+
+fn render_field(value: &Value, depth: usize, prefix: usize) -> String {
     match value {
         Value::Null => "nil".into(),
         Value::Bool(value) => value.to_string(),
@@ -64,16 +68,74 @@ fn render(value: &Value, depth: usize) -> String {
         Value::Array(values) if values.is_empty() => "{}".into(),
         Value::Object(values) if values.is_empty() => "{}".into(),
         Value::Array(values) => {
+            if values
+                .iter()
+                .all(|value| !value.is_array() && !value.is_object())
+            {
+                let inline = format!(
+                    "{{ {} }}",
+                    values
+                        .iter()
+                        .map(|value| render(value, depth + 1))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                if depth * 4 + prefix + inline.len() < 100 {
+                    return inline;
+                }
+            }
             let entries = values.iter().map(|value| render(value, depth + 1));
             table(entries, depth)
         }
         Value::Object(values) => {
-            let entries = values
-                .iter()
-                .map(|(key, value)| format!("[{}] = {}", quote(key), render(value, depth + 1)));
+            let entries = values.iter().map(|(key, value)| {
+                let key = field(key);
+                format!("{key} = {}", render_field(value, depth + 1, key.len() + 3))
+            });
             table(entries, depth)
         }
     }
+}
+
+fn field(key: &str) -> String {
+    let is_identifier = key
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+    let is_reserved = matches!(
+        key,
+        "and"
+            | "break"
+            | "do"
+            | "else"
+            | "elseif"
+            | "end"
+            | "false"
+            | "for"
+            | "function"
+            | "if"
+            | "in"
+            | "local"
+            | "nil"
+            | "not"
+            | "or"
+            | "repeat"
+            | "return"
+            | "then"
+            | "true"
+            | "until"
+            | "while"
+            | "continue"
+            | "type"
+            | "export"
+    );
+    if is_identifier && !is_reserved {
+        return key.into();
+    }
+    format!("[{}]", quote(key))
 }
 
 fn table(entries: impl Iterator<Item = String>, depth: usize) -> String {
@@ -94,6 +156,7 @@ mod tests {
                 "Unicode café\n\0\u{7f}123\"; error('bad') --",
             ),
             ("key\\\"", "\\tag{version}"),
+            ("end", "reserved Lua keyword"),
         ]);
         let output: std::collections::BTreeMap<String, String> =
             read(&write(&input).unwrap()).unwrap();

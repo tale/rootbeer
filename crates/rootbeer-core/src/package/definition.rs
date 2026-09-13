@@ -8,11 +8,20 @@ use serde::{Deserialize, Serialize};
 use super::upstream::lua;
 use super::{CatalogPackage, GitHubUpstream};
 
+mod compact;
+
 /// A package's approved versions and optional update rules, stored in one Lua file.
 #[derive(Debug, Clone)]
 pub struct PackageDefinition {
     pub package: CatalogPackage,
     pub upstream: Option<PackageUpstream>,
+    contract: Option<Contract>,
+}
+
+#[derive(Debug, Clone)]
+struct Contract {
+    bins: Vec<String>,
+    checks: Vec<Vec<String>>,
 }
 
 /// Authoring metadata excluded from published catalogs and qualification fingerprints.
@@ -35,16 +44,36 @@ pub enum PackageUpstream {
 }
 
 impl PackageDefinition {
+    /// Wraps exact catalog recipes without update rules or shared authoring defaults.
+    pub fn new(package: CatalogPackage) -> Self {
+        Self {
+            package,
+            upstream: None,
+            contract: None,
+        }
+    }
+
     /// Evaluates a package in the same bounded, I/O-free sandbox as catalog recipes.
     pub fn from_lua(source: &str) -> Result<Self, String> {
         let (lua, value) = lua::evaluate(source)?;
         let table = value.as_table().ok_or("package must return a table")?;
+        if table.contains_key("source").map_err(|e| e.to_string())?
+            || table.contains_key("build").map_err(|e| e.to_string())?
+        {
+            let package: compact::CompactPackage =
+                lua.from_value(value).map_err(|e| e.to_string())?;
+            return package.expand();
+        }
         let upstream = lua
             .from_value(table.raw_get("upstream").map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
         table.raw_remove("upstream").map_err(|e| e.to_string())?;
         let package = lua.from_value(value).map_err(|e| e.to_string())?;
-        let definition = Self { package, upstream };
+        let definition = Self {
+            package,
+            upstream,
+            contract: None,
+        };
         definition.github_upstream()?;
         Ok(definition)
     }
@@ -76,10 +105,6 @@ impl PackageDefinition {
         package: CatalogPackage,
         upstream: &GitHubUpstream,
     ) -> Result<Self, String> {
-        let recipe = package
-            .versions
-            .get(&package.default_version)
-            .ok_or("default version has no recipe")?;
         if package.name != upstream.name
             || package.aliases != upstream.aliases
             || upstream
@@ -90,11 +115,9 @@ impl PackageDefinition {
                 .homepage
                 .as_ref()
                 .is_some_and(|value| value != &package.homepage)
-            || recipe.bins != upstream.bins
-            || recipe.checks != upstream.checks
         {
             return Err(format!(
-                "{}: update rules must inherit the package identity, commands, and checks",
+                "{}: update rules must inherit the package identity",
                 package.name
             ));
         }
@@ -105,6 +128,10 @@ impl PackageDefinition {
         };
         let definition = Self {
             package,
+            contract: Some(Contract {
+                bins: upstream.bins.clone(),
+                checks: upstream.checks.clone(),
+            }),
             upstream: Some(PackageUpstream::Github {
                 repository: upstream.repository.clone(),
                 repository_id: upstream.repository_id,
@@ -145,6 +172,10 @@ impl PackageDefinition {
         upstream.description = Some(package.description.clone());
         upstream.homepage = Some(package.homepage.clone());
         upstream.checks = recipe.checks.clone();
+        if let Some(contract) = &self.contract {
+            upstream.bins = contract.bins.clone();
+            upstream.checks = contract.checks.clone();
+        }
         upstream.repository_id = *repository_id;
         upstream.tag_prefix = tag_prefix.clone();
         upstream.exclude_tags = exclude_tags.clone();
@@ -161,6 +192,16 @@ impl PackageDefinition {
     /// Renders one complete package file, including its update rules when configured.
     pub fn to_lua(&self) -> Result<String, String> {
         self.github_upstream()?;
+        if let Some(compact) = compact::CompactPackage::from_definition(self)? {
+            let source = lua::write(&compact)?;
+            let expanded = Self::from_lua(&source)?;
+            if serde_json::to_value(&expanded.package).map_err(|e| e.to_string())?
+                != serde_json::to_value(&self.package).map_err(|e| e.to_string())?
+            {
+                return Err("compact definition changed expanded package data".into());
+            }
+            return Ok(source);
+        }
         let mut value = serde_json::to_value(&self.package).map_err(|e| e.to_string())?;
         if let Some(upstream) = &self.upstream {
             value.as_object_mut().unwrap().insert(
@@ -189,6 +230,7 @@ mod tests {
         let package = PackageCatalog::embedded().unwrap().packages["age"].clone();
         PackageDefinition {
             package,
+            contract: None,
             upstream: Some(PackageUpstream::Github {
                 repository: "FiloSottile/age".into(),
                 repository_id: Some(123),
@@ -226,8 +268,8 @@ mod tests {
         fs::write(
             root.path().join("age.lua"),
             source.replace(
-                "[\"repository_id\"] = 123",
-                "[\"repository_id\"] = 456, [\"exclude_tags\"] = { \"legacy\" }",
+                "repository_id = 123",
+                "repository_id = 456, exclude_tags = { \"legacy\" }",
             ),
         )
         .unwrap();
@@ -251,20 +293,22 @@ mod tests {
         let source = definition.to_lua().unwrap();
         for invalid in [
             source.replace(
-                "[\"provider\"] = \"github\"",
-                "[\"provider\"] = \"unknown\"",
+                "github = \"FiloSottile/age\"",
+                "gitlab = \"FiloSottile/age\"",
             ),
-            source.replace("[\"repository_id\"]", "[\"repository_typo\"]"),
-            source.replace("[\"homepage\"]", "[\"homepage_typo\"]"),
-            source.replace("[\"repository_id\"] = 123", "[\"repository_id\"] = 0"),
+            source.replace("repository_id", "repository_typo"),
+            source.replace("homepage", "homepage_typo"),
+            source.replace("repository_id = 123", "repository_id = 0"),
         ] {
             assert!(PackageDefinition::from_lua(&invalid).is_err());
         }
+        let mut legacy = serde_json::to_value(&definition.package).unwrap();
+        legacy["upstream"] = serde_json::to_value(&definition.upstream).unwrap();
         fs::write(
             root.path().join("age.lua"),
-            source.replace(
-                "[\"repository\"] = \"FiloSottile/age\"",
-                "[\"repository\"] = \"other/age\"",
+            lua::write(&legacy).unwrap().replace(
+                "repository = \"FiloSottile/age\"",
+                "repository = \"other/age\"",
             ),
         )
         .unwrap();

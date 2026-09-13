@@ -7,21 +7,76 @@ recipe normally needs no Rust changes or Rootbeer release.
 The `packages/` directory in the engine repository is the smaller embedded fallback
 and authoring fixture. It is not the complete hosted catalog.
 
-## Recipe contract
+## Definition API
 
-A Lua recipe declares a canonical name, description, homepage, exact versions,
-revision, supported platforms, exported commands, and executable checks. Each
-version imports an upstream binary or describes a supported source build.
+Declare shared source settings, commands, and checks once. Version entries contain
+only their checksum, revision, or exceptions:
 
-Choose the newest upstream release available for each platform. Use
-`default_versions` when a discontinued target needs an older default. Preserve
-older version recipes, and increment the revision when changing an existing one.
+```lua
+return {
+    name = "tool",
+    description = "A command-line tool",
+    default_version = "2.0.0",
+    source = {
+        github = "owner/tool",
+        tag = "v{version}",
+        assets = {
+            ["aarch64-linux"] = "tool-{tag}-linux-arm64.tar.gz",
+            ["x86_64-linux"] = "tool-{tag}-linux-amd64.tar.gz",
+            ["aarch64-macos"] = "tool-{tag}-darwin-arm64.tar.gz",
+            ["x86_64-macos"] = "tool-{tag}-darwin-amd64.tar.gz",
+        },
+    },
+    bins = { "tool" },
+    checks = { { "tool", "--version" } },
+    versions = {
+        ["1.0.0"] = { revision = 2 },
+        ["2.0.0"] = {},
+    },
+}
+```
 
-Prefer direct GitHub releases with explicit per-platform asset names. Source
-recipes currently use Autotools with declared build dependencies. Verify source
-bytes before recording their hashes. See the
-[recipe authoring reference](https://github.com/tale/rootbeer/tree/main/packages)
-for the format and the index repository's contributor instructions for policy.
+The filename matches `name`; aliases remain explicit. GitHub packages default their
+homepage to the repository URL. Override `homepage` for a project website.
+
+`source.assets` defines supported platforms unless `systems` is explicit. Patterns
+accept `{version}` and `{tag}`; the tag template accepts `{version}`. Expansion
+happens before catalog validation. Command arguments and configure flags are literal.
+Unsupported placeholders and unknown fields fail validation.
+
+A version inherits `bins`, `checks`, and `systems`; explicit arrays replace them.
+Version `assets` override individual platforms, filtered to that version's systems.
+Use `tag` for an exceptional release tag. Revisions default to 1. Empty arrays do
+not mean inheritance: invalid empty command or platform contracts are rejected.
+Discovery uses the shared command contract for new releases and preserves existing
+versions' explicit checks, including exceptions on the current default.
+
+Choose the newest release for each platform. `default_version` stays explicit;
+`default_versions` selects older defaults for discontinued targets. Retain older
+versions and their exceptions. Explicit version requests never fall back.
+
+### Source builds
+
+Use a shared `build` instead of `source`. It declares the supported `backend`
+(currently `autotools`), archive format, source URL, strip prefix, configure flags,
+and exact build dependencies. URL and strip prefix accept `{version}`. Build
+packages must declare `homepage` and `systems` explicitly.
+
+Each version supplies its own verified `sha256`; checksums cannot be shared or
+inferred. A version's `build` can replace the complete build definition for a
+historical exception, including its exact URL and checksum.
+
+### Expansion and compatibility
+
+Compact files expand into the same exact recipes used by resolution, caches,
+qualification, and signed snapshots. Existing expanded Lua definitions still load.
+`rb package index` shows the expanded result; discovery and import emit compact Lua.
+Migration preserves array ordering, so some older definitions keep explicit platform
+lists even when their membership matches the asset map.
+
+Shared changes affect every version that inherits them. Review expanded output,
+retain old behavior with version overrides, or increment every affected revision.
+Authoring-only changes must leave expanded recipes unchanged to reuse their results.
 
 ## Import GitHub projects
 
@@ -32,27 +87,9 @@ rb package --catalog packages import github:owner/tool \
   --name tool --bin tool --output candidates
 ```
 
-The output contains one complete `packages/tool.lua`: approved versions plus an
-`upstream` block for future discovery. The output directory must not already exist.
-
-`upstream` holds GitHub's repository name and ID, tag filters, and asset patterns:
-
-```lua
-upstream = {
-    provider = "github",
-    repository = "owner/tool",
-    assets = {
-        ["aarch64-macos"] = "tool-{version}-darwin-arm64.tar.gz",
-    },
-},
-```
-
-It inherits the package name, aliases, description, homepage, and the default
-version's commands and checks. Platforms default to those declared by the package;
-`upstream.systems` can narrow the discovery pass. Update rules are validated when
-loading the package, but excluded from published snapshots and build fingerprints.
-A package without `upstream` still installs and builds normally; discovery reports
-it as untracked. Automatic discovery currently supports GitHub releases.
+The output contains one complete compact `packages/tool.lua`, including its
+GitHub repository ID and reusable source patterns. The output directory must not
+already exist.
 
 Names default to the lowercase repository name. Use `--name` to choose the canonical
 identity and repeat `--alias` for alternate names. The importer rejects names and
@@ -104,6 +141,13 @@ The importer does not download binaries, execute imported code, or publish candi
 
 ## Track upstream updates
 
+GitHub `source` settings drive both discovery and version expansion. A tag template
+such as `tool-{version}` also selects that release series; `source.tag_prefix`
+can override the discovery filter. Optional `v` prefixes remain accepted for
+numeric tags. `source.update_systems` narrows discovery without removing retained
+platform recipes. Set `source.track = false` to opt out. Source builds remain
+untracked; automatic discovery currently supports GitHub binary releases only.
+
 Run discovery directly against the package directory:
 
 ```sh
@@ -112,7 +156,7 @@ rb package --catalog packages updates \
 ```
 
 For older catalogs without update rules, `seed-upstreams --output tracked-packages`
-creates complete copies of GitHub-backed packages with inferred `upstream` blocks.
+creates compact copies of GitHub-backed packages with inferred source patterns.
 Review their asset patterns and tag filters before adopting them. The output must
 be a new directory; seeding does not preserve customized discovery rules.
 
@@ -130,7 +174,7 @@ Release histories are still checked page by page, and changed metadata can requi
 a fresh response even when no package version changes.
 
 Legacy tags that do not belong to the tracked release series can be listed explicitly
-in a package's `upstream.exclude_tags`, or supplied with repeated `--exclude-tag`
+in a package's `source.exclude_tags`, or supplied with repeated `--exclude-tag`
 arguments during import. Unsupported tags otherwise remain visible errors.
 
 The index's discovery workflow runs daily or manually, retains the report and
