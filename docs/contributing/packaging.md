@@ -83,9 +83,43 @@ candidate directory contains only the requested packages, including their retain
 versions. A failed batch leaves no output directory. After qualification, review
 and copy the candidate recipes and upstream definitions into the index repository.
 
-This is the shared import/update engine. Scheduled discovery, conditional metadata
-caching, and automatic promotion are not implemented yet. The importer does not
-download binaries, execute imported code, or publish candidates.
+The importer does not download binaries, execute imported code, or publish candidates.
+
+## Track upstream updates
+
+Bootstrap rules for an existing catalog, then run discovery:
+
+```sh
+rb package --catalog recipes seed-upstreams --output upstreams
+rb package --catalog recipes updates --upstreams upstreams \
+  --cache .upstream-metadata --output candidates
+```
+
+Seeding preserves command checks and selects GitHub-backed packages. Source builds
+and other backends appear as untracked in the update report. Keep any customized
+upstream definitions; seeding requires a new directory.
+
+`updates` reports each project independently. It writes `report.json`, `summary.md`,
+changed recipes, and any changed upstream rules, including newly recorded repository
+IDs. Unchanged recipes are omitted, so a no-change scan needs no package qualification.
+Errors return a nonzero exit status after writing the report and successful candidates.
+
+The metadata cache sends GitHub ETags with conditional requests and reuses responses
+only after HTTP 304. It verifies cached hashes and never treats network failures as
+unchanged upstreams. Use a trusted cache directory; its entries are not signed.
+Release histories are still checked page by page, and changed metadata can require
+a fresh response even when no package version changes.
+
+Legacy tags that do not belong to the tracked release series can be listed explicitly
+in an upstream definition's `exclude_tags`, or supplied with repeated `--exclude-tag`
+arguments during import. Unsupported tags otherwise remain visible errors.
+
+The index's discovery workflow runs daily or manually, retains the report and
+candidates as workflow artifacts, and qualifies changed packages on all four
+platforms using verified-result caches. Discovery errors remain visible while
+successful candidates can still be checked. It has read-only repository permissions
+and does not publish, open pull requests, or advance defaults automatically.
+Review qualified candidates before copying them into the index's recipes.
 
 ## Qualify a change
 

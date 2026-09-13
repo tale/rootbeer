@@ -11,6 +11,10 @@ use super::{CatalogPackage, PackageCatalog, PackageRequest};
 
 mod generate;
 mod lua;
+mod metadata;
+mod updates;
+
+pub use updates::{discover_updates, seed_upstreams, UpdateReport};
 
 /// Authoring rules for a canonical package imported from GitHub releases.
 /// Stored separately from installable recipes and signed catalog snapshots.
@@ -30,6 +34,9 @@ pub struct GitHubUpstream {
     /// None accepts numeric tags with an optional v; Some restricts the tag prefix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag_prefix: Option<String>,
+    /// Explicitly excluded legacy or unrelated release tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_tags: Vec<String>,
     #[serde(default = "all_systems")]
     pub systems: Vec<String>,
     /// Exact asset names with optional {tag} and {version} substitutions.
@@ -65,6 +72,7 @@ impl GitHubUpstream {
             description: None,
             homepage: None,
             tag_prefix: None,
+            exclude_tags: Vec::new(),
             systems: all_systems(),
             assets: BTreeMap::new(),
             bins,
@@ -258,42 +266,7 @@ fn import_with_fetch(
             "Discover {} from {}",
             definition.name, definition.repository
         );
-        let mut upstream = definition.clone();
-        let url = format!("https://api.github.com/repos/{}", upstream.repository);
-        let repository: Repository =
-            serde_json::from_value(fetch(&url)?).map_err(|e| e.to_string())?;
-        if repository.id == 0 || upstream.repository_id.is_some_and(|id| id != repository.id) {
-            return Err(format!(
-                "{}: GitHub repository ID changed; review upstream ownership",
-                upstream.name
-            ));
-        }
-        if !upstream
-            .repository
-            .eq_ignore_ascii_case(&repository.full_name)
-        {
-            return Err(format!(
-                "{}: repository moved to {}; review the identity mapping",
-                upstream.name, repository.full_name
-            ));
-        }
-        upstream.repository_id = Some(repository.id);
-        let mut releases = Vec::new();
-        for page in 1..=max_pages {
-            let batch: Vec<Release> =
-                serde_json::from_value(fetch(&format!("{url}/releases?per_page=100&page={page}"))?)
-                    .map_err(|e| e.to_string())?;
-            let is_complete = batch.len() < 100;
-            releases.extend(batch);
-            if is_complete {
-                break;
-            }
-            if page == max_pages {
-                return Err(format!("{}: release history exceeds --max-pages {max_pages}; increase it to avoid incomplete version selection", upstream.name));
-            }
-        }
-        let existing = catalog.packages.get(&upstream.name);
-        let package = generate::package(&mut upstream, &repository, &releases, existing)?;
+        let (upstream, package) = discover_package(catalog, definition, max_pages, &mut fetch)?;
         combined
             .packages
             .insert(package.name.clone(), package.clone());
@@ -305,6 +278,51 @@ fn import_with_fetch(
     candidates.validate()?;
     write_candidates(staging.path(), &candidates, &resolved, output)?;
     Ok(candidates)
+}
+
+fn discover_package(
+    catalog: &PackageCatalog,
+    definition: &GitHubUpstream,
+    max_pages: usize,
+    fetch: &mut impl FnMut(&str) -> Result<serde_json::Value, String>,
+) -> Result<(GitHubUpstream, CatalogPackage), String> {
+    check_identity(catalog, definition)?;
+    let mut upstream = definition.clone();
+    let url = format!("https://api.github.com/repos/{}", upstream.repository);
+    let repository: Repository = serde_json::from_value(fetch(&url)?).map_err(|e| e.to_string())?;
+    if repository.id == 0 || upstream.repository_id.is_some_and(|id| id != repository.id) {
+        return Err(format!(
+            "{}: GitHub repository ID changed; review upstream ownership",
+            upstream.name
+        ));
+    }
+    if !upstream
+        .repository
+        .eq_ignore_ascii_case(&repository.full_name)
+    {
+        return Err(format!(
+            "{}: repository moved to {}; review the identity mapping",
+            upstream.name, repository.full_name
+        ));
+    }
+    upstream.repository_id = Some(repository.id);
+    let mut releases = Vec::new();
+    for page in 1..=max_pages {
+        let batch: Vec<Release> =
+            serde_json::from_value(fetch(&format!("{url}/releases?per_page=100&page={page}"))?)
+                .map_err(|e| e.to_string())?;
+        let is_complete = batch.len() < 100;
+        releases.extend(batch);
+        if is_complete {
+            break;
+        }
+        if page == max_pages {
+            return Err(format!("{}: release history exceeds --max-pages {max_pages}; increase it to avoid incomplete version selection", upstream.name));
+        }
+    }
+    let existing = catalog.packages.get(&upstream.name);
+    let package = generate::package(&mut upstream, &repository, &releases, existing)?;
+    Ok((upstream, package))
 }
 
 fn write_candidates(

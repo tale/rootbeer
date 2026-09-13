@@ -31,7 +31,7 @@ fn release_version<'a>(
     upstream: &GitHubUpstream,
     release: &'a Release,
 ) -> Result<Option<&'a str>, String> {
-    if release.draft || release.prerelease {
+    if release.draft || release.prerelease || upstream.exclude_tags.contains(&release.tag_name) {
         return Ok(None);
     }
     let version = match &upstream.tag_prefix {
@@ -402,6 +402,7 @@ mod tests {
             draft,
             prerelease,
             release("other-999", &[]),
+            release("tool-legacy-build", &[]),
             release(
                 "tool-2",
                 &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
@@ -409,6 +410,7 @@ mod tests {
         ];
         let mut upstream = upstream();
         upstream.tag_prefix = Some("tool-".into());
+        upstream.exclude_tags = vec!["tool-legacy-build".into()];
         assert_eq!(
             package(&mut upstream, &repository(), &releases, None)
                 .unwrap()

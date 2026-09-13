@@ -17,6 +17,22 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Seed upstream Lua definitions from the selected catalog's GitHub recipes
+    SeedUpstreams {
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Check tracked upstreams, caching metadata and reporting independent failures
+    Updates {
+        #[arg(long)]
+        upstreams: PathBuf,
+        #[arg(long)]
+        cache: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value_t = 20)]
+        max_pages: usize,
+    },
     /// Discover GitHub releases and generate candidate recipes and upstream rules
     Import(Box<import::ImportArgs>),
     /// List canonical names, approved defaults, and descriptions
@@ -131,6 +147,36 @@ fn execute(args: Args) -> Result<(), String> {
     };
     let mut output = io::stdout().lock();
     match args.command {
+        Command::SeedUpstreams { output } => {
+            let count = rootbeer_core::package::seed_upstreams(catalog, &output)?;
+            writeln!(io::stdout(), "Seeded {count} GitHub upstream definitions")
+                .map_err(|e| e.to_string())?;
+        }
+        Command::Updates {
+            upstreams,
+            cache,
+            output,
+            max_pages,
+        } => {
+            let definitions = rootbeer_core::package::GitHubUpstream::from_directory(&upstreams)?;
+            let report = rootbeer_core::package::discover_updates(
+                catalog,
+                &definitions,
+                &cache,
+                &output,
+                max_pages,
+            )?;
+            eprintln!(
+                "{} updates, {} unchanged, {} errors; report: {}",
+                report.updated.len(),
+                report.unchanged.len(),
+                report.errors.len(),
+                output.join("summary.md").display()
+            );
+            if !report.errors.is_empty() {
+                return Err("some upstreams failed; see the discovery report".into());
+            }
+        }
         Command::Import(args) => {
             let candidates = import::run(*args, catalog)?;
             for package in candidates.packages.values() {

@@ -48,7 +48,9 @@ pub use resolve::{
 pub use spec::{
     ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRealizationInput, Provides,
 };
-pub use upstream::{import_github_packages, GitHubUpstream};
+pub use upstream::{
+    discover_updates, import_github_packages, seed_upstreams, GitHubUpstream, UpdateReport,
+};
 
 pub fn default_resolver_stack() -> ResolverStack {
     resolver_stack_for_inputs(&PackageResolverInputs::default())

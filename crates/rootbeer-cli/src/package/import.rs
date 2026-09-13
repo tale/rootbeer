@@ -32,6 +32,9 @@ pub(super) struct ImportArgs {
     /// Only consider tags with this prefix, stripping it from canonical versions
     #[arg(long, requires = "source")]
     tag_prefix: Option<String>,
+    /// Explicit legacy or unrelated tag to exclude; repeat as needed
+    #[arg(long = "exclude-tag", requires = "source")]
+    exclude_tags: Vec<String>,
     #[arg(long, requires = "source")]
     description: Option<String>,
     #[arg(long, requires = "source")]
@@ -67,6 +70,7 @@ pub(super) fn run(args: ImportArgs, catalog: &PackageCatalog) -> Result<PackageC
             let mut upstream = GitHubUpstream::new(name, repository.into(), args.bins);
             upstream.aliases = args.aliases;
             upstream.tag_prefix = args.tag_prefix;
+            upstream.exclude_tags = args.exclude_tags;
             upstream.description = args.description;
             upstream.homepage = args.homepage;
             if !args.systems.is_empty() {

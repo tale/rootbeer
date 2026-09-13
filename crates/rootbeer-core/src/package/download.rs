@@ -282,7 +282,7 @@ fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
     Ok(Box::new(body.into_reader()))
 }
 
-fn http_request(
+pub(super) fn http_request(
     url: &str,
     token: Option<&str>,
 ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {

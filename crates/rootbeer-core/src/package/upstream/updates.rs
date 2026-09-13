@@ -1,0 +1,325 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
+
+use serde::Serialize;
+use serde_json::Value;
+
+use super::metadata::{MetadataCache, Statistics};
+use super::{discover_package, lua, validate_definitions, GitHubUpstream};
+use crate::package::{CatalogPackage, PackageCatalog, PackageRequest};
+
+/// A discovery report; candidate recipes are unqualified until package export succeeds.
+#[derive(Serialize)]
+pub struct UpdateReport {
+    pub schema: u32,
+    pub catalog_sha256: String,
+    pub updated: Vec<String>,
+    pub unchanged: Vec<String>,
+    pub rules_changed: Vec<String>,
+    pub errors: BTreeMap<String, String>,
+    pub untracked: Vec<String>,
+    pub defaults: BTreeMap<String, BTreeMap<String, String>>,
+    metadata: Statistics,
+}
+
+/// Seeds reusable rules from GitHub-backed defaults without requesting network metadata.
+/// Source-built and other backend packages are omitted; the destination must be new.
+pub fn seed_upstreams(catalog: &PackageCatalog, output: &Path) -> Result<usize, String> {
+    catalog.validate()?;
+    let staging = crate::package::publication::staging(output)?;
+    let destination = staging.path().join("upstreams");
+    fs::create_dir(&destination).map_err(|e| e.to_string())?;
+    let mut definitions = Vec::new();
+    for package in catalog.packages.values() {
+        let recipe = &package.versions[&package.default_version];
+        let Some(source) = recipe.source.as_deref() else {
+            continue;
+        };
+        let request = PackageRequest::parse(source);
+        if request.resolver.as_deref() != Some("github") {
+            continue;
+        }
+        let mut definition =
+            GitHubUpstream::new(package.name.clone(), request.name, recipe.bins.clone());
+        definition.aliases = package.aliases.clone();
+        definition.description = Some(package.description.clone());
+        definition.homepage = Some(package.homepage.clone());
+        definition.checks = recipe.checks.clone();
+        definition.systems = package
+            .versions
+            .values()
+            .flat_map(|recipe| recipe.systems.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let tag = request.version.ok_or("GitHub recipe has no tag")?;
+        let prefix = tag.strip_suffix(&package.default_version).ok_or_else(|| {
+            format!(
+                "{}: tag cannot be mapped to its canonical version",
+                package.name
+            )
+        })?;
+        if !matches!(prefix, "" | "v") {
+            definition.tag_prefix = Some(prefix.into());
+        }
+        definitions.push(definition);
+    }
+    validate_definitions(&definitions)?;
+    for definition in &definitions {
+        fs::write(
+            destination.join(format!("{}.lua", definition.name)),
+            lua::write(definition)?,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    fs::rename(destination, output).map_err(|e| e.to_string())?;
+    Ok(definitions.len())
+}
+
+/// Discovers each tracked project independently using conditional cached API requests.
+/// Writes only changed candidate recipes, saved rules, and a consolidated JSON/Markdown report.
+pub fn discover_updates(
+    catalog: &PackageCatalog,
+    definitions: &[GitHubUpstream],
+    cache: &Path,
+    output: &Path,
+    max_pages: usize,
+) -> Result<UpdateReport, String> {
+    let mut cache = MetadataCache::new(cache)?;
+    let mut report = discover_with_fetch(catalog, definitions, output, max_pages, |url| {
+        cache.fetch(url)
+    })?;
+    report.metadata = cache.statistics;
+    write_report(output, &report)?;
+    Ok(report)
+}
+
+fn discover_with_fetch(
+    catalog: &PackageCatalog,
+    definitions: &[GitHubUpstream],
+    output: &Path,
+    max_pages: usize,
+    mut fetch: impl FnMut(&str) -> Result<Value, String>,
+) -> Result<UpdateReport, String> {
+    catalog.validate()?;
+    validate_definitions(definitions)?;
+    if !(1..=100).contains(&max_pages) {
+        return Err("max-pages must be between 1 and 100".into());
+    }
+    let staging = crate::package::publication::staging(output)?;
+    let destination = staging.path().join("updates");
+    fs::create_dir(&destination).map_err(|e| e.to_string())?;
+    for folder in ["recipes", "upstreams"] {
+        fs::create_dir(destination.join(folder)).map_err(|e| e.to_string())?;
+    }
+    let mut report = UpdateReport {
+        schema: 1,
+        catalog_sha256: catalog.sha256(),
+        updated: Vec::new(),
+        unchanged: Vec::new(),
+        rules_changed: Vec::new(),
+        errors: BTreeMap::new(),
+        defaults: BTreeMap::new(),
+        metadata: Statistics::default(),
+        untracked: catalog
+            .packages
+            .keys()
+            .filter(|name| {
+                !definitions
+                    .iter()
+                    .any(|definition| &definition.name == *name)
+            })
+            .cloned()
+            .collect(),
+    };
+    let mut combined = catalog.clone();
+    let mut identities = BTreeMap::new();
+    for definition in definitions {
+        eprintln!(
+            "Discover {} from {}",
+            definition.name, definition.repository
+        );
+        let result = discover_package(&combined, definition, max_pages, &mut fetch).and_then(
+            |(upstream, package)| {
+                let id = upstream.repository_id.unwrap();
+                if let Some(name) = identities.get(&id) {
+                    return Err(format!("repository is already tracked as `{name}`"));
+                }
+                let mut candidate = combined.clone();
+                candidate
+                    .packages
+                    .insert(package.name.clone(), package.clone());
+                candidate.validate()?;
+                identities.insert(id, package.name.clone());
+                combined = candidate;
+                Ok((upstream, package))
+            },
+        );
+        let (upstream, package) = match result {
+            Ok(result) => result,
+            Err(error) => {
+                report.errors.insert(definition.name.clone(), error);
+                continue;
+            }
+        };
+        let is_changed = catalog
+            .packages
+            .get(&package.name)
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| e.to_string())?
+            != Some(serde_json::to_value(&package).map_err(|e| e.to_string())?);
+        if is_changed {
+            report
+                .defaults
+                .insert(package.name.clone(), platform_defaults(&package));
+            report.updated.push(package.name.clone());
+            fs::write(
+                destination
+                    .join("recipes")
+                    .join(format!("{}.lua", package.name)),
+                lua::write(&package)?,
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            report.unchanged.push(package.name.clone());
+        }
+        if serde_json::to_value(definition).map_err(|e| e.to_string())?
+            != serde_json::to_value(&upstream).map_err(|e| e.to_string())?
+        {
+            report.rules_changed.push(upstream.name.clone());
+            fs::write(
+                destination
+                    .join("upstreams")
+                    .join(format!("{}.lua", upstream.name)),
+                lua::write(&upstream)?,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    if !report.updated.is_empty() {
+        PackageCatalog::from_directory(&destination.join("recipes"))?;
+    }
+    write_report(&destination, &report)?;
+    fs::rename(destination, output).map_err(|e| e.to_string())?;
+    Ok(report)
+}
+
+fn platform_defaults(package: &CatalogPackage) -> BTreeMap<String, String> {
+    package
+        .versions
+        .values()
+        .flat_map(|recipe| &recipe.systems)
+        .map(|system| (system.clone(), package.default_version_for(system).into()))
+        .collect()
+}
+
+fn escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('`', "&#96;")
+        .replace(['\n', '\r'], " ")
+}
+
+fn write_report(output: &Path, report: &UpdateReport) -> Result<(), String> {
+    fs::write(
+        output.join("report.json"),
+        serde_json::to_vec_pretty(report).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let mut summary = format!("# Upstream discovery\n\n{} changed; {} unchanged; {} errors; {} untracked.\n\nMetadata: {} fetched, {} not modified.\n", report.updated.len(), report.unchanged.len(), report.errors.len(), report.untracked.len(), report.metadata.fetched, report.metadata.not_modified);
+    for (name, defaults) in &report.defaults {
+        summary.push_str(&format!(
+            "\n- **{}**: {}\n",
+            escape(name),
+            defaults
+                .iter()
+                .map(|(system, version)| format!("{} {}", escape(system), escape(version)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    for (name, error) in &report.errors {
+        summary.push_str(&format!(
+            "\n- **{} failed**: {}\n",
+            escape(name),
+            escape(error)
+        ));
+    }
+    if !report.untracked.is_empty() {
+        summary.push_str(&format!(
+            "\nNot tracked by GitHub discovery: {}.\n",
+            report
+                .untracked
+                .iter()
+                .map(|name| escape(name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    summary.push_str("\nCandidates require platform qualification and review before promotion.\n");
+    fs::write(output.join("summary.md"), summary).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unchanged_packages_need_no_qualification_and_failures_do_not_stop_other_projects() {
+        let root = tempfile::tempdir().unwrap();
+        let catalog = PackageCatalog::embedded().unwrap();
+        let mut definition =
+            GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
+        definition.systems = vec!["aarch64-macos".into()];
+        let mut broken = definition.clone();
+        broken.name = "broken".into();
+        broken.repository = "owner/broken".into();
+        let fetch = |url: &str| {
+            if url.contains("/broken") {
+                return Err("rate limited".into());
+            }
+            if !url.contains("/releases") {
+                return Ok(
+                    serde_json::json!({"id":42,"full_name":"owner/tool","description":"Tool"}),
+                );
+            }
+            Ok(
+                serde_json::json!([{"id":1,"tag_name":"v1","assets":[{"name":"tool-darwin-arm64.tar.gz","browser_download_url":"https://example.com/tool"}]}]),
+            )
+        };
+        let output = root.path().join("first");
+        let report =
+            discover_with_fetch(catalog, &[broken, definition], &output, 1, fetch).unwrap();
+        assert_eq!(report.updated, ["tool"]);
+        assert_eq!(report.errors["broken"], "rate limited");
+        let candidates = PackageCatalog::from_directory(&output.join("recipes")).unwrap();
+        let definitions = GitHubUpstream::from_directory(&output.join("upstreams")).unwrap();
+        let repeat = root.path().join("repeat");
+        let report = discover_with_fetch(&candidates, &definitions, &repeat, 1, fetch).unwrap();
+        assert!(report.updated.is_empty());
+        assert!(report.rules_changed.is_empty());
+        assert_eq!(report.unchanged, ["tool"]);
+        assert_eq!(fs::read_dir(repeat.join("recipes")).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn seeds_only_github_projects_and_preserves_functional_checks() {
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("upstreams");
+        let catalog = PackageCatalog::embedded().unwrap();
+        let count = seed_upstreams(catalog, &output).unwrap();
+        let definitions = GitHubUpstream::from_directory(&output).unwrap();
+        assert_eq!(count, definitions.len());
+        assert!(!definitions.iter().any(|definition| definition.name == "xz"));
+        let age = definitions
+            .iter()
+            .find(|definition| definition.name == "age")
+            .unwrap();
+        assert_eq!(age.bins, ["age", "age-keygen"]);
+        assert_eq!(age.tag_prefix, None);
+    }
+}
