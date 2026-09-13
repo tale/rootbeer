@@ -180,7 +180,7 @@ impl PackageCatalog {
     }
 }
 
-fn valid_name(name: &str) -> bool {
+pub(super) fn valid_name(name: &str) -> bool {
     name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
         && name
             .bytes()

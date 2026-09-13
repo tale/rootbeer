@@ -23,6 +23,70 @@ bytes before recording their hashes. See the
 [recipe authoring reference](https://github.com/tale/rootbeer/tree/main/packages)
 for the format and the index repository's contributor instructions for policy.
 
+## Import GitHub projects
+
+Generate candidates without editing the current catalog:
+
+```sh
+rb package --catalog recipes import github:owner/tool \
+  --name tool --bin tool --output candidates
+```
+
+The output contains `recipes/tool.lua` with exact version and asset names, and
+`upstreams/tool.lua` with reusable discovery rules and GitHub's repository ID.
+Keep upstream definitions alongside the index's recipes; they are authoring inputs,
+not part of the published catalog. The output directory must not already exist.
+
+Names default to the lowercase repository name. Use `--name` to choose the canonical
+identity and repeat `--alias` for alternate names. The importer rejects names and
+aliases owned by another package, duplicate upstream projects, and changes to a
+recorded repository ID or location. It checks the selected `--catalog`; the embedded
+fallback alone cannot detect collisions with every official package.
+
+Exported commands are explicit: repeat `--bin` for each command. Checks default to
+`--version` for each command; use `--check '["tool", "--help"]'` or edit the saved
+checks to exercise real functionality. These checks run during qualification, not
+metadata discovery.
+
+Discovery considers all four supported platforms by default. Repeat `--system` to
+request a smaller set. Ambiguous assets stop the import; select a reusable pattern
+with `--asset 'x86_64-linux=tool-{tag}-x86_64-unknown-linux-musl.tar.gz'`.
+Patterns support `{tag}` and `{version}`. Existing recipes seed asset rules when
+available, and newly discovered asset names become saved patterns.
+
+The importer orders stable dotted numeric versions, including calendar versions;
+it skips drafts and releases marked as prereleases. Tags may have an optional `v`.
+Use `--tag-prefix` to restrict and strip another prefix. Other version schemes fail
+explicitly. Discovery reads paginated release history, up to `--max-pages` (20 by
+default), and fails if the history is incomplete. `GITHUB_TOKEN` authenticates API
+requests.
+
+Each platform selects its newest matching release. Existing recipes stay intact,
+defaults never downgrade, and discontinued targets retain their older defaults.
+Changing an existing version's assets or checks requires a manual recipe revision.
+Missing required targets fail for new packages. Generated candidates still need
+the platform checks below before publication.
+
+## Batch imports and updates
+
+Put one saved Lua definition per canonical name in `upstreams/`, then run:
+
+```sh
+rb package --catalog recipes import --upstreams upstreams --output candidates
+rb package --catalog candidates/recipes check
+rb package --catalog candidates/recipes export \
+  --registry tale/rootbeer-index --output result
+```
+
+Rerunning those definitions discovers newer versions using the same rules. The
+candidate directory contains only the requested packages, including their retained
+versions. A failed batch leaves no output directory. After qualification, review
+and copy the candidate recipes and upstream definitions into the index repository.
+
+This is the shared import/update engine. Scheduled discovery, conditional metadata
+caching, and automatic promotion are not implemented yet. The importer does not
+download binaries, execute imported code, or publish candidates.
+
 ## Qualify a change
 
 ```sh

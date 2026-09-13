@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use clap::{Args as ClapArgs, Subcommand};
 use rootbeer_core::package::PackageCatalog;
 
+mod import;
+
 #[derive(ClapArgs, Debug)]
 pub struct Args {
     /// Read recipes from a directory instead of the embedded catalog
@@ -15,6 +17,8 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Discover GitHub releases and generate candidate recipes and upstream rules
+    Import(Box<import::ImportArgs>),
     /// List canonical names, approved defaults, and descriptions
     List,
     /// Show a package's identity and version recipes, accepting aliases
@@ -127,6 +131,21 @@ fn execute(args: Args) -> Result<(), String> {
     };
     let mut output = io::stdout().lock();
     match args.command {
+        Command::Import(args) => {
+            let candidates = import::run(*args, catalog)?;
+            for package in candidates.packages.values() {
+                writeln!(
+                    output,
+                    "{}: default {}",
+                    package.name, package.default_version
+                )
+                .map_err(|e| e.to_string())?;
+                for (system, version) in &package.default_versions {
+                    writeln!(output, "  {system}: {version}").map_err(|e| e.to_string())?;
+                }
+            }
+            eprintln!("Generated {} candidate packages; run package export on each declared platform before publication.", candidates.packages.len());
+        }
         Command::List => {
             let system = rootbeer_core::package::ResolveContext::current().system;
             for package in catalog.packages.values() {

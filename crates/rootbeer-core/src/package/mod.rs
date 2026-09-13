@@ -24,6 +24,7 @@ mod publication;
 mod realize;
 mod resolve;
 mod spec;
+mod upstream;
 
 pub use aqua::AquaResolver;
 pub use build::{build_package, BuildArtifact, BuildBackend, SourceBuild};
@@ -47,6 +48,7 @@ pub use resolve::{
 pub use spec::{
     ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRealizationInput, Provides,
 };
+pub use upstream::{import_github_packages, GitHubUpstream};
 
 pub fn default_resolver_stack() -> ResolverStack {
     resolver_stack_for_inputs(&PackageResolverInputs::default())

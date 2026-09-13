@@ -133,23 +133,25 @@ impl PackageResolver for GitHubResolver {
 }
 
 #[derive(Debug, Deserialize)]
-struct Release {
-    id: u64,
-    tag_name: String,
+pub(super) struct Release {
+    pub id: u64,
+    pub tag_name: String,
     #[serde(default)]
-    draft: bool,
-    assets: Vec<Asset>,
+    pub draft: bool,
+    #[serde(default)]
+    pub prerelease: bool,
+    pub assets: Vec<Asset>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Asset {
-    name: String,
+pub(super) struct Asset {
+    pub name: String,
     browser_download_url: String,
     #[serde(default)]
     digest: Option<String>,
 }
 
-fn repository(name: &str) -> Result<(&str, &str), String> {
+pub(super) fn repository(name: &str) -> Result<(&str, &str), String> {
     let Some((owner, repo)) = name.split_once('/') else {
         return Err("GitHub packages require `github:owner/repo@tag`".to_string());
     };
@@ -206,7 +208,7 @@ fn is_installable(name: &str) -> bool {
         && !name.contains("attestation")
 }
 
-fn select_asset<'a>(
+pub(super) fn select_asset<'a>(
     assets: &'a [Asset],
     selected: Option<&str>,
     context: &ResolveContext,
