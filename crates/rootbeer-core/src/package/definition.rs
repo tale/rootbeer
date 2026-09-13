@@ -1,0 +1,308 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
+
+use mlua::LuaSerdeExt;
+use serde::{Deserialize, Serialize};
+
+use super::upstream::lua;
+use super::{CatalogPackage, GitHubUpstream};
+
+/// A package's approved versions and optional update rules, stored in one Lua file.
+#[derive(Debug, Clone)]
+pub struct PackageDefinition {
+    pub package: CatalogPackage,
+    pub upstream: Option<PackageUpstream>,
+}
+
+/// Authoring metadata excluded from published catalogs and qualification fingerprints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "provider", rename_all = "lowercase", deny_unknown_fields)]
+pub enum PackageUpstream {
+    Github {
+        repository: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repository_id: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tag_prefix: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        exclude_tags: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        systems: Vec<String>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        assets: BTreeMap<String, String>,
+    },
+}
+
+impl PackageDefinition {
+    /// Evaluates a package in the same bounded, I/O-free sandbox as catalog recipes.
+    pub fn from_lua(source: &str) -> Result<Self, String> {
+        let (lua, value) = lua::evaluate(source)?;
+        let table = value.as_table().ok_or("package must return a table")?;
+        let upstream = lua
+            .from_value(table.raw_get("upstream").map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        table.raw_remove("upstream").map_err(|e| e.to_string())?;
+        let package = lua.from_value(value).map_err(|e| e.to_string())?;
+        let definition = Self { package, upstream };
+        definition.github_upstream()?;
+        Ok(definition)
+    }
+
+    /// Reads canonical package files in deterministic name order.
+    pub fn from_directory(directory: &Path) -> Result<BTreeMap<String, Self>, String> {
+        let mut definitions = BTreeMap::new();
+        for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.extension().is_none_or(|extension| extension != "lua") {
+                continue;
+            }
+            let source = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let definition =
+                Self::from_lua(&source).map_err(|e| format!("{}: {e}", path.display()))?;
+            if path.file_stem().and_then(|name| name.to_str()) != Some(&definition.package.name) {
+                return Err(format!(
+                    "{}: canonical name must match the filename",
+                    path.display()
+                ));
+            }
+            definitions.insert(definition.package.name.clone(), definition);
+        }
+        Ok(definitions)
+    }
+
+    /// Combines discovered rules with their package without duplicating its identity or checks.
+    pub fn with_github_upstream(
+        package: CatalogPackage,
+        upstream: &GitHubUpstream,
+    ) -> Result<Self, String> {
+        let recipe = package
+            .versions
+            .get(&package.default_version)
+            .ok_or("default version has no recipe")?;
+        if package.name != upstream.name
+            || package.aliases != upstream.aliases
+            || upstream
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &package.description)
+            || upstream
+                .homepage
+                .as_ref()
+                .is_some_and(|value| value != &package.homepage)
+            || recipe.bins != upstream.bins
+            || recipe.checks != upstream.checks
+        {
+            return Err(format!(
+                "{}: update rules must inherit the package identity, commands, and checks",
+                package.name
+            ));
+        }
+        let systems = if package_systems(&package) == upstream.systems.iter().cloned().collect() {
+            Vec::new()
+        } else {
+            upstream.systems.clone()
+        };
+        let definition = Self {
+            package,
+            upstream: Some(PackageUpstream::Github {
+                repository: upstream.repository.clone(),
+                repository_id: upstream.repository_id,
+                tag_prefix: upstream.tag_prefix.clone(),
+                exclude_tags: upstream.exclude_tags.clone(),
+                systems,
+                assets: upstream.assets.clone(),
+            }),
+        };
+        definition.github_upstream()?;
+        Ok(definition)
+    }
+
+    /// Expands update rules using the package's canonical identity and default command contract.
+    pub fn github_upstream(&self) -> Result<Option<GitHubUpstream>, String> {
+        let Some(PackageUpstream::Github {
+            repository,
+            repository_id,
+            tag_prefix,
+            exclude_tags,
+            systems,
+            assets,
+        }) = &self.upstream
+        else {
+            return Ok(None);
+        };
+        let package = &self.package;
+        let recipe = package
+            .versions
+            .get(&package.default_version)
+            .ok_or("default version has no recipe")?;
+        let mut upstream = GitHubUpstream::new(
+            package.name.clone(),
+            repository.clone(),
+            recipe.bins.clone(),
+        );
+        upstream.aliases = package.aliases.clone();
+        upstream.description = Some(package.description.clone());
+        upstream.homepage = Some(package.homepage.clone());
+        upstream.checks = recipe.checks.clone();
+        upstream.repository_id = *repository_id;
+        upstream.tag_prefix = tag_prefix.clone();
+        upstream.exclude_tags = exclude_tags.clone();
+        upstream.assets = assets.clone();
+        upstream.systems = if systems.is_empty() {
+            package_systems(package).into_iter().collect()
+        } else {
+            systems.clone()
+        };
+        upstream.validate()?;
+        Ok(Some(upstream))
+    }
+
+    /// Renders one complete package file, including its update rules when configured.
+    pub fn to_lua(&self) -> Result<String, String> {
+        self.github_upstream()?;
+        let mut value = serde_json::to_value(&self.package).map_err(|e| e.to_string())?;
+        if let Some(upstream) = &self.upstream {
+            value.as_object_mut().unwrap().insert(
+                "upstream".into(),
+                serde_json::to_value(upstream).map_err(|e| e.to_string())?,
+            );
+        }
+        lua::write(&value)
+    }
+}
+
+fn package_systems(package: &CatalogPackage) -> BTreeSet<String> {
+    package
+        .versions
+        .values()
+        .flat_map(|recipe| recipe.systems.iter().cloned())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::package::PackageCatalog;
+
+    fn definition() -> PackageDefinition {
+        let package = PackageCatalog::embedded().unwrap().packages["age"].clone();
+        PackageDefinition {
+            package,
+            upstream: Some(PackageUpstream::Github {
+                repository: "FiloSottile/age".into(),
+                repository_id: Some(123),
+                tag_prefix: None,
+                exclude_tags: Vec::new(),
+                systems: Vec::new(),
+                assets: BTreeMap::new(),
+            }),
+        }
+    }
+
+    #[test]
+    fn inherits_contract_and_excludes_authoring_rules_from_catalog_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let definition = definition();
+        let expected = PackageCatalog {
+            schema: 1,
+            packages: BTreeMap::from([("age".into(), definition.package.clone())]),
+        };
+        let source = definition.to_lua().unwrap();
+        fs::write(root.path().join("age.lua"), &source).unwrap();
+        let catalog = PackageCatalog::from_directory(root.path()).unwrap();
+        assert_eq!(catalog.sha256(), expected.sha256());
+        assert!(!catalog.to_json().unwrap().contains("upstream"));
+        let upstream = GitHubUpstream::from_directory(root.path())
+            .unwrap()
+            .remove(0);
+        assert_eq!(upstream.bins, ["age", "age-keygen"]);
+        assert_eq!(
+            upstream.checks,
+            definition.package.versions[&definition.package.default_version].checks
+        );
+        assert_eq!(upstream.systems.len(), 4);
+
+        fs::write(
+            root.path().join("age.lua"),
+            source.replace(
+                "[\"repository_id\"] = 123",
+                "[\"repository_id\"] = 456, [\"exclude_tags\"] = { \"legacy\" }",
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            PackageCatalog::from_directory(root.path())
+                .unwrap()
+                .sha256(),
+            expected.sha256()
+        );
+        let upstream = GitHubUpstream::from_directory(root.path())
+            .unwrap()
+            .remove(0);
+        assert_eq!(upstream.repository_id, Some(456));
+        assert_eq!(upstream.exclude_tags, ["legacy"]);
+    }
+
+    #[test]
+    fn validates_rules_and_rejects_duplicate_or_mismatched_identities() {
+        let root = tempfile::tempdir().unwrap();
+        let definition = definition();
+        let source = definition.to_lua().unwrap();
+        for invalid in [
+            source.replace(
+                "[\"provider\"] = \"github\"",
+                "[\"provider\"] = \"unknown\"",
+            ),
+            source.replace("[\"repository_id\"]", "[\"repository_typo\"]"),
+            source.replace("[\"homepage\"]", "[\"homepage_typo\"]"),
+            source.replace("[\"repository_id\"] = 123", "[\"repository_id\"] = 0"),
+        ] {
+            assert!(PackageDefinition::from_lua(&invalid).is_err());
+        }
+        fs::write(
+            root.path().join("age.lua"),
+            source.replace(
+                "[\"repository\"] = \"FiloSottile/age\"",
+                "[\"repository\"] = \"other/age\"",
+            ),
+        )
+        .unwrap();
+        assert!(PackageCatalog::from_directory(root.path()).is_err());
+
+        fs::write(root.path().join("age.lua"), &source).unwrap();
+        let mut duplicate = definition.clone();
+        duplicate.package.name = "another-age".into();
+        duplicate.package.aliases.clear();
+        fs::write(
+            root.path().join("another-age.lua"),
+            duplicate.to_lua().unwrap(),
+        )
+        .unwrap();
+        assert!(PackageCatalog::from_directory(root.path())
+            .unwrap_err()
+            .contains("canonical identity"));
+    }
+
+    #[test]
+    fn untracked_packages_and_restricted_discovery_preserve_installable_platforms() {
+        let mut definition = definition();
+        let Some(PackageUpstream::Github { systems, .. }) = &mut definition.upstream else {
+            unreachable!()
+        };
+        *systems = vec!["aarch64-macos".into()];
+        let loaded = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            loaded.github_upstream().unwrap().unwrap().systems,
+            ["aarch64-macos"]
+        );
+        assert_eq!(package_systems(&loaded.package).len(), 4);
+        definition.upstream = None;
+        assert!(PackageDefinition::from_lua(&definition.to_lua().unwrap())
+            .unwrap()
+            .github_upstream()
+            .unwrap()
+            .is_none());
+        assert!(PackageDefinition::from_lua("return os.getenv('HOME')").is_err());
+    }
+}

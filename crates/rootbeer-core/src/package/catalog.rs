@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
 
-use mlua::{Lua, LuaSerdeExt};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -72,28 +70,14 @@ impl PackageCatalog {
 
     fn from_lua(recipes: &[(&str, &str)]) -> Result<Self, String> {
         let mut packages = BTreeMap::new();
+        let mut upstreams = Vec::new();
         for (name, source) in recipes {
-            let lua = Lua::new();
-            lua.set_memory_limit(4 * 1024 * 1024)
-                .map_err(|e| e.to_string())?;
-            let start = Instant::now();
-            lua.set_interrupt(move |_| {
-                if start.elapsed() > Duration::from_secs(1) {
-                    return Err(mlua::Error::RuntimeError(
-                        "package definition exceeded its execution limit".into(),
-                    ));
-                }
-                Ok(mlua::VmState::Continue)
-            });
-            let environment = lua.create_table().map_err(|e| e.to_string())?;
-            let value = lua
-                .load(*source)
-                .set_name(*name)
-                .set_environment(environment)
-                .eval()
-                .map_err(|e| format!("{name}: {e}"))?;
-            let package: CatalogPackage =
-                lua.from_value(value).map_err(|e| format!("{name}: {e}"))?;
+            let definition =
+                super::PackageDefinition::from_lua(source).map_err(|e| format!("{name}: {e}"))?;
+            if let Some(upstream) = definition.github_upstream()? {
+                upstreams.push(upstream);
+            }
+            let package = definition.package;
             if package.name != *name {
                 return Err(format!("{name}: canonical name must match the filename"));
             }
@@ -106,6 +90,10 @@ impl PackageCatalog {
             packages,
         };
         catalog.validate()?;
+        super::upstream::validate_definitions(&upstreams)?;
+        for upstream in &upstreams {
+            super::upstream::check_identity(&catalog, upstream)?;
+        }
         Ok(catalog)
     }
 

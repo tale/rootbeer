@@ -11,6 +11,10 @@ return {
     aliases = { "rg" },
     description = "Search file contents with regular expressions",
     homepage = "https://github.com/BurntSushi/ripgrep",
+    upstream = {
+        provider = "github",
+        repository = "BurntSushi/ripgrep",
+    },
     default_version = "15.2.0",
     versions = {
         ["15.2.0"] = {
@@ -29,6 +33,14 @@ return {
     },
 }
 ```
+
+The optional `upstream` block keeps update discovery in the same file as approved
+versions. It inherits identity, commands, checks, and platforms from the package.
+Discovery saves the GitHub repository ID and reusable asset patterns in this block.
+These authoring rules are validated but excluded from catalog snapshots and build
+fingerprints. Run `rb package --catalog packages updates --cache <directory>
+--output <new-directory>` to generate complete candidate files. See the
+[contribution guide](../docs/contributing/packaging.md) for filters and batch imports.
 
 The filename must match the canonical name. Names and aliases are unique across
 the collection. Versions identify upstream releases; increment `revision` when

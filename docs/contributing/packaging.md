@@ -28,14 +28,31 @@ for the format and the index repository's contributor instructions for policy.
 Generate candidates without editing the current catalog:
 
 ```sh
-rb package --catalog recipes import github:owner/tool \
+rb package --catalog packages import github:owner/tool \
   --name tool --bin tool --output candidates
 ```
 
-The output contains `recipes/tool.lua` with exact version and asset names, and
-`upstreams/tool.lua` with reusable discovery rules and GitHub's repository ID.
-Keep upstream definitions alongside the index's recipes; they are authoring inputs,
-not part of the published catalog. The output directory must not already exist.
+The output contains one complete `packages/tool.lua`: approved versions plus an
+`upstream` block for future discovery. The output directory must not already exist.
+
+`upstream` holds GitHub's repository name and ID, tag filters, and asset patterns:
+
+```lua
+upstream = {
+    provider = "github",
+    repository = "owner/tool",
+    assets = {
+        ["aarch64-macos"] = "tool-{version}-darwin-arm64.tar.gz",
+    },
+},
+```
+
+It inherits the package name, aliases, description, homepage, and the default
+version's commands and checks. Platforms default to those declared by the package;
+`upstream.systems` can narrow the discovery pass. Update rules are validated when
+loading the package, but excluded from published snapshots and build fingerprints.
+A package without `upstream` still installs and builds normally; discovery reports
+it as untracked. Automatic discovery currently supports GitHub releases.
 
 Names default to the lowercase repository name. Use `--name` to choose the canonical
 identity and repeat `--alias` for alternate names. The importer rejects names and
@@ -69,39 +86,41 @@ the platform checks below before publication.
 
 ## Batch imports and updates
 
-Put one saved Lua definition per canonical name in `upstreams/`, then run:
+To rediscover a selected directory of complete package definitions:
 
 ```sh
-rb package --catalog recipes import --upstreams upstreams --output candidates
-rb package --catalog candidates/recipes check
-rb package --catalog candidates/recipes export \
+rb package --catalog packages import --packages selected-packages --output candidates
+rb package --catalog candidates/packages check
+rb package --catalog candidates/packages export \
   --registry tale/rootbeer-index --output result
 ```
 
 Rerunning those definitions discovers newer versions using the same rules. The
 candidate directory contains only the requested packages, including their retained
 versions. A failed batch leaves no output directory. After qualification, review
-and copy the candidate recipes and upstream definitions into the index repository.
+and copy the complete candidate package files into the index repository.
 
 The importer does not download binaries, execute imported code, or publish candidates.
 
 ## Track upstream updates
 
-Bootstrap rules for an existing catalog, then run discovery:
+Run discovery directly against the package directory:
 
 ```sh
-rb package --catalog recipes seed-upstreams --output upstreams
-rb package --catalog recipes updates --upstreams upstreams \
+rb package --catalog packages updates \
   --cache .upstream-metadata --output candidates
 ```
 
-Seeding preserves command checks and selects GitHub-backed packages. Source builds
-and other backends appear as untracked in the update report. Keep any customized
-upstream definitions; seeding requires a new directory.
+For older catalogs without update rules, `seed-upstreams --output tracked-packages`
+creates complete copies of GitHub-backed packages with inferred `upstream` blocks.
+Review their asset patterns and tag filters before adopting them. The output must
+be a new directory; seeding does not preserve customized discovery rules.
 
 `updates` reports each project independently. It writes `report.json`, `summary.md`,
-changed recipes, and any changed upstream rules, including newly recorded repository
-IDs. Unchanged recipes are omitted, so a no-change scan needs no package qualification.
+and complete files in `packages/` for changed recipes or discovery rules, including
+newly recorded repository IDs. The report separates recipe changes (`updated`) from
+rule changes (`rules_changed`); qualify only the former. A no-change scan writes no
+package files and needs no qualification.
 Errors return a nonzero exit status after writing the report and successful candidates.
 
 The metadata cache sends GitHub ETags with conditional requests and reuses responses
@@ -111,7 +130,7 @@ Release histories are still checked page by page, and changed metadata can requi
 a fresh response even when no package version changes.
 
 Legacy tags that do not belong to the tracked release series can be listed explicitly
-in an upstream definition's `exclude_tags`, or supplied with repeated `--exclude-tag`
+in a package's `upstream.exclude_tags`, or supplied with repeated `--exclude-tag`
 arguments during import. Unsupported tags otherwise remain visible errors.
 
 The index's discovery workflow runs daily or manually, retains the report and
@@ -119,13 +138,13 @@ candidates as workflow artifacts, and qualifies changed packages on all four
 platforms using verified-result caches. Discovery errors remain visible while
 successful candidates can still be checked. It has read-only repository permissions
 and does not publish, open pull requests, or advance defaults automatically.
-Review qualified candidates before copying them into the index's recipes.
+Review qualified candidates before copying them into the index's `packages/` directory.
 
 ## Qualify a change
 
 ```sh
-rb package --catalog recipes check
-rb package --catalog recipes export --registry tale/rootbeer-index --output result
+rb package --catalog packages check
+rb package --catalog packages export --registry tale/rootbeer-index --output result
 ```
 
 Export installs every applicable version, runs its command checks, and recreates
@@ -147,7 +166,7 @@ must not force unrelated packages to rebuild. Original receipts stay intact when
 results are reused in a newer catalog snapshot.
 
 ```sh
-rb package --catalog recipes export --registry tale/rootbeer-index --output result \
+rb package --catalog packages export --registry tale/rootbeer-index --output result \
   --cache /tmp/rootbeer-package-results --cache-context "$BUILD_ENVIRONMENT_ID"
 ```
 

@@ -10,14 +10,14 @@ use super::github::{repository, Release};
 use super::{CatalogPackage, PackageCatalog, PackageRequest};
 
 mod generate;
-mod lua;
+pub(super) mod lua;
 mod metadata;
 mod updates;
 
 pub use updates::{discover_updates, seed_upstreams, UpdateReport};
 
 /// Authoring rules for a canonical package imported from GitHub releases.
-/// Stored separately from installable recipes and signed catalog snapshots.
+/// Expanded from a package definition for release discovery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GitHubUpstream {
@@ -80,35 +80,17 @@ impl GitHubUpstream {
         }
     }
 
-    /// Loads sandboxed Lua rules, requiring canonical filenames and unique identities.
+    /// Loads update rules from unified package files, inheriting each package's contract.
     pub fn from_directory(directory: &Path) -> Result<Vec<Self>, String> {
-        let mut definitions = BTreeMap::new();
-        for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
-            let path = entry.map_err(|e| e.to_string())?.path();
-            if path.extension().is_none_or(|extension| extension != "lua") {
-                continue;
-            }
-            let source = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            let upstream: Self = lua::read(&source)?;
-            if path.file_stem().and_then(|name| name.to_str()) != Some(&upstream.name) {
-                return Err(format!(
-                    "{}: canonical name must match filename",
-                    path.display()
-                ));
-            }
-            if definitions
-                .insert(upstream.name.clone(), upstream)
-                .is_some()
-            {
-                return Err("duplicate upstream definition".into());
-            }
-        }
-        let definitions: Vec<_> = definitions.into_values().collect();
+        let definitions = super::PackageDefinition::from_directory(directory)?
+            .values()
+            .filter_map(|definition| definition.github_upstream().transpose())
+            .collect::<Result<Vec<_>, _>>()?;
         validate_definitions(&definitions)?;
         Ok(definitions)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub(super) fn validate(&self) -> Result<(), String> {
         repository(&self.repository)?;
         if !valid_name(&self.name) || self.repository_id == Some(0) {
             return Err("invalid canonical name or repository ID".into());
@@ -165,10 +147,7 @@ struct Repository {
     homepage: Option<String>,
 }
 
-fn validate_definitions(definitions: &[GitHubUpstream]) -> Result<(), String> {
-    if definitions.is_empty() {
-        return Err("no upstream definitions supplied".into());
-    }
+pub(super) fn validate_definitions(definitions: &[GitHubUpstream]) -> Result<(), String> {
     let mut names = BTreeSet::new();
     let mut repositories = BTreeSet::new();
     let mut ids = BTreeSet::new();
@@ -193,7 +172,10 @@ fn validate_definitions(definitions: &[GitHubUpstream]) -> Result<(), String> {
     Ok(())
 }
 
-fn check_identity(catalog: &PackageCatalog, upstream: &GitHubUpstream) -> Result<(), String> {
+pub(super) fn check_identity(
+    catalog: &PackageCatalog,
+    upstream: &GitHubUpstream,
+) -> Result<(), String> {
     for package in catalog.packages.values() {
         let is_same_repository = package
             .versions
@@ -248,6 +230,9 @@ fn import_with_fetch(
     mut fetch: impl FnMut(&str) -> Result<serde_json::Value, String>,
 ) -> Result<PackageCatalog, String> {
     validate_definitions(definitions)?;
+    if definitions.is_empty() {
+        return Err("no upstream definitions supplied".into());
+    }
     if !(1..=100).contains(&max_pages) {
         return Err("max-pages must be between 1 and 100".into());
     }
@@ -333,29 +318,24 @@ fn write_candidates(
 ) -> Result<(), String> {
     let root = staging.join("candidates");
     fs::create_dir(&root).map_err(|e| e.to_string())?;
-    for folder in ["recipes", "upstreams"] {
-        fs::create_dir(root.join(folder)).map_err(|e| e.to_string())?;
-    }
+    fs::create_dir(root.join("packages")).map_err(|e| e.to_string())?;
     for package in candidates.packages.values() {
+        let upstream = definitions
+            .iter()
+            .find(|upstream| upstream.name == package.name)
+            .ok_or("candidate has no update rules")?;
+        let definition = super::PackageDefinition::with_github_upstream(package.clone(), upstream)?;
         fs::write(
-            root.join("recipes").join(format!("{}.lua", package.name)),
-            lua::write(package)?,
+            root.join("packages").join(format!("{}.lua", package.name)),
+            definition.to_lua()?,
         )
         .map_err(|e| e.to_string())?;
     }
-    for upstream in definitions {
-        fs::write(
-            root.join("upstreams")
-                .join(format!("{}.lua", upstream.name)),
-            lua::write(upstream)?,
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    let loaded = PackageCatalog::from_directory(&root.join("recipes"))?;
+    let loaded = PackageCatalog::from_directory(&root.join("packages"))?;
     if loaded.sha256() != candidates.sha256() {
         return Err("generated Lua differs from candidate catalog".into());
     }
-    GitHubUpstream::from_directory(&root.join("upstreams"))?;
+    GitHubUpstream::from_directory(&root.join("packages"))?;
     fs::rename(root, output).map_err(|e| e.to_string())
 }
 
@@ -394,7 +374,7 @@ mod tests {
         let candidates =
             import_with_fetch(catalog, &[upstream.clone()], &output, 2, fetch).unwrap();
         assert_eq!(candidates.packages["tool"].default_version, "101");
-        let saved = GitHubUpstream::from_directory(&output.join("upstreams")).unwrap();
+        let saved = GitHubUpstream::from_directory(&output.join("packages")).unwrap();
         assert_eq!(saved[0].repository_id, Some(42));
 
         let output = root.path().join("incomplete");
@@ -500,8 +480,12 @@ mod tests {
             schema: 1,
             packages: BTreeMap::from([("age".into(), package)]),
         };
-        let upstream =
-            GitHubUpstream::new("age".into(), "FiloSottile/age".into(), vec!["age".into()]);
+        let package = &catalog.packages["age"];
+        let recipe = &package.versions[&package.default_version];
+        let mut upstream =
+            GitHubUpstream::new("age".into(), "FiloSottile/age".into(), recipe.bins.clone());
+        upstream.checks = recipe.checks.clone();
+        upstream.aliases = package.aliases.clone();
         write_candidates(
             root.path(),
             &catalog,
@@ -510,7 +494,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            PackageCatalog::from_directory(&output.join("recipes"))
+            PackageCatalog::from_directory(&output.join("packages"))
                 .unwrap()
                 .sha256(),
             catalog.sha256()
@@ -519,7 +503,7 @@ mod tests {
             .unwrap_err()
             .contains("already exists"));
         assert_eq!(
-            PackageCatalog::from_directory(&output.join("recipes"))
+            PackageCatalog::from_directory(&output.join("packages"))
                 .unwrap()
                 .sha256(),
             catalog.sha256()

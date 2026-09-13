@@ -8,7 +8,7 @@ mod import;
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
-    /// Read recipes from a directory instead of the embedded catalog
+    /// Read package definitions from a directory instead of the embedded catalog
     #[arg(long, global = true)]
     catalog: Option<PathBuf>,
     #[command(subcommand)]
@@ -17,7 +17,7 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Seed upstream Lua definitions from the selected catalog's GitHub recipes
+    /// Add inferred update rules to copies of the selected catalog's GitHub packages
     SeedUpstreams {
         #[arg(long)]
         output: PathBuf,
@@ -25,15 +25,13 @@ enum Command {
     /// Check tracked upstreams, caching metadata and reporting independent failures
     Updates {
         #[arg(long)]
-        upstreams: PathBuf,
-        #[arg(long)]
         cache: PathBuf,
         #[arg(long)]
         output: PathBuf,
         #[arg(long, default_value_t = 20)]
         max_pages: usize,
     },
-    /// Discover GitHub releases and generate candidate recipes and upstream rules
+    /// Discover GitHub releases and generate complete candidate package definitions
     Import(Box<import::ImportArgs>),
     /// List canonical names, approved defaults, and descriptions
     List,
@@ -153,12 +151,15 @@ fn execute(args: Args) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
         }
         Command::Updates {
-            upstreams,
             cache,
             output,
             max_pages,
         } => {
-            let definitions = rootbeer_core::package::GitHubUpstream::from_directory(&upstreams)?;
+            let directory = args
+                .catalog
+                .as_deref()
+                .ok_or("updates requires --catalog pointing to package definitions")?;
+            let definitions = rootbeer_core::package::GitHubUpstream::from_directory(directory)?;
             let report = rootbeer_core::package::discover_updates(
                 catalog,
                 &definitions,

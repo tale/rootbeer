@@ -7,11 +7,11 @@ use rootbeer_core::package::{import_github_packages, GitHubUpstream, PackageCata
 #[derive(Args, Debug)]
 pub(super) struct ImportArgs {
     /// GitHub project to discover, e.g. github:owner/repository
-    #[arg(required_unless_present = "upstreams", conflicts_with = "upstreams")]
+    #[arg(required_unless_present = "packages", conflicts_with = "packages")]
     source: Option<String>,
-    /// Batch import saved upstream Lua definitions
+    /// Batch discover from unified package Lua definitions
     #[arg(long)]
-    upstreams: Option<PathBuf>,
+    packages: Option<PathBuf>,
     /// Canonical Rootbeer name; defaults to the lowercase repository name
     #[arg(long, requires = "source")]
     name: Option<String>,
@@ -39,7 +39,7 @@ pub(super) struct ImportArgs {
     description: Option<String>,
     #[arg(long, requires = "source")]
     homepage: Option<String>,
-    /// New directory for candidate recipes/ and reusable upstreams/
+    /// New directory containing complete candidate packages/
     #[arg(long)]
     output: PathBuf,
     /// Maximum release-history pages per project, 100 releases per page
@@ -48,7 +48,7 @@ pub(super) struct ImportArgs {
 }
 
 pub(super) fn run(args: ImportArgs, catalog: &PackageCatalog) -> Result<PackageCatalog, String> {
-    let definitions = match args.upstreams {
+    let definitions = match args.packages {
         Some(directory) => GitHubUpstream::from_directory(&directory)?,
         None => {
             let source = args.source.as_deref().unwrap();

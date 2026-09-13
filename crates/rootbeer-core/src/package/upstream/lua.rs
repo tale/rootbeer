@@ -1,10 +1,18 @@
 use std::time::{Duration, Instant};
 
-use mlua::{Lua, LuaSerdeExt};
-use serde::{de::DeserializeOwned, Serialize};
+use mlua::Lua;
+#[cfg(test)]
+use mlua::LuaSerdeExt;
+use serde::Serialize;
 use serde_json::Value;
 
-pub(super) fn read<T: DeserializeOwned>(source: &str) -> Result<T, String> {
+#[cfg(test)]
+pub(super) fn read<T: serde::de::DeserializeOwned>(source: &str) -> Result<T, String> {
+    let (lua, value) = evaluate(source)?;
+    lua.from_value(value).map_err(|e| e.to_string())
+}
+
+pub(crate) fn evaluate(source: &str) -> Result<(Lua, mlua::Value), String> {
     let lua = Lua::new();
     lua.set_memory_limit(4 * 1024 * 1024)
         .map_err(|e| e.to_string())?;
@@ -12,7 +20,7 @@ pub(super) fn read<T: DeserializeOwned>(source: &str) -> Result<T, String> {
     lua.set_interrupt(move |_| {
         if start.elapsed() > Duration::from_secs(1) {
             return Err(mlua::Error::RuntimeError(
-                "upstream definition exceeded execution limit".into(),
+                "package definition exceeded execution limit".into(),
             ));
         }
         Ok(mlua::VmState::Continue)
@@ -23,10 +31,10 @@ pub(super) fn read<T: DeserializeOwned>(source: &str) -> Result<T, String> {
         .set_environment(environment)
         .eval()
         .map_err(|e| e.to_string())?;
-    lua.from_value(value).map_err(|e| e.to_string())
+    Ok((lua, value))
 }
 
-pub(super) fn write(value: &impl Serialize) -> Result<String, String> {
+pub(crate) fn write(value: &impl Serialize) -> Result<String, String> {
     let value = serde_json::to_value(value).map_err(|e| e.to_string())?;
     Ok(format!("return {}\n", render(&value, 0)))
 }

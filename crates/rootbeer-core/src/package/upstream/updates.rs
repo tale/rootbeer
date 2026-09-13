@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::metadata::{MetadataCache, Statistics};
-use super::{discover_package, lua, validate_definitions, GitHubUpstream};
+use super::{discover_package, validate_definitions, GitHubUpstream};
 use crate::package::{CatalogPackage, PackageCatalog, PackageRequest};
 
 /// A discovery report; candidate recipes are unqualified until package export succeeds.
@@ -28,7 +28,7 @@ pub struct UpdateReport {
 pub fn seed_upstreams(catalog: &PackageCatalog, output: &Path) -> Result<usize, String> {
     catalog.validate()?;
     let staging = crate::package::publication::staging(output)?;
-    let destination = staging.path().join("upstreams");
+    let destination = staging.path().join("packages");
     fs::create_dir(&destination).map_err(|e| e.to_string())?;
     let mut definitions = Vec::new();
     for package in catalog.packages.values() {
@@ -69,7 +69,11 @@ pub fn seed_upstreams(catalog: &PackageCatalog, output: &Path) -> Result<usize, 
     for definition in &definitions {
         fs::write(
             destination.join(format!("{}.lua", definition.name)),
-            lua::write(definition)?,
+            crate::package::PackageDefinition::with_github_upstream(
+                catalog.packages[&definition.name].clone(),
+                definition,
+            )?
+            .to_lua()?,
         )
         .map_err(|e| e.to_string())?;
     }
@@ -110,9 +114,7 @@ fn discover_with_fetch(
     let staging = crate::package::publication::staging(output)?;
     let destination = staging.path().join("updates");
     fs::create_dir(&destination).map_err(|e| e.to_string())?;
-    for folder in ["recipes", "upstreams"] {
-        fs::create_dir(destination.join(folder)).map_err(|e| e.to_string())?;
-    }
+    fs::create_dir(destination.join("packages")).map_err(|e| e.to_string())?;
     let mut report = UpdateReport {
         schema: 1,
         catalog_sha256: catalog.sha256(),
@@ -175,31 +177,28 @@ fn discover_with_fetch(
                 .defaults
                 .insert(package.name.clone(), platform_defaults(&package));
             report.updated.push(package.name.clone());
-            fs::write(
-                destination
-                    .join("recipes")
-                    .join(format!("{}.lua", package.name)),
-                lua::write(&package)?,
-            )
-            .map_err(|e| e.to_string())?;
         } else {
             report.unchanged.push(package.name.clone());
         }
-        if serde_json::to_value(definition).map_err(|e| e.to_string())?
-            != serde_json::to_value(&upstream).map_err(|e| e.to_string())?
-        {
+        let has_rule_changes = serde_json::to_value(definition).map_err(|e| e.to_string())?
+            != serde_json::to_value(&upstream).map_err(|e| e.to_string())?;
+        if has_rule_changes {
             report.rules_changed.push(upstream.name.clone());
+        }
+        if is_changed || has_rule_changes {
+            let definition =
+                crate::package::PackageDefinition::with_github_upstream(package, &upstream)?;
             fs::write(
                 destination
-                    .join("upstreams")
-                    .join(format!("{}.lua", upstream.name)),
-                lua::write(&upstream)?,
+                    .join("packages")
+                    .join(format!("{}.lua", definition.package.name)),
+                definition.to_lua()?,
             )
             .map_err(|e| e.to_string())?;
         }
     }
-    if !report.updated.is_empty() {
-        PackageCatalog::from_directory(&destination.join("recipes"))?;
+    if !report.updated.is_empty() || !report.rules_changed.is_empty() {
+        PackageCatalog::from_directory(&destination.join("packages"))?;
     }
     write_report(&destination, &report)?;
     fs::rename(destination, output).map_err(|e| e.to_string())?;
@@ -296,14 +295,29 @@ mod tests {
             discover_with_fetch(catalog, &[broken, definition], &output, 1, fetch).unwrap();
         assert_eq!(report.updated, ["tool"]);
         assert_eq!(report.errors["broken"], "rate limited");
-        let candidates = PackageCatalog::from_directory(&output.join("recipes")).unwrap();
-        let definitions = GitHubUpstream::from_directory(&output.join("upstreams")).unwrap();
+        let candidates = PackageCatalog::from_directory(&output.join("packages")).unwrap();
+        let definitions = GitHubUpstream::from_directory(&output.join("packages")).unwrap();
         let repeat = root.path().join("repeat");
         let report = discover_with_fetch(&candidates, &definitions, &repeat, 1, fetch).unwrap();
         assert!(report.updated.is_empty());
         assert!(report.rules_changed.is_empty());
         assert_eq!(report.unchanged, ["tool"]);
-        assert_eq!(fs::read_dir(repeat.join("recipes")).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(repeat.join("packages")).unwrap().count(), 0);
+
+        let mut definitions = definitions;
+        definitions[0].repository_id = None;
+        let metadata_only = root.path().join("metadata-only");
+        let report =
+            discover_with_fetch(&candidates, &definitions, &metadata_only, 1, fetch).unwrap();
+        assert!(report.updated.is_empty());
+        assert_eq!(report.rules_changed, ["tool"]);
+        let saved = PackageCatalog::from_directory(&metadata_only.join("packages")).unwrap();
+        assert_eq!(saved.sha256(), candidates.sha256());
+        assert_eq!(
+            GitHubUpstream::from_directory(&metadata_only.join("packages")).unwrap()[0]
+                .repository_id,
+            Some(42)
+        );
     }
 
     #[test]
