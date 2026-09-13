@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::metadata::{MetadataCache, Statistics};
 use super::{discover_package, validate_definitions, GitHubUpstream};
-use crate::package::{CatalogPackage, PackageCatalog, PackageRequest};
+use crate::package::{CatalogPackage, PackageCatalog, PackageDefinition, PackageRequest};
 
 /// A discovery report; candidate recipes are unqualified until package export succeeds.
 #[derive(Serialize)]
@@ -90,10 +90,41 @@ pub fn discover_updates(
     output: &Path,
     max_pages: usize,
 ) -> Result<UpdateReport, String> {
+    discover_cached(
+        catalog,
+        definitions,
+        &BTreeMap::new(),
+        cache,
+        output,
+        max_pages,
+    )
+}
+
+/// Discovers updates while preserving shared authoring templates and version overrides.
+pub fn discover_definition_updates(
+    catalog: &PackageCatalog,
+    definitions: &BTreeMap<String, PackageDefinition>,
+    cache: &Path,
+    output: &Path,
+    max_pages: usize,
+) -> Result<UpdateReport, String> {
+    let upstreams = GitHubUpstream::from_definitions(definitions)?;
+    discover_cached(catalog, &upstreams, definitions, cache, output, max_pages)
+}
+
+fn discover_cached(
+    catalog: &PackageCatalog,
+    upstreams: &[GitHubUpstream],
+    definitions: &BTreeMap<String, PackageDefinition>,
+    cache: &Path,
+    output: &Path,
+    max_pages: usize,
+) -> Result<UpdateReport, String> {
     let mut cache = MetadataCache::new(cache)?;
-    let mut report = discover_with_fetch(catalog, definitions, output, max_pages, |url| {
-        cache.fetch(url)
-    })?;
+    let mut report =
+        discover_with_fetch(catalog, upstreams, definitions, output, max_pages, |url| {
+            cache.fetch(url)
+        })?;
     report.metadata = cache.statistics;
     write_report(output, &report)?;
     Ok(report)
@@ -102,6 +133,7 @@ pub fn discover_updates(
 fn discover_with_fetch(
     catalog: &PackageCatalog,
     definitions: &[GitHubUpstream],
+    templates: &BTreeMap<String, PackageDefinition>,
     output: &Path,
     max_pages: usize,
     mut fetch: impl FnMut(&str) -> Result<Value, String>,
@@ -186,8 +218,10 @@ fn discover_with_fetch(
             report.rules_changed.push(upstream.name.clone());
         }
         if is_changed || has_rule_changes {
-            let definition =
-                crate::package::PackageDefinition::with_github_upstream(package, &upstream)?;
+            let definition = match templates.get(&package.name) {
+                Some(definition) => definition.with_updates(package, &upstream)?,
+                None => PackageDefinition::with_github_upstream(package, &upstream)?,
+            };
             fs::write(
                 destination
                     .join("packages")
@@ -291,14 +325,29 @@ mod tests {
             )
         };
         let output = root.path().join("first");
-        let report =
-            discover_with_fetch(catalog, &[broken, definition], &output, 1, fetch).unwrap();
+        let report = discover_with_fetch(
+            catalog,
+            &[broken, definition],
+            &BTreeMap::new(),
+            &output,
+            1,
+            fetch,
+        )
+        .unwrap();
         assert_eq!(report.updated, ["tool"]);
         assert_eq!(report.errors["broken"], "rate limited");
         let candidates = PackageCatalog::from_directory(&output.join("packages")).unwrap();
         let definitions = GitHubUpstream::from_directory(&output.join("packages")).unwrap();
         let repeat = root.path().join("repeat");
-        let report = discover_with_fetch(&candidates, &definitions, &repeat, 1, fetch).unwrap();
+        let report = discover_with_fetch(
+            &candidates,
+            &definitions,
+            &BTreeMap::new(),
+            &repeat,
+            1,
+            fetch,
+        )
+        .unwrap();
         assert!(report.updated.is_empty());
         assert!(report.rules_changed.is_empty());
         assert_eq!(report.unchanged, ["tool"]);
@@ -307,8 +356,15 @@ mod tests {
         let mut definitions = definitions;
         definitions[0].repository_id = None;
         let metadata_only = root.path().join("metadata-only");
-        let report =
-            discover_with_fetch(&candidates, &definitions, &metadata_only, 1, fetch).unwrap();
+        let report = discover_with_fetch(
+            &candidates,
+            &definitions,
+            &BTreeMap::new(),
+            &metadata_only,
+            1,
+            fetch,
+        )
+        .unwrap();
         assert!(report.updated.is_empty());
         assert_eq!(report.rules_changed, ["tool"]);
         let saved = PackageCatalog::from_directory(&metadata_only.join("packages")).unwrap();
@@ -318,6 +374,72 @@ mod tests {
                 .repository_id,
             Some(42)
         );
+    }
+
+    #[test]
+    fn discovery_preserves_templates_and_retained_version_overrides() {
+        let source = r#"return {
+            name = "tool",
+            description = "Tool",
+            default_version = "1",
+            source = {
+                github = "owner/tool",
+                tag = "v{version}",
+                assets = { ["aarch64-macos"] = "tool-{tag}-darwin-arm64.tar.gz" },
+            },
+            bins = { "tool" },
+            checks = { { "tool", "--version" } },
+            versions = {
+                ["1"] = {
+                    revision = 3,
+                    assets = { ["aarch64-macos"] = "legacy-tool.tar.gz" },
+                    checks = { { "tool", "--help" } },
+                },
+            },
+        }"#;
+        let definition = PackageDefinition::from_lua(source).unwrap();
+        let original: Value = super::super::lua::read(source).unwrap();
+        let definitions = BTreeMap::from([("tool".into(), definition)]);
+        let catalog = PackageCatalog::from_definitions(&definitions).unwrap();
+        let upstreams = GitHubUpstream::from_definitions(&definitions).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        for version in ["1", "2"] {
+            let output = root.path().join(version);
+            let report = discover_with_fetch(
+                &catalog, &upstreams, &definitions, &output, 1, |url| {
+                    if !url.contains("/releases") {
+                        return Ok(serde_json::json!({"id":42,"full_name":"owner/tool","description":"Tool"}));
+                    }
+                    Ok(serde_json::json!([{
+                        "id":1,
+                        "tag_name":format!("v{version}"),
+                        "assets":[{
+                            "name": if version == "1" { "legacy-tool.tar.gz" } else { "tool-v2-darwin-arm64.tar.gz" },
+                            "browser_download_url":"https://example.com/tool"
+                        }]
+                    }]))
+                },
+            ).unwrap();
+            assert!(report.errors.is_empty());
+            assert_eq!(report.updated.is_empty(), version == "1");
+            assert_eq!(report.rules_changed, ["tool"]);
+            let saved_source = fs::read_to_string(output.join("packages/tool.lua")).unwrap();
+            let mut saved: Value = super::super::lua::read(&saved_source).unwrap();
+            assert_eq!(saved["source"]["repository_id"], 42);
+            saved["source"]
+                .as_object_mut()
+                .unwrap()
+                .remove("repository_id");
+            assert_eq!(saved["source"], original["source"]);
+            assert_eq!(saved["versions"]["1"], original["versions"]["1"]);
+            assert_eq!(saved["checks"], original["checks"]);
+            let expanded = PackageDefinition::from_lua(&saved_source).unwrap();
+            assert_eq!(expanded.package.default_version, version);
+            assert_eq!(
+                serde_json::to_value(&expanded.package.versions["1"]).unwrap(),
+                serde_json::to_value(&catalog.packages["tool"].versions["1"]).unwrap(),
+            );
+        }
     }
 
     #[test]

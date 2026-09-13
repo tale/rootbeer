@@ -14,7 +14,7 @@ pub(super) mod lua;
 mod metadata;
 mod updates;
 
-pub use updates::{discover_updates, seed_upstreams, UpdateReport};
+pub use updates::{discover_definition_updates, discover_updates, seed_upstreams, UpdateReport};
 
 /// Authoring rules for a canonical package imported from GitHub releases.
 /// Expanded from a package definition for release discovery.

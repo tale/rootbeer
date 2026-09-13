@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{Contract, PackageDefinition, PackageUpstream};
 use crate::package::{CatalogPackage, CatalogRecipe, PackageRequest, SourceBuild};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CompactPackage {
     name: String,
@@ -72,7 +72,7 @@ struct BuildTemplate {
     dependencies: Vec<String>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Version {
     #[serde(default = "one", skip_serializing_if = "is_one")]
@@ -107,7 +107,7 @@ fn expand(pattern: &str, version: &str, tag: Option<&str>) -> Result<String, Str
 }
 
 impl CompactPackage {
-    pub(super) fn expand(self) -> Result<PackageDefinition, String> {
+    pub(super) fn expand(&self) -> Result<PackageDefinition, String> {
         if self.source.is_some() == self.build.is_some() {
             return Err("package needs exactly one shared source or build definition".into());
         }
@@ -198,17 +198,18 @@ impl CompactPackage {
                 }
             });
         let definition = PackageDefinition {
+            authoring: Some(self.clone()),
             contract: Some(Contract {
-                bins: self.bins,
-                checks: self.checks,
+                bins: self.bins.clone(),
+                checks: self.checks.clone(),
             }),
             package: CatalogPackage {
-                name: self.name,
-                aliases: self.aliases,
-                description: self.description,
+                name: self.name.clone(),
+                aliases: self.aliases.clone(),
+                description: self.description.clone(),
                 homepage,
-                default_version: self.default_version,
-                default_versions: self.default_versions,
+                default_version: self.default_version.clone(),
+                default_versions: self.default_versions.clone(),
                 versions,
             },
             upstream,
@@ -297,143 +298,89 @@ impl CompactPackage {
             .versions
             .get(&package.default_version)
             .ok_or("default version has no recipe")?;
+        let Some(upstream) = definition.github_upstream()? else {
+            return Ok(None);
+        };
+        let Some(request) = default.source.as_deref().map(PackageRequest::parse) else {
+            return Ok(None);
+        };
+        if request.resolver.as_deref() != Some("github")
+            || request.name != upstream.repository
+            || package
+                .versions
+                .values()
+                .any(|recipe| recipe.build.is_some() || recipe.assets.is_empty())
+        {
+            return Ok(None);
+        }
+        let tag = request.version.ok_or("GitHub source has no tag")?;
+        let tag = tag
+            .strip_suffix(&package.default_version)
+            .map(|prefix| format!("{prefix}{{version}}"))
+            .unwrap_or(tag);
+        let mut assets = upstream.assets;
+        for (version, recipe) in &package.versions {
+            for (system, asset) in &recipe.assets {
+                assets
+                    .entry(system.clone())
+                    .or_insert_with(|| asset.replace(version, "{version}"));
+            }
+        }
+        let systems = default.systems.clone();
         let mut compact = Self {
             name: package.name.clone(),
             aliases: package.aliases.clone(),
             description: package.description.clone(),
-            homepage: Some(package.homepage.clone()),
+            homepage: (package.homepage != format!("https://github.com/{}", upstream.repository))
+                .then(|| package.homepage.clone()),
             default_version: package.default_version.clone(),
             default_versions: package.default_versions.clone(),
-            source: None,
+            source: Some(GitHubSource {
+                github: upstream.repository,
+                repository_id: upstream.repository_id,
+                tag_prefix: upstream
+                    .tag_prefix
+                    .filter(|prefix| Some(prefix) != inferred_prefix(&tag).as_ref()),
+                tag,
+                exclude_tags: upstream.exclude_tags,
+                update_systems: Some(upstream.systems),
+                should_track: true,
+                assets,
+            }),
             build: None,
-            systems: None,
-            bins: definition
-                .contract
-                .as_ref()
-                .map(|contract| contract.bins.clone())
-                .unwrap_or_else(|| default.bins.clone()),
-            checks: definition
-                .contract
-                .as_ref()
-                .map(|contract| contract.checks.clone())
-                .unwrap_or_else(|| default.checks.clone()),
+            systems: Some(systems.clone()),
+            bins: upstream.bins,
+            checks: upstream.checks,
             versions: BTreeMap::new(),
         };
-        if let Some(source) = &default.source {
-            let request = PackageRequest::parse(source);
-            if request.resolver.as_deref() != Some("github")
-                || package
-                    .versions
-                    .values()
-                    .any(|recipe| recipe.build.is_some() || recipe.assets.is_empty())
-            {
-                return Ok(None);
-            }
-            let tag = request.version.ok_or("GitHub source has no tag")?;
-            let tag_pattern = tag
-                .strip_suffix(&package.default_version)
-                .map(|prefix| format!("{prefix}{{version}}"))
-                .unwrap_or(tag);
-            let mut source = GitHubSource {
-                github: request.name,
-                tag: tag_pattern,
-                repository_id: None,
-                tag_prefix: None,
-                exclude_tags: Vec::new(),
-                update_systems: None,
-                should_track: false,
-                assets: BTreeMap::new(),
-            };
-            if let Some(PackageUpstream::Github {
-                repository,
-                repository_id,
-                tag_prefix,
-                exclude_tags,
-                systems,
-                assets,
-            }) = &definition.upstream
-            {
-                if repository != &source.github {
-                    return Ok(None);
-                }
-                source.repository_id = *repository_id;
-                source.tag_prefix = tag_prefix
-                    .clone()
-                    .filter(|prefix| Some(prefix) != inferred_prefix(&source.tag).as_ref());
-                source.exclude_tags = exclude_tags.clone();
-                source.update_systems = (!systems.is_empty()).then(|| systems.clone());
-                source.assets = assets.clone();
-                source.should_track = true;
-            }
-            for (version, recipe) in &package.versions {
-                for (system, asset) in &recipe.assets {
-                    source
-                        .assets
-                        .entry(system.clone())
-                        .or_insert_with(|| asset.replace(version, "{version}"));
-                }
-            }
-            if package.homepage == format!("https://github.com/{}", source.github) {
-                compact.homepage = None;
-            }
-            compact.source = Some(source);
-        } else if let Some(build) = &default.build {
-            if package
-                .versions
-                .values()
-                .any(|recipe| recipe.build.is_none())
-            {
-                return Ok(None);
-            }
-            let mut value = serde_json::to_value(build).map_err(|e| e.to_string())?;
-            value.as_object_mut().unwrap().remove("sha256");
-            value["url"] = build
-                .url
-                .replace(&package.default_version, "{version}")
-                .into();
-            value["strip_prefix"] = build
-                .strip_prefix
-                .to_str()
-                .ok_or("non-UTF-8 strip prefix")?
-                .replace(&package.default_version, "{version}")
-                .into();
-            compact.build = Some(serde_json::from_value(value).map_err(|e| e.to_string())?);
-        } else {
-            return Ok(None);
-        }
-        let systems = most_common_systems(package);
-        let inferred: Vec<_> = compact
-            .source
-            .as_ref()
-            .map(|source| source.assets.keys().cloned().collect())
-            .unwrap_or_default();
-        if systems != inferred {
-            compact.systems = Some(systems.clone());
-        }
-        if let Some(source) = &mut compact.source {
-            let mut ordered_systems = systems.clone();
-            ordered_systems.sort();
-            if source
-                .update_systems
-                .as_ref()
-                .is_some_and(|update_systems| {
-                    let mut selected = update_systems.clone();
-                    selected.sort();
-                    selected == ordered_systems
-                })
-            {
-                source.update_systems = None;
-            }
-        }
+        compact.update_versions(package, &systems)?;
+        Ok(Some(compact))
+    }
+
+    fn update_versions(
+        &mut self,
+        package: &CatalogPackage,
+        systems: &[String],
+    ) -> Result<(), String> {
+        self.versions
+            .retain(|version, _| package.versions.contains_key(version));
         for (version, recipe) in &package.versions {
+            if let Some(entry) = self.versions.get(version) {
+                if serde_json::to_value(self.expand_version(version, entry, systems)?)
+                    .map_err(|e| e.to_string())?
+                    == serde_json::to_value(recipe).map_err(|e| e.to_string())?
+                {
+                    continue;
+                }
+            }
             let mut entry = Version {
                 revision: recipe.revision,
                 systems: (recipe.systems != systems).then(|| recipe.systems.clone()),
-                bins: (recipe.bins != compact.bins).then(|| recipe.bins.clone()),
-                checks: (recipe.checks != compact.checks).then(|| recipe.checks.clone()),
+                bins: (recipe.bins != self.bins).then(|| recipe.bins.clone()),
+                checks: (recipe.checks != self.checks).then(|| recipe.checks.clone()),
                 ..Version::default()
             };
-            if let Some(source) = &compact.source {
+            if let Some(source) = &self.source {
                 let exact_source = recipe.source.as_ref().ok_or("missing source")?;
                 let request = PackageRequest::parse(exact_source);
                 let tag = request.version.ok_or("GitHub source has no tag")?;
@@ -463,7 +410,7 @@ impl CompactPackage {
             if let Some(build) = &recipe.build {
                 entry.sha256 = Some(build.sha256.clone());
             }
-            let expanded = compact.expand_version(version, &entry, &systems)?;
+            let expanded = self.expand_version(version, &entry, systems)?;
             if serde_json::to_value(&expanded).map_err(|e| e.to_string())?
                 != serde_json::to_value(recipe).map_err(|e| e.to_string())?
             {
@@ -476,22 +423,85 @@ impl CompactPackage {
                 entry.sha256 = None;
                 entry.build = recipe.build.clone();
             }
-            compact.versions.insert(version.clone(), entry);
+            self.versions.insert(version.clone(), entry);
+        }
+        Ok(())
+    }
+
+    pub(super) fn updated(&self, definition: &PackageDefinition) -> Result<Option<Self>, String> {
+        let mut compact = self.clone();
+        let previous = self.expand()?;
+        let package = &definition.package;
+        compact.name = package.name.clone();
+        compact.aliases = package.aliases.clone();
+        compact.description = package.description.clone();
+        if package.homepage != previous.package.homepage {
+            compact.homepage = Some(package.homepage.clone());
+        }
+        compact.default_version = package.default_version.clone();
+        compact.default_versions = package.default_versions.clone();
+        let previous_upstream = previous.github_upstream()?;
+        let upstream = definition.github_upstream()?;
+        if serde_json::to_value(&previous_upstream).map_err(|e| e.to_string())?
+            != serde_json::to_value(&upstream).map_err(|e| e.to_string())?
+        {
+            let Some(source) = &mut compact.source else {
+                return Ok(None);
+            };
+            source.should_track = definition.upstream.is_some();
+            if let Some(upstream) = upstream {
+                source.github = upstream.repository;
+                source.repository_id = upstream.repository_id;
+                if previous_upstream
+                    .as_ref()
+                    .is_none_or(|previous| previous.tag_prefix != upstream.tag_prefix)
+                {
+                    source.tag_prefix = upstream.tag_prefix;
+                }
+                source.exclude_tags = upstream.exclude_tags;
+                if previous_upstream
+                    .as_ref()
+                    .is_none_or(|previous| previous.systems != upstream.systems)
+                {
+                    source.update_systems = Some(upstream.systems);
+                }
+                if previous_upstream
+                    .as_ref()
+                    .is_none_or(|previous| previous.assets != upstream.assets)
+                {
+                    source.assets.extend(upstream.assets);
+                }
+                compact.bins = upstream.bins;
+                compact.checks = upstream.checks;
+            }
+        }
+        let systems = compact.systems.clone().unwrap_or_else(|| {
+            compact
+                .source
+                .as_ref()
+                .unwrap()
+                .assets
+                .keys()
+                .cloned()
+                .collect()
+        });
+        if package.versions.values().any(|recipe| {
+            recipe.build.is_some() != compact.build.is_some()
+                || (compact.source.is_some() && recipe.assets.is_empty())
+        }) {
+            return Ok(None);
+        }
+        compact.update_versions(package, &systems)?;
+        let expanded = compact.expand()?;
+        if serde_json::to_value(&expanded.package).map_err(|e| e.to_string())?
+            != serde_json::to_value(package).map_err(|e| e.to_string())?
+            || serde_json::to_value(expanded.github_upstream()?).map_err(|e| e.to_string())?
+                != serde_json::to_value(definition.github_upstream()?).map_err(|e| e.to_string())?
+        {
+            return Ok(None);
         }
         Ok(Some(compact))
     }
-}
-
-fn most_common_systems(package: &CatalogPackage) -> Vec<String> {
-    let mut counts = BTreeMap::new();
-    for recipe in package.versions.values() {
-        *counts.entry(recipe.systems.clone()).or_insert(0usize) += 1;
-    }
-    counts
-        .into_iter()
-        .max_by_key(|(_, count)| *count)
-        .map(|(systems, _)| systems)
-        .unwrap_or_default()
 }
 
 fn inferred_prefix(tag: &str) -> Option<String> {
@@ -562,6 +572,79 @@ mod tests {
     }
 
     #[test]
+    fn preserves_authoring_and_reflects_public_recipe_mutations() {
+        let mut definition = PackageDefinition::from_lua(BINARY).unwrap();
+        let original = serde_json::to_value(definition.authoring.as_ref().unwrap()).unwrap();
+        let rendered = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(rendered.authoring.unwrap()).unwrap(),
+            original
+        );
+
+        definition.package.description = "Updated tool".into();
+        definition.package.default_version = "3".into();
+        let mut recipe = definition.package.versions["2"].clone();
+        recipe.source = Some("github:owner/tool@tool-3".into());
+        recipe
+            .assets
+            .insert("aarch64-macos".into(), "tool-tool-3-arm64.tar.gz".into());
+        definition.package.versions.insert("3".into(), recipe);
+        definition.package.versions.get_mut("2").unwrap().revision = 4;
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&repeated.package).unwrap(),
+            serde_json::to_value(&definition.package).unwrap()
+        );
+        let saved = serde_json::to_value(repeated.authoring.unwrap()).unwrap();
+        assert_eq!(saved["source"], original["source"]);
+        assert_eq!(saved["versions"]["1"], original["versions"]["1"]);
+        assert_eq!(
+            saved["versions"]["3"],
+            serde_json::json!({"systems": ["aarch64-macos"]})
+        );
+
+        definition.package.versions.remove("2");
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert!(!repeated.package.versions.contains_key("2"));
+    }
+
+    #[test]
+    fn incompatible_template_edits_preserve_rules_or_fail_explicitly() {
+        let mut definition = PackageDefinition::from_lua(BINARY).unwrap();
+        let Some(PackageUpstream::Github {
+            tag_prefix, assets, ..
+        }) = &mut definition.upstream
+        else {
+            unreachable!()
+        };
+        *tag_prefix = None;
+        assets.clear();
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert!(repeated.authoring.is_none());
+        assert_eq!(
+            serde_json::to_value(repeated.github_upstream().unwrap()).unwrap(),
+            serde_json::to_value(definition.github_upstream().unwrap()).unwrap()
+        );
+
+        definition.package.versions.get_mut("2").unwrap().checks =
+            vec![vec!["tool".into(), "--help".into()]];
+        assert!(definition
+            .to_lua()
+            .unwrap_err()
+            .contains("shared discovery"));
+
+        definition.upstream = None;
+        let recipe = definition.package.versions.get_mut("2").unwrap();
+        recipe.source = Some("aqua:owner/tool@2".into());
+        recipe.assets.clear();
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&repeated.package).unwrap(),
+            serde_json::to_value(&definition.package).unwrap()
+        );
+    }
+
+    #[test]
     fn discovery_uses_shared_checks_instead_of_the_current_versions_exception() {
         let source = BINARY.replace(
             "[\"2\"] = { systems",
@@ -602,17 +685,45 @@ mod tests {
     #[test]
     fn source_build_versions_require_independent_checksums_and_allow_exact_overrides() {
         let package = PackageCatalog::embedded().unwrap().packages["xz"].clone();
-        let definition = PackageDefinition::new(package);
-        let mut compact = CompactPackage::from_definition(&definition)
-            .unwrap()
-            .unwrap();
+        let version = package.default_version.clone();
+        let recipe = &package.versions[&version];
+        let build = recipe.build.as_ref().unwrap();
+        let compact = CompactPackage {
+            name: package.name.clone(),
+            aliases: package.aliases.clone(),
+            description: package.description.clone(),
+            homepage: Some(package.homepage.clone()),
+            default_version: version.clone(),
+            default_versions: BTreeMap::new(),
+            source: None,
+            build: Some(BuildTemplate {
+                backend: build.backend.clone(),
+                url: build.url.replace(&version, "{version}"),
+                archive: "tar.gz".into(),
+                strip_prefix: "xz-{version}".into(),
+                configure: build.configure.clone(),
+                dependencies: build.dependencies.clone(),
+            }),
+            systems: Some(recipe.systems.clone()),
+            bins: recipe.bins.clone(),
+            checks: recipe.checks.clone(),
+            versions: BTreeMap::from([(
+                version.clone(),
+                Version {
+                    revision: recipe.revision,
+                    sha256: Some(build.sha256.clone()),
+                    ..Version::default()
+                },
+            )]),
+        };
+        let definition = compact.expand().unwrap();
+        let original = compact.clone();
+        let mut compact = compact;
         let version = compact.default_version.clone();
         let checksum = compact.versions[&version].sha256.clone().unwrap();
         compact.versions.get_mut(&version).unwrap().sha256 = None;
         assert!(compact.expand().unwrap_err().contains("own sha256"));
-        let mut compact = CompactPackage::from_definition(&definition)
-            .unwrap()
-            .unwrap();
+        let mut compact = original;
         let mut build = definition.package.versions[&version].build.clone().unwrap();
         build.configure.push("--disable-threads".into());
         compact.versions.insert(
@@ -640,7 +751,27 @@ mod tests {
                 .configure,
             build.configure
         );
-        assert!(expanded.to_lua().unwrap().contains("--disable-threads"));
+        let source = expanded.to_lua().unwrap();
+        assert!(source.contains("--disable-threads"));
+        let mut changed = expanded.clone();
+        changed
+            .package
+            .versions
+            .get_mut(&version)
+            .unwrap()
+            .build
+            .as_mut()
+            .unwrap()
+            .sha256 = "a".repeat(64);
+        let repeated = PackageDefinition::from_lua(&changed.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&repeated.package).unwrap(),
+            serde_json::to_value(&changed.package).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(repeated.authoring.unwrap().build).unwrap(),
+            serde_json::to_value(expanded.authoring.unwrap().build).unwrap()
+        );
     }
 
     #[test]

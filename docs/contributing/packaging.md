@@ -70,7 +70,9 @@ historical exception, including its exact URL and checksum.
 
 Compact files expand into the same exact recipes used by resolution, caches,
 qualification, and signed snapshots. Existing expanded Lua definitions still load.
-`rb package index` shows the expanded result; discovery and import emit compact Lua.
+`rb package index` shows the expanded result. Discovery preserves existing templates
+and version overrides; expanded files stay expanded. Import and seeding infer compact
+templates once for new definitions.
 Migration preserves array ordering, so some older definitions keep explicit platform
 lists even when their membership matches the asset map.
 

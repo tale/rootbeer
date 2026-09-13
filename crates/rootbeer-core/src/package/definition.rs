@@ -16,6 +16,7 @@ pub struct PackageDefinition {
     pub package: CatalogPackage,
     pub upstream: Option<PackageUpstream>,
     contract: Option<Contract>,
+    authoring: Option<compact::CompactPackage>,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +51,7 @@ impl PackageDefinition {
             package,
             upstream: None,
             contract: None,
+            authoring: None,
         }
     }
 
@@ -73,6 +75,7 @@ impl PackageDefinition {
             package,
             upstream,
             contract: None,
+            authoring: None,
         };
         definition.github_upstream()?;
         Ok(definition)
@@ -105,6 +108,17 @@ impl PackageDefinition {
         package: CatalogPackage,
         upstream: &GitHubUpstream,
     ) -> Result<Self, String> {
+        let definition = Self::from_github_upstream(package, upstream)?;
+        match compact::CompactPackage::from_definition(&definition)? {
+            Some(authoring) => authoring.expand(),
+            None => Ok(definition),
+        }
+    }
+
+    fn from_github_upstream(
+        package: CatalogPackage,
+        upstream: &GitHubUpstream,
+    ) -> Result<Self, String> {
         if package.name != upstream.name
             || package.aliases != upstream.aliases
             || upstream
@@ -128,6 +142,7 @@ impl PackageDefinition {
         };
         let definition = Self {
             package,
+            authoring: None,
             contract: Some(Contract {
                 bins: upstream.bins.clone(),
                 checks: upstream.checks.clone(),
@@ -142,6 +157,17 @@ impl PackageDefinition {
             }),
         };
         definition.github_upstream()?;
+        Ok(definition)
+    }
+
+    /// Updates resolved recipes and discovery rules while retaining authoring templates.
+    pub fn with_updates(
+        &self,
+        package: CatalogPackage,
+        upstream: &GitHubUpstream,
+    ) -> Result<Self, String> {
+        let mut definition = Self::from_github_upstream(package, upstream)?;
+        definition.authoring = self.authoring.clone();
         Ok(definition)
     }
 
@@ -192,15 +218,19 @@ impl PackageDefinition {
     /// Renders one complete package file, including its update rules when configured.
     pub fn to_lua(&self) -> Result<String, String> {
         self.github_upstream()?;
-        if let Some(compact) = compact::CompactPackage::from_definition(self)? {
-            let source = lua::write(&compact)?;
-            let expanded = Self::from_lua(&source)?;
-            if serde_json::to_value(&expanded.package).map_err(|e| e.to_string())?
-                != serde_json::to_value(&self.package).map_err(|e| e.to_string())?
-            {
-                return Err("compact definition changed expanded package data".into());
+        if let Some(authoring) = &self.authoring {
+            if let Some(compact) = authoring.updated(self)? {
+                return lua::write(&compact);
             }
-            return Ok(source);
+        }
+        let mut expanded = self.clone();
+        expanded.contract = None;
+        if serde_json::to_value(expanded.github_upstream()?).map_err(|e| e.to_string())?
+            != serde_json::to_value(self.github_upstream()?).map_err(|e| e.to_string())?
+        {
+            return Err(
+                "expanded definition cannot preserve shared discovery bins or checks".into(),
+            );
         }
         let mut value = serde_json::to_value(&self.package).map_err(|e| e.to_string())?;
         if let Some(upstream) = &self.upstream {
@@ -228,18 +258,15 @@ mod tests {
 
     fn definition() -> PackageDefinition {
         let package = PackageCatalog::embedded().unwrap().packages["age"].clone();
-        PackageDefinition {
-            package,
-            contract: None,
-            upstream: Some(PackageUpstream::Github {
-                repository: "FiloSottile/age".into(),
-                repository_id: Some(123),
-                tag_prefix: None,
-                exclude_tags: Vec::new(),
-                systems: Vec::new(),
-                assets: BTreeMap::new(),
-            }),
-        }
+        let mut upstream = GitHubUpstream::new(
+            package.name.clone(),
+            "FiloSottile/age".into(),
+            package.versions[&package.default_version].bins.clone(),
+        );
+        upstream.aliases = package.aliases.clone();
+        upstream.checks = package.versions[&package.default_version].checks.clone();
+        upstream.repository_id = Some(123);
+        PackageDefinition::with_github_upstream(package, &upstream).unwrap()
     }
 
     #[test]
@@ -318,7 +345,7 @@ mod tests {
             source.replace("homepage", "homepage_typo"),
             source.replace("repository_id = 123", "repository_id = 0"),
         ] {
-            assert!(PackageDefinition::from_lua(&invalid).is_err());
+            assert!(PackageDefinition::from_lua(&invalid).is_err(), "{invalid}");
         }
         let mut legacy = serde_json::to_value(&definition.package).unwrap();
         legacy["upstream"] = serde_json::to_value(&definition.upstream).unwrap();
@@ -349,10 +376,14 @@ mod tests {
     #[test]
     fn untracked_packages_and_restricted_discovery_preserve_installable_platforms() {
         let mut definition = definition();
-        let Some(PackageUpstream::Github { systems, .. }) = &mut definition.upstream else {
+        let Some(PackageUpstream::Github {
+            systems, assets, ..
+        }) = &mut definition.upstream
+        else {
             unreachable!()
         };
         *systems = vec!["aarch64-macos".into()];
+        assets.retain(|system, _| systems.contains(system));
         let loaded = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
         assert_eq!(
             loaded.github_upstream().unwrap().unwrap().systems,

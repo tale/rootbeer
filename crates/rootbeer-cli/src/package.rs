@@ -162,11 +162,9 @@ fn execute(args: Args) -> Result<(), String> {
             let definitions = definitions
                 .as_ref()
                 .ok_or("updates requires --catalog pointing to package definitions")?;
-            let definitions =
-                rootbeer_core::package::GitHubUpstream::from_definitions(definitions)?;
-            let report = rootbeer_core::package::discover_updates(
+            let report = rootbeer_core::package::discover_definition_updates(
                 catalog,
-                &definitions,
+                definitions,
                 &cache,
                 &output,
                 max_pages,

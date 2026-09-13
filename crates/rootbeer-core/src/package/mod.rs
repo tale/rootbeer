@@ -51,7 +51,8 @@ pub use spec::{
     ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRealizationInput, Provides,
 };
 pub use upstream::{
-    discover_updates, import_github_packages, seed_upstreams, GitHubUpstream, UpdateReport,
+    discover_definition_updates, discover_updates, import_github_packages, seed_upstreams,
+    GitHubUpstream, UpdateReport,
 };
 
 pub fn default_resolver_stack() -> ResolverStack {
