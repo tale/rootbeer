@@ -30,8 +30,9 @@ zsh.config({
 })
 ```
 
-Rootbeer writes the generated files into its managed config directory and uses
-`~/.zshenv` as the bootstrap entrypoint.
+Rootbeer manages your Zsh startup files through `~/.zshenv`.
+To use tools installed by Rootbeer, add the shell setup from the
+[package guide](/guide/packages).
 
 For machine-specific values like work-only aliases or a different `EDITOR`, use
 [Profiles](/guide/profiles).

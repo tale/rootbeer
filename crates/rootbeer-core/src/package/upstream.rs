@@ -82,7 +82,14 @@ impl GitHubUpstream {
 
     /// Loads update rules from unified package files, inheriting each package's contract.
     pub fn from_directory(directory: &Path) -> Result<Vec<Self>, String> {
-        let definitions = super::PackageDefinition::from_directory(directory)?
+        Self::from_definitions(&super::PackageDefinition::from_directory(directory)?)
+    }
+
+    /// Extracts validated update rules from already evaluated package definitions.
+    pub fn from_definitions(
+        definitions: &BTreeMap<String, super::PackageDefinition>,
+    ) -> Result<Vec<Self>, String> {
+        let definitions = definitions
             .values()
             .filter_map(|definition| definition.github_upstream().transpose())
             .collect::<Result<Vec<_>, _>>()?;
@@ -95,35 +102,25 @@ impl GitHubUpstream {
         if !valid_name(&self.name) || self.repository_id == Some(0) {
             return Err("invalid canonical name or repository ID".into());
         }
-        let recipe = super::CatalogRecipe {
-            revision: 1,
-            source: Some(format!("github:{}@v1", self.repository)),
-            build: None,
-            assets: BTreeMap::new(),
-            systems: self.systems.clone(),
-            bins: self.bins.clone(),
-            checks: self.checks.clone(),
-        };
-        let package = CatalogPackage {
-            name: self.name.clone(),
-            aliases: self.aliases.clone(),
-            description: self
-                .description
-                .clone()
-                .unwrap_or_else(|| self.name.clone()),
-            homepage: self
+        if self
+            .description
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+            || self
                 .homepage
-                .clone()
-                .unwrap_or_else(|| format!("https://github.com/{}", self.repository)),
-            default_version: "1".into(),
-            default_versions: BTreeMap::new(),
-            versions: BTreeMap::from([("1".into(), recipe)]),
-        };
-        PackageCatalog {
-            schema: 1,
-            packages: BTreeMap::from([(self.name.clone(), package)]),
+                .as_ref()
+                .is_some_and(|value| !value.starts_with("https://"))
+        {
+            return Err(format!("{}: invalid package identity", self.name));
         }
-        .validate()?;
+        let mut names = BTreeSet::new();
+        for name in std::iter::once(&self.name).chain(&self.aliases) {
+            if !valid_name(name) || !names.insert(name) {
+                return Err(format!("invalid or duplicate package name `{name}`"));
+            }
+        }
+        super::catalog::validate_systems(&self.systems)?;
+        super::catalog::validate_commands(&self.bins, &self.checks)?;
         for (system, pattern) in &self.assets {
             if !self.systems.contains(system) || pattern.trim().is_empty() {
                 return Err(
@@ -442,6 +439,30 @@ mod tests {
         let mut second = second;
         second.repository_id = Some(42);
         assert!(validate_definitions(&[first, second]).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_discovery_contracts_without_catalog_recipes() {
+        let upstream = GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
+        for invalid in [
+            serde_json::json!({"description": " "}),
+            serde_json::json!({"homepage": "http://example.com"}),
+            serde_json::json!({"aliases": ["tool"]}),
+            serde_json::json!({"aliases": ["../tool"]}),
+            serde_json::json!({"systems": []}),
+            serde_json::json!({"systems": ["aarch64-macos", "aarch64-macos"]}),
+            serde_json::json!({"systems": ["unknown"]}),
+            serde_json::json!({"bins": ["tool", "tool"]}),
+            serde_json::json!({"checks": [["undeclared", "--version"]]}),
+        ] {
+            let mut value = serde_json::to_value(&upstream).unwrap();
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(invalid.as_object().unwrap().clone());
+            let invalid: GitHubUpstream = serde_json::from_value(value).unwrap();
+            assert!(invalid.validate().is_err());
+        }
     }
 
     #[test]

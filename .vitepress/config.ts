@@ -36,10 +36,10 @@ export default defineConfig({
         text: "Packages",
         collapsed: false,
         items: [
-          { text: "Browse the Catalog", link: "/packages/" },
+          { text: "Find Packages", link: "/packages/" },
           { text: "Declare and Install", link: "/guide/packages" },
           { text: "Updates and Offline Use", link: "/guide/package-locks" },
-          { text: "Catalogs and Backends", link: "/guide/package-sources" },
+          { text: "Other Package Sources", link: "/guide/package-sources" },
         ],
       },
       {

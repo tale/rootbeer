@@ -1,12 +1,12 @@
 # json
 
 JSON codec. Output is pretty-printed with 2-space indent and a trailing
-newline. See the [formats overview](./) for the shared codec shape and
+newline. See the [formats overview](./) for the shared functions and
 encoding rules common to every format.
 
 ## Examples
 
-Materialize a settings file:
+Write a settings file:
 
 ```lua
 local rb = require("rootbeer")

@@ -32,11 +32,7 @@ export interface NavSection {
 export const modulesSection: NavSection = {
   root: "/modules/",
   title: "Modules",
-  lead: `Modules are the high-level, opinionated wrappers that turn a Lua table
-into the configuration files, settings, and side effects you actually
-want on disk. Each module is a thin layer over the [core API](/reference/core)
-— \`rb.file()\`, \`rb.exec()\`, the format codecs — exposed as a small,
-typed surface so your dotfiles read like declarations instead of glue.
+  lead: `Configure tools such as Git, Zsh, and SSH from your Lua configuration.
 
 Pull a module in with \`require("rootbeer.<name>")\`:
 
@@ -45,8 +41,8 @@ local zsh = require("rootbeer.zsh")
 local git = require("rootbeer.git")
 \`\`\`
 
-For per-machine variants, see [Profiles](/guide/profiles). To wire up
-something rootbeer doesn't ship a module for, drop down to the
+Use [Profiles](/guide/profiles) for settings that differ between machines.
+For tools without a module, write their configuration files with the
 [core API](/reference/core).`,
   categories: [
     {
@@ -103,9 +99,8 @@ something rootbeer doesn't ship a module for, drop down to the
 export const referenceSection: NavSection = {
   root: "/reference/",
   title: "Reference",
-  lead: `The low-level surface that every [module](/modules/) is built on. Reach
-for these primitives when you're writing your own integration, gluing
-together modules, or doing one-off file/symlink/exec work.
+  lead: `Write files, create symlinks, run commands, and read system information.
+For configuring tools such as Git or Zsh, start with [modules](/modules/).
 
 \`\`\`lua
 local rb = require("rootbeer")
@@ -132,7 +127,7 @@ local rb = require("rootbeer")
         {
           slug: "secrets",
           text: "Secrets",
-          desc: "Pluggable secret providers — 1Password, embedding vs deferred writes.",
+          desc: "Read secrets and save documents from 1Password.",
         },
       ],
     },

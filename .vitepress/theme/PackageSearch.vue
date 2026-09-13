@@ -11,9 +11,8 @@ const loading = ref(true);
 const error = ref("");
 const copied = ref("");
 const copyError = ref("");
-const snapshotUrl = ref("");
 const platforms = [
-  ["aarch64-macos", "macOS · ARM64"],
+  ["aarch64-macos", "macOS · Apple silicon"],
   ["x86_64-macos", "macOS · Intel"],
   ["aarch64-linux", "Linux · ARM64"],
   ["x86_64-linux", "Linux · x86-64"],
@@ -28,7 +27,6 @@ async function refresh() {
   try {
     const catalog = await loadCatalog(theme.value.catalog);
     packages.value = catalog.packages;
-    snapshotUrl.value = catalog.snapshotUrl;
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : "The catalog could not be loaded.";
   } finally {
@@ -42,7 +40,7 @@ async function copy(pkg: CatalogPackage) {
     await navigator.clipboard.writeText(`rb.package(${JSON.stringify(pkg.name)})`);
     copied.value = pkg.name;
   } catch {
-    copyError.value = "Copy was unavailable. Select the declaration text to copy it.";
+    copyError.value = "Could not copy. Select and copy the install line.";
   }
 }
 
@@ -74,7 +72,7 @@ onMounted(() => {
         <input
           v-model="query"
           type="search"
-          placeholder="Search names, aliases, and descriptions"
+          placeholder="Search packages"
           autocomplete="off"
         />
       </label>
@@ -86,7 +84,7 @@ onMounted(() => {
         </select>
       </label>
     </div>
-    <p v-if="loading" role="status">Loading the published catalog…</p>
+    <p v-if="loading" role="status">Loading packages…</p>
     <div v-else-if="error" class="catalog-error" role="alert">
       <p>{{ error }}</p>
       <button type="button" @click="refresh">Try again</button>
@@ -96,20 +94,19 @@ onMounted(() => {
         <p role="status">
           {{ results.length }} {{ results.length === 1 ? "package" : "packages" }}
         </p>
-        <a :href="snapshotUrl">Published snapshot</a>
       </div>
       <p v-if="!results.length">No matching packages. Try another name or platform.</p>
       <p v-if="copyError" role="status">{{ copyError }}</p>
       <article v-for="pkg in results" :key="pkg.name" class="package-result">
         <div class="result-heading">
           <h2>{{ pkg.name }}</h2>
-          <a :href="pkg.homepage" target="_blank" rel="noopener noreferrer">Project ↗</a>
+          <a :href="pkg.homepage" target="_blank" rel="noopener noreferrer">Website ↗</a>
         </div>
         <p>{{ pkg.description }}</p>
         <p v-if="pkg.aliases.length" class="aliases">Also known as {{ pkg.aliases.join(", ") }}</p>
         <div class="declaration">
           <code>rb.package("{{ pkg.name }}")</code>
-          <button type="button" :aria-label="`Copy declaration for ${pkg.name}`" @click="copy(pkg)">
+          <button type="button" :aria-label="`Copy install line for ${pkg.name}`" @click="copy(pkg)">
             {{ copied === pkg.name ? "Copied" : "Copy" }}
           </button>
         </div>
@@ -141,8 +138,8 @@ onMounted(() => {
       </article>
     </template>
     <noscript
-      >Package search requires JavaScript to load the current catalog. You can inspect the published
-      index directly.</noscript
+      >Enable JavaScript to search packages, or read the <a href="/guide/packages">package guide</a>
+      to get started.</noscript
     >
   </div>
 </template>

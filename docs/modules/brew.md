@@ -20,6 +20,9 @@ brew.config({
 })
 ```
 
+Use [Rootbeer packages](/guide/packages) for supported command-line tools.
+Homebrew can also install desktop applications through casks and Mac App Store apps.
+
 For packages that only belong on some machines, use [Profiles](/guide/profiles).
 
 ## API Reference

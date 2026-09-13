@@ -1,51 +1,52 @@
 # Updates and offline use
 
-Your Lua configuration describes what you want. `rootbeer.lock` records the exact
-package selections and verified contents used to realize it.
+`rootbeer.lock` saves the package versions and downloads used by your configuration.
+Commit it alongside `init.lua` so later installs use the same packages.
 
-## Choose when to update
+## Update packages
 
-| Command              | Behavior                                                                                             |
-| -------------------- | ---------------------------------------------------------------------------------------------------- |
-| `rb apply`           | Reuse a matching lock; resolve when declarations or platform change.                                 |
-| `rb apply --locked`  | Require a matching lock and refuse to rewrite it. Missing artifacts may be downloaded.               |
-| `rb apply --update`  | Refresh resolver inputs and package selections, then rewrite the lock.                               |
-| `rb apply --offline` | Require a matching lock and locally available package contents. Never fetch packages or the catalog. |
+```sh
+rb apply --update
+```
 
-Review and commit lockfile changes after an update. Version pins in your Lua
-configuration remain exact during updates. An explicit index pin also stays fixed
-until you edit that declaration.
+This updates unpinned packages and saves the new versions in `rootbeer.lock`.
+Review and commit the changes. Versions specified in `init.lua` stay fixed,
+but their packaging or download details can change.
 
-`rb update` updates Rootbeer itself. `rb apply --update` updates the package
-selections in your configuration.
+`rb update` updates Rootbeer itself. `rb apply --update` updates your packages.
 
-## What gets recorded
+| Command | Behavior |
+| ------- | -------- |
+| `rb apply` | Use saved versions. Update the lock if your package configuration or platform changed. |
+| `rb apply --update` | Fetch current package information and update unpinned packages. Requires internet access. |
+| `rb apply --locked` | Require the lock to match your package configuration and platform. Missing packages may be downloaded. |
+| `rb apply --offline` | Require a matching lock and packages already downloaded on this machine. |
 
-The lock contains the target platform, canonical identity, version, source URL,
-archive hash, exported commands, and installed-tree hash. Catalog resolutions also
-record the selected snapshot and recipe revision. Explicit backend resolutions
-record the metadata used to make their decision.
+If you [selected a custom index](/guide/package-sources#use-another-index),
+updates keep using it until you change that selection in your configuration.
 
-Hashes keep later installs tied to the selected bytes. They do not guarantee
-that an upstream download will remain available forever. A cached artifact can
-still be used offline after its original URL disappears.
+## Install without internet access
 
-## Offline operation
+```sh
+rb apply --offline
+```
 
-An offline apply can reuse an existing store output or recreate it from the
-download cache. A lockfile alone is not enough: the required package bytes must
-already be present. If anything is missing, the operation fails instead of
-contacting the network.
+The packages must already be installed or cached on this machine. A lockfile
+alone is not enough. If a package is missing, Rootbeer reports an error instead
+of downloading it. Cached packages remain usable even if the original download
+is no longer available.
 
-The profile lives under `$XDG_STATE_HOME/rootbeer/profiles`, and package state
-normally lives under `~/.local/state/rootbeer`. Source your generated package
-environment rather than hard-coding store paths.
+This flag controls package downloads; commands and other integrations in your
+configuration may still need internet access.
 
-## Moving between machines
+## Using multiple machines
 
-Locks are tied to a platform. Keep separate checkouts for machines with different
-platforms when preserving both locks matters. Profiles can vary your declarations,
-but they do not make one resolved binary portable across architectures.
+A lockfile currently covers one platform. Applying your configuration on a
+different platform rewrites the lock for that machine; `--locked` refuses this
+change. [Profiles](/guide/profiles) can choose different packages per machine,
+but cannot make one lockfile cover multiple platforms.
 
-Upgrading Rootbeer does not itself require replacing a matching package lock.
-New catalog features can require a newer `rb` when resolving new declarations.
+If you need to preserve locks for different platforms, keep a checkout and its
+lock on each machine, and avoid overwriting one platform's lock with another's.
+
+Updating Rootbeer itself does not require replacing a matching lockfile.

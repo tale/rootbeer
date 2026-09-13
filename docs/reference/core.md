@@ -1,10 +1,9 @@
 # Core API
 
-The core module provides the low-level primitives that all other modules build
-on — writing files, creating symlinks, and serializing data formats.
+Write files, create symlinks, run commands, and manage packages from your Lua config.
 
 For system information, see [`rb.host`](/reference/host).
-For secrets (1Password and friends), see [Secrets](/reference/secrets).
+For secrets from 1Password, see [Secrets](/reference/secrets).
 For per-machine configuration, see [Profiles](/guide/profiles).
 For managed packages and lockfile modes, see [Packages](/guide/packages).
 
@@ -28,12 +27,10 @@ for the complete walkthrough. The module exposes:
 
 ## `rb.package`
 
-`rb.package()` declares a tool as part of your desired system configuration.
-Canonical names select the official catalog; exact versions and explicit backend
-requests are available when needed. Apply records the selection in `rootbeer.lock`.
+`rb.package("ripgrep")` installs ripgrep. Add `@version` to choose an exact version.
+Rootbeer saves package versions in `rootbeer.lock`.
 
-Use [package search](/packages/) to find declarations and platform support, then
-follow the [package guide](/guide/packages) for installation and shell integration.
+[Find packages](/packages/) or follow the [package guide](/guide/packages) to get started.
 
 ## API Reference
 

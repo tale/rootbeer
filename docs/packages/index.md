@@ -13,12 +13,9 @@ import PackageSearch from '../../.vitepress/theme/PackageSearch.vue'
 
 # Package catalog
 
-Find command-line tools for your configuration. Results come from the live
-published index, with the default version available for each platform.
-
-Copy a declaration into your Lua configuration, then run `rb apply`.
-[Learn about packages](/guide/packages), [manage updates](/guide/package-locks),
-or [contribute a recipe](/contributing/packaging).
+Find tools to install with Rootbeer. Add a package to `init.lua`, then run
+`rb apply`. Follow [the package guide](/guide/packages) to make the commands
+available in your shell.
 
 <PackageSearch />
 

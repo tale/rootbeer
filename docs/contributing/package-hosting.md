@@ -18,20 +18,6 @@ would couple package availability to website deployments and make search stale.
 GitHub Pages does not route two independent repositories under arbitrary paths of
 one custom host.
 
-## A custom index domain
-
-A dedicated subdomain can be assigned to the index Pages site while documentation
-keeps its existing custom domain. For example, `index.rootbeer.tale.me` would need
-a DNS CNAME to `tale.github.io`, the index repository's Pages domain setting, and
-HTTPS provisioning. This is a proposed address, not the current endpoint.
-
-An `api.tale.me` redirect or reverse proxy is another option, but it adds a routing
-service. Any migration must preserve the immutable URLs already recorded in locks
-and signed manifests. Do not change DNS or the publication base URL as a cosmetic
-rename without checking old snapshot and receipt paths.
-
-See [GitHub's custom-domain guide](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site).
-
 ## Release trust configuration
 
 Rootbeer release builds embed `ROOTBEER_INDEX_URL` and `ROOTBEER_INDEX_PUBLIC_KEY`.
@@ -64,3 +50,39 @@ sequence to compare. The manifest currently has no expiry policy.
 
 The CLI scopes cached index history to its endpoint and verification key. Moving
 an endpoint or rotating a key therefore needs an explicit migration plan.
+
+## Catalog selection and fallback
+
+Released builds verify the official manifest signature and snapshot hash before
+using package information. The verification key is embedded at build time;
+runtime environment variables cannot replace it. A matching lock needs no
+catalog fetch.
+
+When the network is unavailable, resolution can use the last verified cached
+snapshot, then the smaller embedded catalog. Rootbeer reports this fallback.
+Invalid signatures, corrupt snapshots, and rollback attempts fail. A missing
+package does not trigger another provider. Developer builds without an official
+endpoint report embedded fallback. `rb apply --update` requires a successful
+refresh; offline installs use the matching lock and cached package contents.
+
+Package search displays the published catalog. `rb package list` and
+`rb package show` inspect the embedded authoring catalog or the directory passed
+to `--catalog`; they do not search the remote catalog.
+
+Explicit `rb.package_index()` pins bypass official catalog selection and fallback.
+The pin identifies exact bytes, not a publisher signature. Published artifact URLs
+use HTTPS or immutable GHCR blobs.
+
+## Package locks
+
+Locks record the platform, package identity, version, source URL, archive hash,
+exported commands, and installed-tree hash. Catalog packages also record the
+snapshot and recipe revision; direct sources record their resolution metadata.
+Hashes bind subsequent installs to the selected contents, but do not ensure a
+download URL remains available.
+
+Catalog packages install from prebuilt archives, including source-built packages
+published by the index workflow. Normal apply does not compile them locally.
+Packages live under the Rootbeer state directory, with command paths under
+`$XDG_STATE_HOME/rootbeer/profiles`. Use `rb.env_export()` instead of hard-coding
+these paths. New catalog features can require a newer CLI when resolving packages.

@@ -1,6 +1,6 @@
 # toml
 
-TOML codec. See the [formats overview](./) for the shared codec shape and
+TOML codec. See the [formats overview](./) for the shared functions and
 encoding rules common to every format.
 
 ## Examples

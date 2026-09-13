@@ -1,73 +1,67 @@
 # Packages
 
-Declare the command-line tools you want alongside the rest of your system
-configuration. Rootbeer installs them into its own store, exposes their commands
-through a package profile, and records exact selections in `rootbeer.lock`.
+Install command-line tools from the same configuration as your shell and dotfiles.
 
-[Browse the package catalog](/packages/) to find canonical names, available
-versions, and platform support. Copy a declaration from a package's result into
-your Lua configuration.
+## Install your tools
 
-## Declare your tools
-
-`rb.package("name")` selects the catalog default for the current platform.
-`rb.package("name@version")` requests an exact catalog version. Names stay the
-same across macOS and Linux; recipes determine how each platform's package is
-obtained.
-
-Unversioned requests select the newest catalog release available for that
-platform. A platform that upstream no longer supports can retain an older
-default without holding back other machines. Explicit versions never silently
-fall back, and an existing matching lock stays unchanged until you update it.
-
-## Make commands available
-
-Add Rootbeer's package environment to your shell configuration:
+Add packages to `init.lua`. This example installs [ripgrep](https://github.com/BurntSushi/ripgrep)
+and makes its `rg` command available in Zsh:
 
 ```lua
 local rb = require("rootbeer")
 local zsh = require("rootbeer.zsh")
+
+rb.package("ripgrep")
 
 zsh.config({
     sources = { rb.env_export("sh") },
 })
 ```
 
-This places the package profile on `PATH`. Other shell integrations can source
-the path returned by `rb.env_export("sh")` as well. Open a new shell after applying
-changes to shell startup files.
-
-## Apply and lock
+If you already call `zsh.config()`, add the `sources` entry to that configuration.
+Then apply:
 
 ```sh
 rb apply
 ```
 
-Rootbeer resolves declarations, verifies downloaded artifacts, installs them into
-its content-addressed store, and creates or updates `rootbeer.lock` beside your
-configuration. Commit the lock with your config. A normal apply reuses a matching
-lock rather than asking upstream for newer versions.
+Open a new terminal and run `rg --version`. [Find more packages](/packages/)
+to add to your configuration.
 
-Published catalog packages install from prebuilt archives, including packages
-built from source by the index workflow. A normal apply does not compile those
-packages locally. Their runtime files stay together in the store.
+For Bash or another POSIX-compatible shell, source the file returned by
+`rb.env_export("sh")` from your shell startup file. Fish syntax is not supported.
 
-## Keep configuration portable
+## Choose a version
 
-The catalog targets macOS and Linux on ARM64 and x86-64. Availability is tracked
-per package version and platform; support for one platform does not imply support
-for every OS release or Linux distribution. Use the catalog's platform filter
-before adding a package to a shared configuration.
+Without a version, Rootbeer installs the newest available release for your platform.
+To choose an exact version, include it after `@`:
 
-Locks are platform-specific. A lock created for another platform is stale: normal
-apply can resolve for the new platform, while `--locked` refuses the change. Use
-separate configuration checkouts when you need to retain each platform's lock.
+```lua
+rb.package("ripgrep@15.2.0")
+```
 
-A missing package or platform produces an error. Rootbeer does not silently switch
-providers, compile a replacement, or install an older version for an exact request.
+Rootbeer saves installed versions in `rootbeer.lock`. Commit this file with your
+configuration. Running `rb apply` again keeps those versions unless your package
+configuration or platform changes.
 
-## Continue
+Run `rb apply --update` to update unpinned packages. Exact versions stay fixed.
+See [updates and offline use](/guide/package-locks) for the other options.
 
-- [Updates and offline use](/guide/package-locks): control when selections change.
-- [Catalogs and backends](/guide/package-sources): understand trust and overrides.
-- [Contribute packages](/contributing/packaging): grow the catalog without changing `rb`.
+## Supported packages
+
+Rootbeer installs prebuilt command-line tools on macOS and Linux, on ARM64 and
+x86-64. Use the platform filter in [package search](/packages/) to check a tool.
+Some tools have older releases on platforms they no longer support; compatibility
+with every Linux distribution or OS release is not guaranteed.
+
+An unavailable package or exact version produces an error. Rootbeer does not
+compile a replacement during installation.
+
+Rootbeer does not yet install desktop applications, manage services, or
+necessarily install every runtime dependency a tool needs. Continue using
+[Homebrew](/modules/brew) or another package manager for those needs. Adding a
+package to Rootbeer does not remove a copy installed by another manager.
+
+For tools outside the catalog, see [other package sources](/guide/package-sources).
+For sharing a configuration between platforms, see
+[using multiple machines](/guide/package-locks#using-multiple-machines).

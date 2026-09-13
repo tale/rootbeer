@@ -12,6 +12,7 @@ use crate::store::hash_bytes;
 
 mod recipe;
 
+pub(super) use recipe::{validate_commands, validate_systems};
 pub use recipe::{CatalogPackage, CatalogRecipe};
 
 include!(concat!(env!("OUT_DIR"), "/package_catalog.rs"));
@@ -47,52 +48,39 @@ impl PackageCatalog {
 
     /// Loads a recipe directory without rebuilding the executable.
     pub fn from_directory(directory: &Path) -> Result<Self, String> {
-        let mut recipes = BTreeMap::new();
-        for entry in std::fs::read_dir(directory).map_err(|e| e.to_string())? {
-            let path = entry.map_err(|e| e.to_string())?.path();
-            if path.extension().is_none_or(|extension| extension != "lua") {
-                continue;
-            }
-            let name = path
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| format!("invalid recipe filename: {}", path.display()))?;
-            let source =
-                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            recipes.insert(name.to_string(), source);
-        }
-        let recipes: Vec<_> = recipes
-            .iter()
-            .map(|(name, source)| (name.as_str(), source.as_str()))
-            .collect();
-        Self::from_lua(&recipes)
+        Self::from_definitions(&super::PackageDefinition::from_directory(directory)?)
     }
 
     fn from_lua(recipes: &[(&str, &str)]) -> Result<Self, String> {
-        let mut packages = BTreeMap::new();
-        let mut upstreams = Vec::new();
+        let mut definitions = BTreeMap::new();
         for (name, source) in recipes {
             let definition =
                 super::PackageDefinition::from_lua(source).map_err(|e| format!("{name}: {e}"))?;
-            if let Some(upstream) = definition.github_upstream()? {
-                upstreams.push(upstream);
-            }
-            let package = definition.package;
-            if package.name != *name {
-                return Err(format!("{name}: canonical name must match the filename"));
-            }
-            if packages.insert(name.to_string(), package).is_some() {
+            if definitions.insert(name.to_string(), definition).is_some() {
                 return Err(format!("duplicate canonical package `{name}`"));
             }
+        }
+        Self::from_definitions(&definitions)
+    }
+
+    /// Builds a validated catalog from already evaluated package definitions.
+    pub fn from_definitions(
+        definitions: &BTreeMap<String, super::PackageDefinition>,
+    ) -> Result<Self, String> {
+        let mut packages = BTreeMap::new();
+        for (name, definition) in definitions {
+            if definition.package.name != *name {
+                return Err(format!("{name}: canonical name must match the filename"));
+            }
+            packages.insert(name.clone(), definition.package.clone());
         }
         let catalog = Self {
             schema: 1,
             packages,
         };
         catalog.validate()?;
-        super::upstream::validate_definitions(&upstreams)?;
-        for upstream in &upstreams {
-            super::upstream::check_identity(&catalog, upstream)?;
+        for upstream in super::GitHubUpstream::from_definitions(definitions)? {
+            super::upstream::check_identity(&catalog, &upstream)?;
         }
         Ok(catalog)
     }

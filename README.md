@@ -2,10 +2,8 @@
 
 > Declare your packages and system configuration in Lua.
 
-Rootbeer is a standalone tool for managing command-line packages, files, shell
-settings, and machine-specific configuration together. Its signed package catalog
-supplies verified platform binaries, while `rootbeer.lock` keeps installations
-stable until you choose to update.
+Rootbeer manages your tools, dotfiles, and shell settings from a Lua configuration.
+Keep it in Git and use it to set up your macOS and Linux machines.
 
 **[Documentation](https://rootbeer.tale.me) · [Package catalog](https://rootbeer.tale.me/packages/)**
 
@@ -38,6 +36,8 @@ rb apply -p personal     # provide a CLI profile input
 local rb = require("rootbeer")
 local git = require("rootbeer.git")
 local zsh = require("rootbeer.zsh")
+
+rb.package("ripgrep")
 
 rb.profile.define({
     strategy = "hostname",
@@ -73,14 +73,11 @@ zsh.config({
 
 ## Packages
 
-Find a canonical name in the package catalog, copy its Lua declaration, and run
-`rb apply`. Source the generated package environment from your shell, and commit
-`rootbeer.lock` with your config. Matching locks stay stable; `rb apply --update`
-refreshes selections, and `rb apply --offline` replays cached contents.
-
-The index publishes independently of the CLI. Available versions can differ by
-platform, and exact version requests never silently fall back. See the
-[package guide](https://rootbeer.tale.me/guide/packages) for the complete workflow.
+[Find packages](https://rootbeer.tale.me/packages/) to add to `init.lua`, then run
+`rb apply`. The Zsh example above makes installed commands available in a new terminal.
+Commit `rootbeer.lock` to save your package versions, and run `rb apply --update`
+when you want to update them. See the
+[package guide](https://rootbeer.tale.me/guide/packages) for other shells and version selection.
 
 ## Key Ideas
 

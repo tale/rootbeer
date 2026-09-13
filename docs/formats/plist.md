@@ -4,12 +4,12 @@ Apple property list codec. Output is **XML plist** — the human-readable
 form used by `defaults write` and most files under `~/Library/Preferences/`.
 Decoding accepts both XML and binary plists.
 
-See the [formats overview](./) for the shared codec shape and encoding
+See the [formats overview](./) for the shared functions and encoding
 rules common to every format.
 
 ## Examples
 
-Materialize a Library plist:
+Write a Library plist:
 
 ```lua
 local rb = require("rootbeer")

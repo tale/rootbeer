@@ -1,25 +1,21 @@
 # Data Formats
 
-Rootbeer ships built-in codecs for the configuration formats you actually
-encounter in dotfiles. Every codec is a sub-table on `rb` with the same
-four-function shape:
+Read and write JSON, TOML, YAML, and plist files from your configuration.
+Each format provides `encode`, `decode`, `read`, and `write` functions.
 
 ```lua
-rb.<fmt>.encode(t)        -- table  → string
-rb.<fmt>.decode(s)        -- string → table
-rb.<fmt>.read(path)       -- path   → table   (slurp ∘ decode)
-rb.<fmt>.write(path, t)   -- path, table → () (encode ∘ file)
+local rb = require("rootbeer")
+
+rb.json.write("~/.config/myapp/settings.json", { theme = "dark" })
 ```
 
-`encode` and `decode` are pure transformations. `read` slurps a file
-synchronously at plan time — the file must exist when your script runs.
-`write` is **deferred**: it appends a `WriteFile` op that runs during
-`rb apply`, exactly like `rb.file()`. A trailing newline is always added
-on `write` so the output is well-formed.
+`read` loads an existing file when your config runs. `write` saves the file when
+you apply it. Use `encode` and `decode` to convert between Lua values and text
+without reading or writing a file.
 
-## Available codecs
+## Available formats
 
-| Codec               | Read  | Write | Notes                                          |
+| Format              | Read  | Write | Notes                                          |
 | ------------------- | :---: | :---: | ---------------------------------------------- |
 | [`json`](./json)    |   ✓   |   ✓   | Pretty-printed with 2-space indent.            |
 | [`toml`](./toml)    |   ✓   |   ✓   | Datetimes decode as strings.                   |
@@ -28,8 +24,8 @@ on `write` so the output is well-formed.
 
 ## Encoding rules
 
-These apply to every codec. Format-specific behaviour is documented on
-each codec's page.
+These apply to every format. Format-specific behaviour is documented on
+each format's page.
 
 - Tables with consecutive integer keys starting at `1` become arrays /
   sequences. All other tables become objects / maps / dictionaries.

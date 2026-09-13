@@ -1,11 +1,11 @@
 # yaml
 
-YAML codec. See the [formats overview](./) for the shared codec shape and
+YAML codec. See the [formats overview](./) for the shared functions and
 encoding rules common to every format.
 
 ## Examples
 
-Materialize a config:
+Write a config:
 
 ```lua
 local rb = require("rootbeer")

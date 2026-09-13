@@ -69,18 +69,7 @@ impl CatalogRecipe {
                 return Err("recipe needs a revision and an exact aqua: or github: source".into());
             }
         }
-        let systems: BTreeSet<_> = self.systems.iter().collect();
-        if systems.is_empty()
-            || systems.len() != self.systems.len()
-            || systems.iter().any(|system| {
-                !matches!(
-                    system.as_str(),
-                    "aarch64-macos" | "x86_64-macos" | "aarch64-linux" | "x86_64-linux"
-                )
-            })
-        {
-            return Err("recipe needs unique supported systems".into());
-        }
+        validate_systems(&self.systems)?;
         if !self.assets.is_empty()
             && (self
                 .source
@@ -93,21 +82,41 @@ impl CatalogRecipe {
         {
             return Err("assets must name one GitHub release asset per declared system".into());
         }
-        let bins: BTreeSet<_> = self.bins.iter().collect();
-        if bins.is_empty()
-            || bins.len() != self.bins.len()
-            || bins.iter().any(|bin| !valid_name(bin))
-        {
-            return Err("recipe needs unique exported command names".into());
-        }
-        if self.checks.is_empty()
-            || self
-                .checks
-                .iter()
-                .any(|check| check.first().is_none_or(|bin| !bins.contains(bin)))
-        {
-            return Err("checks must execute declared commands".into());
-        }
+        validate_commands(&self.bins, &self.checks)?;
         Ok(())
     }
+}
+
+pub(in crate::package) fn validate_systems(declared: &[String]) -> Result<(), String> {
+    let systems: BTreeSet<_> = declared.iter().collect();
+    if systems.is_empty()
+        || systems.len() != declared.len()
+        || systems.iter().any(|system| {
+            !matches!(
+                system.as_str(),
+                "aarch64-macos" | "x86_64-macos" | "aarch64-linux" | "x86_64-linux"
+            )
+        })
+    {
+        return Err("recipe needs unique supported systems".into());
+    }
+    Ok(())
+}
+
+pub(in crate::package) fn validate_commands(
+    declared: &[String],
+    checks: &[Vec<String>],
+) -> Result<(), String> {
+    let bins: BTreeSet<_> = declared.iter().collect();
+    if bins.is_empty() || bins.len() != declared.len() || bins.iter().any(|bin| !valid_name(bin)) {
+        return Err("recipe needs unique exported command names".into());
+    }
+    if checks.is_empty()
+        || checks
+            .iter()
+            .any(|check| check.first().is_none_or(|bin| !bins.contains(bin)))
+    {
+        return Err("checks must execute declared commands".into());
+    }
+    Ok(())
 }

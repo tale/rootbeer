@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::index::is_sha256;
 use super::{
     ArchiveFormat, BuildArtifact, LockedInstall, LockedPackage, LockedSource, PackageCatalog,
     PackageRealizer,
@@ -42,21 +43,9 @@ pub fn bundle_artifacts(
     if receipts.is_empty() {
         return Err("bundle requires at least one build receipt".into());
     }
-    if output.try_exists().map_err(|e| e.to_string())? {
-        return Err(format!(
-            "bundle output already exists: {}",
-            output.display()
-        ));
-    }
-    let parent = output
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let staging = tempfile::tempdir_in(parent).map_err(|e| e.to_string())?;
+    let staging = super::publication::staging(output)?;
     let destination = staging.path().join("bundle");
-    fs::create_dir(&destination).map_err(|e| e.to_string())?;
-    fs::create_dir(destination.join("artifacts")).map_err(|e| e.to_string())?;
-    fs::create_dir(destination.join("receipts")).map_err(|e| e.to_string())?;
+    super::publication::create_bundle(&destination)?;
     let realizer = PackageRealizer::with_dirs(
         Store::new(staging.path().join("store")),
         staging.path().join("downloads"),
@@ -69,70 +58,27 @@ pub fn bundle_artifacts(
         artifacts: BTreeMap::new(),
     };
     for receipt_path in receipts {
-        let bytes =
-            fs::read(receipt_path).map_err(|e| format!("{}: {e}", receipt_path.display()))?;
-        let receipt: BuildArtifact = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-        validate_receipt(catalog, &receipt)?;
-        let key = receipt.package.id();
-        let systems = index.artifacts.entry(key.clone()).or_default();
-        if systems.contains_key(&receipt.system) {
-            return Err(format!(
-                "duplicate artifact for {key} on {}",
-                receipt.system
-            ));
-        }
-        let LockedSource::File { sha256, .. } = &receipt.package.source else {
-            return Err(format!("{key}: expected a source-build file artifact"));
-        };
-        let sha256 = sha256.clone();
-        // Receipts move between CI runners; never follow the builder's absolute paths.
-        let source = receipt_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("package.tar.gz");
-        let target = destination
-            .join("artifacts")
-            .join(format!("{sha256}.tar.gz"));
-        fs::copy(source, &target).map_err(|e| e.to_string())?;
-        if hash_file(&target).map_err(|e| e.to_string())? != sha256 {
-            return Err(format!("{key}: artifact hash mismatch"));
-        }
-        let mut package = receipt.package;
-        package.source = LockedSource::File {
-            path: target,
-            sha256: sha256.clone(),
-        };
-        realizer
-            .realize(&package)
-            .map_err(|e| format!("{key}: {e}"))?;
-        package.source = LockedSource::Url {
-            url: if base_url.starts_with("ghcr://") {
-                format!("{base_url}@sha256:{sha256}")
-            } else {
-                format!(
-                    "{}/artifacts/{sha256}.tar.gz",
-                    base_url.trim_end_matches('/')
-                )
-            },
-            sha256: sha256.clone(),
-        };
-        let receipt_sha256 = hash_bytes(&bytes);
+        let (system, artifact, bytes) =
+            prepare_artifact(catalog, receipt_path, base_url, &destination, &realizer)?;
+        let key = artifact.package.id();
         fs::write(
             destination
                 .join("receipts")
-                .join(format!("{receipt_sha256}.json")),
+                .join(format!("{}.json", artifact.receipt_sha256)),
             bytes,
         )
         .map_err(|e| e.to_string())?;
-        systems.insert(
-            receipt.system,
-            PublishedArtifact {
-                revision: receipt.revision,
-                receipt_sha256,
-                package,
-            },
-        );
+        if index
+            .artifacts
+            .entry(key.clone())
+            .or_default()
+            .insert(system.clone(), artifact)
+            .is_some()
+        {
+            return Err(format!("duplicate artifact for {key} on {system}"));
+        }
     }
+
     index.validate()?;
     let bytes = serde_json::to_vec_pretty(&index).map_err(|e| e.to_string())?;
     let digest = hash_bytes(&bytes);
@@ -144,6 +90,65 @@ pub fn bundle_artifacts(
     .map_err(|e| e.to_string())?;
     fs::rename(destination, output).map_err(|e| e.to_string())?;
     Ok(digest)
+}
+
+pub(super) fn prepare_artifact(
+    catalog: &PackageCatalog,
+    receipt_path: &Path,
+    base_url: &str,
+    destination: &Path,
+    realizer: &PackageRealizer,
+) -> Result<(String, PublishedArtifact, Vec<u8>), String> {
+    validate_base_url(base_url)?;
+    let bytes = fs::read(receipt_path).map_err(|e| format!("{}: {e}", receipt_path.display()))?;
+    let receipt: BuildArtifact = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    validate_receipt(catalog, &receipt)?;
+    let key = receipt.package.id();
+    let LockedSource::File { sha256, .. } = &receipt.package.source else {
+        return Err(format!("{key}: expected a source-build file artifact"));
+    };
+    let sha256 = sha256.clone();
+    // Receipts move between CI runners; never follow the builder's absolute paths.
+    let source = receipt_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("package.tar.gz");
+    let target = destination
+        .join("artifacts")
+        .join(format!("{sha256}.tar.gz"));
+    fs::copy(source, &target).map_err(|e| e.to_string())?;
+    if hash_file(&target).map_err(|e| e.to_string())? != sha256 {
+        return Err(format!("{key}: artifact hash mismatch"));
+    }
+    let mut package = receipt.package;
+    package.source = LockedSource::File {
+        path: target,
+        sha256: sha256.clone(),
+    };
+    realizer
+        .realize(&package)
+        .map_err(|e| format!("{key}: {e}"))?;
+    package.source = LockedSource::Url {
+        url: if base_url.starts_with("ghcr://") {
+            format!("{base_url}@sha256:{sha256}")
+        } else {
+            format!(
+                "{}/artifacts/{sha256}.tar.gz",
+                base_url.trim_end_matches('/')
+            )
+        },
+        sha256: sha256.clone(),
+    };
+    let receipt_sha256 = hash_bytes(&bytes);
+    Ok((
+        receipt.system,
+        PublishedArtifact {
+            revision: receipt.revision,
+            receipt_sha256,
+            package,
+        },
+        bytes,
+    ))
 }
 
 fn validate_base_url(url: &str) -> Result<(), String> {
@@ -165,13 +170,6 @@ fn validate_base_url(url: &str) -> Result<(), String> {
         );
     }
     Ok(())
-}
-
-fn is_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
 
 fn validate_receipt(catalog: &PackageCatalog, receipt: &BuildArtifact) -> Result<(), String> {

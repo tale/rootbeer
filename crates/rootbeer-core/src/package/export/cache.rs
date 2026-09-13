@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::package::{
-    publication, ArtifactIndex, LockedSource, PackageCatalog, PackageRequest, PublishedArtifact,
+    publication, CatalogRecipe, LockedSource, PackageCatalog, PackageRequest, PublishedArtifact,
 };
 use crate::store::{hash_bytes, hash_file};
 
@@ -19,7 +19,7 @@ pub struct ExportCache {
 #[derive(Serialize, Deserialize)]
 struct Record {
     fingerprint: String,
-    index: ArtifactIndex,
+    artifact: PublishedArtifact,
 }
 
 pub(super) struct Cache<'a> {
@@ -60,6 +60,7 @@ impl<'a> Cache<'a> {
         fingerprint: &str,
         key: &str,
         system: &str,
+        recipe: &CatalogRecipe,
         destination: &Path,
     ) -> Result<Option<PublishedArtifact>, String> {
         if self.options.recheck {
@@ -73,15 +74,9 @@ impl<'a> Cache<'a> {
         if record.fingerprint != fingerprint {
             return Err("export cache fingerprint mismatch".into());
         }
-        record.index.validate()?;
-        let artifact = record
-            .index
-            .artifacts
-            .get(key)
-            .and_then(|systems| systems.get(system))
-            .ok_or("export cache is missing its package")?;
-        copy_artifact(artifact, &directory, destination)?;
-        Ok(Some(artifact.clone()))
+        record.artifact.validate(key, system, recipe)?;
+        copy_artifact(&record.artifact, &directory, destination)?;
+        Ok(Some(record.artifact))
     }
 
     pub(super) fn save(
@@ -89,7 +84,7 @@ impl<'a> Cache<'a> {
         fingerprint: &str,
         key: &str,
         system: &str,
-        catalog: &PackageCatalog,
+        recipe: &CatalogRecipe,
         artifact: &PublishedArtifact,
         source: &Path,
     ) -> Result<(), String> {
@@ -99,17 +94,9 @@ impl<'a> Cache<'a> {
         copy_artifact(artifact, source, &bundle)?;
         let record = Record {
             fingerprint: fingerprint.into(),
-            index: ArtifactIndex {
-                schema: 1,
-                catalog: catalog.clone(),
-                catalog_sha256: catalog.sha256(),
-                artifacts: BTreeMap::from([(
-                    key.into(),
-                    BTreeMap::from([(system.into(), artifact.clone())]),
-                )]),
-            },
+            artifact: artifact.clone(),
         };
-        record.index.validate()?;
+        record.artifact.validate(key, system, recipe)?;
         publication::write_json(&bundle.join("record.json"), &record)?;
         let destination = self.options.directory.join(fingerprint);
         if destination.exists() {
@@ -180,7 +167,7 @@ fn fingerprint(
         }
     }
     let bytes = serde_json::to_vec(&(
-        "rootbeer-export-v1",
+        "rootbeer-export-v2",
         engine,
         context,
         registry,
@@ -194,7 +181,9 @@ fn fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::package::{bundle_artifacts, export_catalog_with_cache, ResolveContext};
+    use crate::package::{
+        bundle_artifacts, export_catalog_with_cache, ArtifactIndex, ResolveContext,
+    };
 
     #[test]
     fn fingerprints_track_dependencies_without_invalidating_unrelated_packages() {
@@ -313,6 +302,7 @@ mod tests {
         let index: ArtifactIndex = publication::read_json(&source.join("index.json")).unwrap();
         let key = "xz@5.8.3";
         let artifact = &index.artifacts[key][&system];
+        let recipe = &catalog.packages["xz"].versions["5.8.3"];
         let options = ExportCache {
             directory: root.path().join("cache"),
             context: "test-image".into(),
@@ -323,8 +313,31 @@ mod tests {
             .fingerprint(&catalog, key, &system, "owner/index")
             .unwrap();
         cache
-            .save(&fingerprint, key, &system, &catalog, artifact, &source)
+            .save(&fingerprint, key, &system, recipe, artifact, &source)
             .unwrap();
+        let record_path = options.directory.join(&fingerprint).join("record.json");
+        let record: serde_json::Value = publication::read_json(&record_path).unwrap();
+        assert!(record.get("index").is_none());
+        assert!(record.get("catalog").is_none());
+        for field in ["revision", "receipt_sha256", "package"] {
+            let mut changed = record.clone();
+            match field {
+                "revision" => changed["artifact"][field] = 0.into(),
+                "receipt_sha256" => changed["artifact"][field] = "invalid".into(),
+                "package" => {
+                    changed["artifact"][field]["provides"]["bins"]["xz"] = "../escape".into()
+                }
+                _ => unreachable!(),
+            }
+            publication::write_json(&record_path, &changed).unwrap();
+            assert!(
+                cache
+                    .restore(&fingerprint, key, &system, recipe, &source)
+                    .is_err(),
+                "{field}"
+            );
+        }
+        publication::write_json(&record_path, &record).unwrap();
         let mut current = catalog.clone();
         current.packages.retain(|name, _| name == "xz");
         let output = root.path().join("output");
@@ -355,7 +368,7 @@ mod tests {
         );
         assert!(!failed.exists());
         cache
-            .save(&fingerprint, key, &system, &catalog, artifact, &source)
+            .save(&fingerprint, key, &system, recipe, artifact, &source)
             .unwrap();
         let LockedSource::Url { sha256, .. } = &artifact.package.source else {
             panic!("expected URL")
@@ -369,14 +382,16 @@ mod tests {
             "tampered archive",
         )
         .unwrap();
-        assert!(cache.restore(&fingerprint, key, &system, &output).is_err());
+        assert!(cache
+            .restore(&fingerprint, key, &system, recipe, &output)
+            .is_err());
         let refresh = ExportCache {
             recheck: true,
             ..options
         };
         let cache = Cache::new(&refresh).unwrap();
         assert!(cache
-            .restore(&fingerprint, key, &system, &output)
+            .restore(&fingerprint, key, &system, recipe, &output)
             .unwrap()
             .is_none());
     }

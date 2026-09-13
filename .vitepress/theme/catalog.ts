@@ -96,7 +96,7 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
     !index.catalog.packages ||
     !index.artifacts
   ) {
-    throw new Error("This catalog format is not supported. Try updating the website.");
+    throw new Error("Package search is temporarily unavailable. Please try again later.");
   }
   const packages = Object.values(index.catalog.packages) as CatalogPackage[];
   for (const pkg of packages) {

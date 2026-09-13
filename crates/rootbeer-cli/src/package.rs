@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use clap::{Args as ClapArgs, Subcommand};
-use rootbeer_core::package::PackageCatalog;
+use rootbeer_core::package::{PackageCatalog, PackageDefinition};
 
 mod import;
 
@@ -134,10 +134,14 @@ pub fn run(args: Args) {
 }
 
 fn execute(args: Args) -> Result<(), String> {
-    let local_catalog = args
+    let definitions = args
         .catalog
         .as_deref()
-        .map(PackageCatalog::from_directory)
+        .map(PackageDefinition::from_directory)
+        .transpose()?;
+    let local_catalog = definitions
+        .as_ref()
+        .map(PackageCatalog::from_definitions)
         .transpose()?;
     let catalog = match &local_catalog {
         Some(catalog) => catalog,
@@ -155,11 +159,11 @@ fn execute(args: Args) -> Result<(), String> {
             output,
             max_pages,
         } => {
-            let directory = args
-                .catalog
-                .as_deref()
+            let definitions = definitions
+                .as_ref()
                 .ok_or("updates requires --catalog pointing to package definitions")?;
-            let definitions = rootbeer_core::package::GitHubUpstream::from_directory(directory)?;
+            let definitions =
+                rootbeer_core::package::GitHubUpstream::from_definitions(definitions)?;
             let report = rootbeer_core::package::discover_updates(
                 catalog,
                 &definitions,

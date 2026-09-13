@@ -107,14 +107,11 @@ function rootbeer.exec(cmd, args) end
 --- @param spec rootbeer.PackageIndex
 function rootbeer.package_index(spec) end
 
---- Declares a package to realize into the Rootbeer store and activate under
---- Rootbeer's stable package profile. Passing a locked table uses that exact
---- realization input; passing a string records a resolver request which is
---- pinned in `rootbeer.lock`. Canonical names use the selected catalog and its
---- default for the current platform. Official releases verify the signed remote
---- index; cached or embedded catalogs provide availability fallbacks. Supported resolver prefixes include
---- `aqua:owner/repo@version` and `github:owner/repo@tag`.
---- @param spec rootbeer.PackageSpec|string The locked package specification or resolver request.
+--- Installs a command-line tool, such as `"ripgrep"`. Use `"name@version"`
+--- to choose an exact version. Package versions are saved in `rootbeer.lock`.
+--- You can also use `github:owner/repo@tag`, `aqua:owner/repo@version`,
+--- or a table describing an exact download and installation.
+--- @param spec rootbeer.PackageSpec|string Package name, source request, or exact package specification.
 --- @param opts? rootbeer.PackageOptions Options for an explicit `github:` request.
 function rootbeer.package(spec, opts) end
 
@@ -125,9 +122,8 @@ function rootbeer.package(spec, opts) end
 --- @return string?
 function rootbeer.which(bin) end
 
---- Writes Rootbeer's package profile environment file and returns its path.
---- Source this from shell configuration to make managed package bins available
---- on `PATH` without hardcoding store/profile internals.
+--- Writes a shell environment file and returns its path.
+--- Source this file from your shell configuration to use installed commands.
 --- @param shell? "sh"|"bash"|"zsh" Shell syntax to generate. Defaults to `"sh"`.
 --- @return string
 function rootbeer.env_export(shell) end

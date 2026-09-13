@@ -1,66 +1,48 @@
-# Catalogs and backends
+# Other package sources
 
-## The official catalog
+Use [package search](/packages/) for tools available directly by name. If a tool
+is missing, you can install a release from GitHub or use an Aqua recipe.
 
-Released Rootbeer builds use an official signed index for canonical package
-names. The index is published independently of the CLI: adding a recipe does not
-require a new Rootbeer release unless it needs a new engine capability.
+## Install from GitHub
 
-When resolution is needed, Rootbeer verifies the index manifest's signature and
-the immutable snapshot's hash before using it. The public verification key is
-embedded in the release; a runtime environment variable cannot replace it.
-A matching lock skips catalog fetching.
+Pass the repository and release tag to `rb.package()`:
 
-If the network is unavailable, Rootbeer can use its last verified cached snapshot,
-then the smaller embedded catalog if no cached snapshot exists. It reports that
-fallback. Invalid signatures, corrupt snapshots, and rollback attempts fail.
-A missing package in the selected catalog does not trigger another provider.
+```lua
+local rb = require("rootbeer")
 
-`rb apply --update` requires a successful refresh. Offline mode uses the lock and
-local artifacts, without fetching an index. Developer builds without an official
-endpoint report embedded fallback instead of claiming to use the hosted catalog.
+rb.package("github:BurntSushi/ripgrep@15.2.0")
+```
 
-[Package search](/packages/) shows the published catalog. `rb package list` and
-`rb package show` inspect the embedded authoring catalog, or the directory passed
-to `--catalog`; they are not remote catalog search commands.
+The tag must match exactly, including a leading `v` if the project uses one.
+Rootbeer downloads a release for your platform. If several files match, use the
+`asset` option to choose the filename and `bins` to specify commands inside it;
+see the [package API](/reference/core#rootbeer-package).
 
-## Explicit backends
+Rootbeer supports tar.gz, tar.xz, ZIP, and standalone executables. Not every
+project's release layout is supported.
 
-Canonical names are the normal interface. To select a source directly, use an
-explicit request in `rb.package()`:
+## Install from Aqua
 
-- `github:owner/repository@tag` selects an upstream GitHub release.
-- `aqua:owner/repository@version` uses an Aqua registry recipe.
+Use `aqua:owner/repository@version` to select a recipe from the Aqua registry.
+You do not need to install Aqua separately.
 
-These are request formats, not additional programs you must install. Rootbeer
-resolves and installs them natively. Prefer direct upstream releases when suitable
-assets exist. Aqua remains available for registry recipes that supply useful
-platform and installation metadata.
-
-GitHub tags are exact, including any leading `v`. Ambiguous asset selection fails;
-the `asset` and `bins` options can select an exact filename and archive paths. See
-[the generated package API](/reference/core) for the signatures.
-
-Supported inputs include tar.gz, tar.xz, ZIP, and raw executables. Backend-specific
-limitations still apply. Direct backend downloads receive content hashes, but do
-not gain the official index publisher's signature. Aqua signature and attestation
-verification is not implemented.
+Direct GitHub and Aqua downloads are hashed and saved in your lockfile, but are
+not signed by the Rootbeer index publisher. Aqua signatures and attestations
+are not verified.
 
 ## Use another index
 
-`rb.package_index()` selects an explicit snapshot URL and SHA-256 before package
-declarations. Obtain that pin through a trusted channel: it identifies exact bytes
-but is not a publisher signature. HTTPS snapshots and absolute local `file://`
-snapshots are supported; published artifact URLs use HTTPS or immutable GHCR blobs.
+For a private or custom package collection, call `rb.package_index()` before
+adding packages. Supply the snapshot URL and SHA-256 supplied by its publisher.
+See the [API reference](/reference/core#rootbeer-package-index) for the fields.
 
-An explicit pin bypasses the official catalog and its fallback policy. Updating
-packages keeps that pin unchanged. Changing or removing the declaration makes the
-lock stale. Matching offline locks need cached package contents, not an index fetch.
+Use a source you trust: the checksum identifies the download but does not verify
+who published it. HTTPS URLs and absolute local `file://` URLs are supported.
 
-## Scope
+Rootbeer uses that collection instead of its official catalog.
+`rb apply --update` keeps your selected snapshot; change the URL and checksum to
+use a different one. Changing or removing this setting updates the lock on your
+next apply. Offline installs still require a matching lock and cached packages.
 
-Rootbeer manages command-line package contents and their profile. It does not yet
-provide general runtime dependency closure handling, hermetic source builds,
-desktop application installers, or service management. Keep other package-manager
-declarations where those capabilities are required. Declaring a package here does
-not uninstall another manager's copy.
+For verification and fallback details, see
+[index hosting and trust](/contributing/package-hosting).

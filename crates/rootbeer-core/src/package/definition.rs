@@ -287,6 +287,24 @@ mod tests {
     }
 
     #[test]
+    fn loaded_definitions_supply_catalog_and_discovery_without_source_files() {
+        let root = tempfile::tempdir().unwrap();
+        let definition = definition();
+        let path = root.path().join("age.lua");
+        fs::write(&path, definition.to_lua().unwrap()).unwrap();
+        let expected = PackageCatalog::from_directory(root.path()).unwrap();
+        let definitions = PackageDefinition::from_directory(root.path()).unwrap();
+        fs::remove_file(path).unwrap();
+
+        let catalog = PackageCatalog::from_definitions(&definitions).unwrap();
+        let upstreams = GitHubUpstream::from_definitions(&definitions).unwrap();
+        assert_eq!(catalog.sha256(), expected.sha256());
+        assert_eq!(upstreams.len(), 1);
+        assert_eq!(upstreams[0].repository_id, Some(123));
+        assert_eq!(upstreams[0].bins, ["age", "age-keygen"]);
+    }
+
+    #[test]
     fn validates_rules_and_rejects_duplicate_or_mismatched_identities() {
         let root = tempfile::tempdir().unwrap();
         let definition = definition();

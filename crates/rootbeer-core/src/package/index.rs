@@ -111,59 +111,71 @@ impl ArtifactIndex {
                 return Err(format!("{key}: no platform artifacts"));
             }
             for (system, artifact) in systems {
-                let package = &artifact.package;
-                if package.id() != *key
-                    || artifact.revision != recipe.revision
-                    || !recipe.systems.contains(system)
-                    || !is_sha256(&artifact.receipt_sha256)
-                    || package
-                        .output_sha256
-                        .as_deref()
-                        .is_none_or(|hash| !is_sha256(hash))
-                    || package.provides.bins.len() != recipe.bins.len()
-                    || recipe
-                        .bins
-                        .iter()
-                        .any(|bin| !package.provides.bins.contains_key(bin))
-                {
-                    return Err(format!("{key}: invalid platform artifact contract"));
-                }
-                for path in package.provides.bins.values() {
-                    super::realize::validate_relative_path("index command", path)
+                artifact.validate(key, system, recipe)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl super::PublishedArtifact {
+    pub(super) fn validate(
+        &self,
+        key: &str,
+        system: &str,
+        recipe: &super::CatalogRecipe,
+    ) -> Result<(), String> {
+        let package = &self.package;
+        if package.id() != key
+            || self.revision != recipe.revision
+            || !recipe.systems.iter().any(|target| target == system)
+            || !is_sha256(&self.receipt_sha256)
+            || package
+                .output_sha256
+                .as_deref()
+                .is_none_or(|hash| !is_sha256(hash))
+            || package.provides.bins.len() != recipe.bins.len()
+            || recipe
+                .bins
+                .iter()
+                .any(|bin| !package.provides.bins.contains_key(bin))
+        {
+            return Err(format!("{key}: invalid platform artifact contract"));
+        }
+        for path in package.provides.bins.values() {
+            super::realize::validate_relative_path("index command", path)
+                .map_err(|e| e.to_string())?;
+        }
+        match &package.install {
+            LockedInstall::Archive { strip_prefix, .. } => {
+                if let Some(path) = strip_prefix {
+                    super::realize::validate_relative_path("index archive prefix", path)
                         .map_err(|e| e.to_string())?;
                 }
-                match &package.install {
-                    LockedInstall::Archive { strip_prefix, .. } => {
-                        if let Some(path) = strip_prefix {
-                            super::realize::validate_relative_path("index archive prefix", path)
-                                .map_err(|e| e.to_string())?;
-                        }
-                    }
-                    LockedInstall::Binary { path } => {
-                        super::realize::validate_relative_path("index binary", path)
-                            .map_err(|e| e.to_string())?;
-                    }
-                    LockedInstall::Directory { .. } => {
-                        return Err("index artifacts cannot install local directories".into())
-                    }
-                }
-                let LockedSource::Url { url, sha256 } = &package.source else {
-                    return Err(format!(
-                        "{key}: index artifacts must use HTTPS or GHCR URLs"
-                    ));
-                };
-                if url.starts_with("ghcr://") {
-                    let blob = super::ghcr::GhcrBlob::parse(url)?;
-                    if blob.sha256 != *sha256 {
-                        return Err(format!("{key}: GHCR digest does not match archive hash"));
-                    }
-                } else {
-                    validate_https(url)?;
-                }
-                if !is_sha256(sha256) {
-                    return Err(format!("{key}: invalid archive SHA-256"));
-                }
             }
+            LockedInstall::Binary { path } => {
+                super::realize::validate_relative_path("index binary", path)
+                    .map_err(|e| e.to_string())?;
+            }
+            LockedInstall::Directory { .. } => {
+                return Err("index artifacts cannot install local directories".into())
+            }
+        }
+        let LockedSource::Url { url, sha256 } = &package.source else {
+            return Err(format!(
+                "{key}: index artifacts must use HTTPS or GHCR URLs"
+            ));
+        };
+        if url.starts_with("ghcr://") {
+            let blob = super::ghcr::GhcrBlob::parse(url)?;
+            if blob.sha256 != *sha256 {
+                return Err(format!("{key}: GHCR digest does not match archive hash"));
+            }
+        } else {
+            validate_https(url)?;
+        }
+        if !is_sha256(sha256) {
+            return Err(format!("{key}: invalid archive SHA-256"));
         }
         Ok(())
     }

@@ -1,15 +1,7 @@
 # Script Writers
 
-`rb.scripts` is sugar over `rb.file()` for executable scripts. Every
-helper does the same three things:
-
-1. Prepends `#!/usr/bin/env <interpreter>` (or the literal interpreter
-   path if it begins with `/`).
-2. Writes the body via the standard deferred `WriteFile` op.
-3. Defers a `Chmod` op that sets mode `0755`.
-
-Both ops participate in `rb plan` and `rb apply` like any other Rootbeer
-side effect.
+Create executable scripts from your Lua configuration. Rootbeer adds the
+interpreter line and makes the file executable when you run `rb apply`.
 
 ```lua
 local rb = require("rootbeer")
@@ -24,31 +16,8 @@ rb.scripts.python("~/.local/bin/greet", [[
 ]])
 ```
 
-## What these writers do — and don't
-
-Script writers do **not** validate the body, install the interpreter,
-or manage `PATH`. The interpreter is referenced by name and must already
-be resolvable on the target machine when the script runs — linting and
-toolchain isolation are out of scope. A trailing newline is added if the
-body doesn't already end in one, so the resulting file is always
-well-formed.
-
-## Named helpers
-
-Each helper is `rb.scripts.<lang>(path, body)`:
-
-| Helper                  | Shebang                      |
-| ----------------------- | ---------------------------- |
-| `rb.scripts.bash`       | `#!/usr/bin/env bash`        |
-| `rb.scripts.sh`         | `#!/usr/bin/env sh`          |
-| `rb.scripts.zsh`        | `#!/usr/bin/env zsh`         |
-| `rb.scripts.fish`       | `#!/usr/bin/env fish`        |
-| `rb.scripts.python`     | `#!/usr/bin/env python3`     |
-| `rb.scripts.node`       | `#!/usr/bin/env node`        |
-| `rb.scripts.lua`        | `#!/usr/bin/env lua`         |
-| `rb.scripts.nu`         | `#!/usr/bin/env nu`          |
-| `rb.scripts.ruby`       | `#!/usr/bin/env ruby`        |
-| `rb.scripts.perl`       | `#!/usr/bin/env perl`        |
+The interpreter must be installed and available on `PATH` when the script runs.
+Rootbeer does not check or lint the script body.
 
 ## Custom interpreters
 

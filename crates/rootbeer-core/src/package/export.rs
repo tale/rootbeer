@@ -61,7 +61,7 @@ pub fn export_catalog_with_cache(
                 .transpose()?;
             if let (Some(cache), Some(fingerprint)) = (&cache, &fingerprint) {
                 if let Some(artifact) =
-                    cache.restore(fingerprint, &key, &context.system, &destination)?
+                    cache.restore(fingerprint, &key, &context.system, recipe, &destination)?
                 {
                     index
                         .artifacts
@@ -111,29 +111,22 @@ pub fn export_catalog_with_cache(
             let (mut artifact, receipt_bytes, proof) = if recipe.build.is_some() {
                 let build = root.join("build");
                 build_package(catalog, &key, &build, jobs)?;
-                let bundle = root.join("source-bundle");
-                bundle_artifacts(
+                let (_, artifact, receipt) = super::bundle::prepare_artifact(
                     catalog,
-                    &[build.join("receipt.json")],
+                    &build.join("receipt.json"),
                     &format!("ghcr://{registry}/{}", package.name),
-                    &bundle,
+                    &destination,
+                    &realizer,
                 )?;
-                let mut built: ArtifactIndex = publication::read_json(&bundle.join("index.json"))?;
-                let artifact = built
-                    .artifacts
-                    .get_mut(&key)
-                    .unwrap()
-                    .remove(&context.system)
-                    .unwrap();
                 let LockedSource::Url { sha256, .. } = &artifact.package.source else {
                     unreachable!()
                 };
-                let archive = bundle.join("artifacts").join(format!("{sha256}.tar.gz"));
+                let archive = destination
+                    .join("artifacts")
+                    .join(format!("{sha256}.tar.gz"));
                 DownloadCache::new(&downloads)
                     .materialize(&format!("file://{}", archive.display()), Some(sha256))
                     .map_err(|e| e.to_string())?;
-                publication::copy_verified(&archive, &destination.join("artifacts"), ".tar.gz")?;
-                let receipt = fs::read(build.join("receipt.json")).map_err(|e| e.to_string())?;
                 (artifact, receipt, None)
             } else {
                 let resolution = resolver
@@ -228,7 +221,7 @@ pub fn export_catalog_with_cache(
                     fingerprint,
                     &key,
                     &context.system,
-                    catalog,
+                    recipe,
                     &artifact,
                     &destination,
                 )?;
