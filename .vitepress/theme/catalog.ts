@@ -23,7 +23,6 @@ export interface CatalogRecipe {
 
 export const platforms = [
   { id: "aarch64-macos", label: "macOS · Apple silicon", short: "macOS ARM64" },
-  { id: "x86_64-macos", label: "macOS · Intel", short: "macOS Intel" },
   { id: "aarch64-linux", label: "Linux · ARM64", short: "Linux ARM64" },
   { id: "x86_64-linux", label: "Linux · x86-64", short: "Linux x86-64" },
 ];
@@ -127,7 +126,9 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
     for (const [version, recipe] of Object.entries(pkg.versions)) {
       if (
         !Array.isArray(recipe.systems) ||
-        !recipe.systems.every((system) => platforms.some(({ id }) => id === system)) ||
+        !recipe.systems.every(
+          (system) => system === "x86_64-macos" || platforms.some(({ id }) => id === system),
+        ) ||
         !Array.isArray(recipe.bins) ||
         !recipe.bins.length ||
         !recipe.bins.every((bin) => typeof bin === "string" && /^[a-z0-9][a-z0-9+._-]*$/.test(bin))

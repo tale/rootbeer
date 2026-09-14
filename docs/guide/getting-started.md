@@ -4,7 +4,7 @@ Install Rootbeer, then run your first tool. A Lua configuration is optional.
 
 ## Install Rootbeer
 
-Rootbeer supports macOS and Linux on ARM64 and x86-64. The installer requires
+Rootbeer supports Apple silicon macOS, Linux ARM64, and Linux x86-64. The installer requires
 `curl` and `unzip`; on Ubuntu, install them with `sudo apt install curl unzip`.
 
 ```sh
@@ -14,6 +14,10 @@ export PATH="$HOME/.rootbeer/bin:$PATH"
 
 This installs the current nightly `rb` to `~/.rootbeer/bin` and makes it available
 in this shell.
+
+Intel macOS is retired and receives no further Rootbeer or package catalog updates.
+The installer still provides its [frozen final binary](/nightly/rb-macos-x86_64.zip).
+Existing Intel installations can continue using their frozen catalog.
 
 ## Run a package
 

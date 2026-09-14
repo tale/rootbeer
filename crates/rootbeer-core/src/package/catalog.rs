@@ -410,7 +410,7 @@ mod tests {
         package.versions.insert("15.1.0".into(), recipe);
         package
             .default_versions
-            .insert("x86_64-macos".into(), "15.1.0".into());
+            .insert("x86_64-linux".into(), "15.1.0".into());
         catalog.validate().unwrap();
 
         let dir = tempfile::tempdir().unwrap();
@@ -418,9 +418,9 @@ mod tests {
         std::fs::write(&source, "test executable").unwrap();
         let resolver = local_resolver(source).with_catalog(&catalog);
         for (system, request, expected) in [
-            ("x86_64-macos", "rg", "15.1.0"),
+            ("x86_64-linux", "rg", "15.1.0"),
             ("aarch64-macos", "rg", "15.2.0"),
-            ("x86_64-macos", "rg@15.2.0", "15.2.0"),
+            ("x86_64-linux", "rg@15.2.0", "15.2.0"),
         ] {
             let result = resolver
                 .resolve(
@@ -434,7 +434,7 @@ mod tests {
         let package = catalog.packages.get_mut("ripgrep").unwrap();
         package
             .default_versions
-            .insert("x86_64-macos".into(), "missing".into());
+            .insert("x86_64-linux".into(), "missing".into());
         assert!(catalog.validate().unwrap_err().contains("supported recipe"));
         let package = catalog.packages.get_mut("ripgrep").unwrap();
         package.default_versions.clear();
@@ -529,7 +529,7 @@ mod tests {
         let ResolutionProof::Catalog(proof) = &canonical.proof else {
             panic!("missing catalog provenance")
         };
-        assert_eq!(proof.revision, 2);
+        assert_eq!(proof.revision, 3);
         assert_eq!(
             proof.catalog_sha256,
             PackageCatalog::embedded().unwrap().sha256()

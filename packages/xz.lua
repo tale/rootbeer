@@ -5,7 +5,7 @@ return {
 	default_version = "5.8.3",
 	versions = {
 		["5.8.3"] = {
-			revision = 1,
+			revision = 2,
 			build = {
 				backend = "autotools",
 				url = "https://github.com/tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.gz",
@@ -22,7 +22,6 @@ return {
 			},
 			systems = {
 				"aarch64-macos",
-				"x86_64-macos",
 				"aarch64-linux",
 				"x86_64-linux",
 			},

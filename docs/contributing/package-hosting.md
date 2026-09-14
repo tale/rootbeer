@@ -44,14 +44,26 @@ Schema 2 snapshots support command-path mappings, pinned mirrors, Zig builds, an
 source patches. New clients and package search read schemas 1 and 2. Older clients
 cannot parse these additions, even when selecting an unrelated package.
 
-Publish schema 2 through `--manifest latest-v2.json` and configure new CLI/site
-builds to use that endpoint. Keep `latest.json` and its schema 1 snapshot available
-for older clients; do not advance it to an incompatible snapshot. Those clients
-retain their last catalog and need an updated Rootbeer build for newer packages.
-Manifest signatures keep the same format; rollback sequences are checked per
-endpoint. Both channels share retained, immutable snapshots and receipts.
+The active catalog uses `--manifest current.json`. CLI and website builds use
+`https://tale.github.io/rootbeer-index/current.json` with the existing public key.
 
-Publish and verify the new channel before switching the public CLI and website.
+Retain the frozen channels for older builds:
+
+| Manifest         | Contents                                               |
+| ---------------- | ------------------------------------------------------ |
+| `current.json`   | Active catalog for macOS ARM64 and Linux ARM64/x86-64. |
+| `latest-v2.json` | Final Intel-compatible schema 2 catalog.               |
+| `latest.json`    | Earlier schema 1 catalog for pre-schema-2 clients.     |
+
+The final Intel client remains at `/nightly/rb-macos-x86_64.zip`. Deployment copies
+that verified release forward without rebuilding it. Retain the frozen manifests,
+immutable snapshots, receipts, and package archives so old clients and locks work.
+Older clients on active platforms need `rb update` to move to the current channel.
+
+Manifest signatures keep the same format; rollback sequences are checked per
+endpoint. Publish and verify a new channel before switching the public CLI and
+website. Manifest filenames describe release channels independently of the
+snapshot schema.
 
 ## Changing the endpoint
 

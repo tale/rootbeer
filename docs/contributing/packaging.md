@@ -24,7 +24,6 @@ return {
             ["aarch64-linux"] = "tool-{tag}-linux-arm64.tar.gz",
             ["x86_64-linux"] = "tool-{tag}-linux-amd64.tar.gz",
             ["aarch64-macos"] = "tool-{tag}-darwin-arm64.tar.gz",
-            ["x86_64-macos"] = "tool-{tag}-darwin-amd64.tar.gz",
         },
     },
     bins = { "tool" },
@@ -135,7 +134,7 @@ Exported commands are explicit: repeat `--bin` for each command. Checks default 
 checks to exercise real functionality. These checks run during qualification, not
 metadata discovery.
 
-Discovery considers all four supported platforms by default. Repeat `--system` to
+Discovery considers all three supported platforms by default. Repeat `--system` to
 request a smaller set. Ambiguous assets stop the import; select a reusable pattern
 with `--asset 'x86_64-linux=tool-{tag}-x86_64-unknown-linux-musl.tar.gz'`.
 Patterns support `{tag}` and `{version}`. Existing recipes seed asset rules when
@@ -212,7 +211,7 @@ in a package's `source.exclude_tags`, or supplied with repeated `--exclude-tag`
 arguments during import. Unsupported tags otherwise remain visible errors.
 
 The index's discovery workflow runs daily or manually, retains the report and
-candidates as workflow artifacts, and qualifies changed packages on all four
+candidates as workflow artifacts, and qualifies changed packages on all three
 platforms using verified-result caches. Discovery errors remain visible while
 successful candidates can still be checked. It has read-only repository permissions
 and does not publish, open pull requests, or advance defaults automatically.
@@ -269,7 +268,7 @@ Empty shards are valid, but assembly still requires every declared version and
 platform before publication.
 
 The index workflow builds the engine once per platform, then runs eight shards
-on each of four platforms. PRs also run the complete assembly check. Before
+on each of three platforms. PRs also run the complete assembly check. Before
 merging this workflow, build an `rb` containing the shard flags and update the
 index repository's `ROOTBEER_REV` variable to that engine commit's full SHA.
 

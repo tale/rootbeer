@@ -126,8 +126,9 @@ commands automatically in login shells. Run `rb apply`, then `zsh -l` to load th
 
 ## Platform support
 
-Rootbeer installs prebuilt command-line tools on macOS and Linux, on ARM64 and
-x86-64. Filter the package browser for your platform; support varies by version
+Rootbeer installs prebuilt command-line tools on Apple silicon macOS and on Linux
+ARM64 and x86-64. Intel macOS is retired; its last published client and catalog
+remain available without further updates. Filter the package browser for your platform; support varies by version
 and does not imply compatibility with every OS release or Linux distribution.
 Installation does not compile packages locally.
 

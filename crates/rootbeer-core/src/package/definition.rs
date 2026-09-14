@@ -299,7 +299,7 @@ mod tests {
             upstream.checks,
             definition.package.versions[&definition.package.default_version].checks
         );
-        assert_eq!(upstream.systems.len(), 4);
+        assert_eq!(upstream.systems.len(), 3);
 
         fs::write(
             root.path().join("age.lua"),
@@ -398,7 +398,7 @@ mod tests {
             loaded.github_upstream().unwrap().unwrap().systems,
             ["aarch64-macos"]
         );
-        assert_eq!(package_systems(&loaded.package).len(), 4);
+        assert_eq!(package_systems(&loaded.package).len(), 3);
         definition.upstream = None;
         assert!(PackageDefinition::from_lua(&definition.to_lua().unwrap())
             .unwrap()

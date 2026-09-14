@@ -23,7 +23,7 @@ pub(super) struct ImportArgs {
     /// Check as a JSON argument array; defaults to --version for each command
     #[arg(long = "check", requires = "source")]
     checks: Vec<String>,
-    /// Target system; repeat to limit discovery (default: all four supported targets)
+    /// Target system; repeat to limit discovery (default: all three supported targets)
     #[arg(long = "system", requires = "source")]
     systems: Vec<String>,
     /// SYSTEM=NAME with optional {tag} and {version} placeholders

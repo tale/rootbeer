@@ -37,7 +37,7 @@ pub struct GitHubUpstream {
     /// Explicitly excluded legacy or unrelated release tags.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude_tags: Vec<String>,
-    #[serde(default = "all_systems")]
+    #[serde(default = "supported_systems")]
     pub systems: Vec<String>,
     /// Exact asset names with optional {tag} and {version} substitutions.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -54,15 +54,10 @@ fn is_false(value: &bool) -> bool {
     !value
 }
 
-fn all_systems() -> Vec<String> {
-    [
-        "aarch64-linux",
-        "aarch64-macos",
-        "x86_64-linux",
-        "x86_64-macos",
-    ]
-    .map(String::from)
-    .to_vec()
+fn supported_systems() -> Vec<String> {
+    ["aarch64-linux", "aarch64-macos", "x86_64-linux"]
+        .map(String::from)
+        .to_vec()
 }
 
 impl GitHubUpstream {
@@ -81,7 +76,7 @@ impl GitHubUpstream {
             homepage: None,
             tag_prefix: None,
             exclude_tags: Vec::new(),
-            systems: all_systems(),
+            systems: supported_systems(),
             assets: BTreeMap::new(),
             bins,
             bin_paths: BTreeMap::new(),

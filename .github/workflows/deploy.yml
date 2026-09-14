@@ -65,8 +65,6 @@ jobs:
             target: aarch64-unknown-linux-gnu
           - name: macos-aarch64
             target: aarch64-apple-darwin
-          - name: macos-x86_64
-            target: x86_64-apple-darwin
     runs-on: ${{ contains(matrix.target, 'apple') && 'macos-latest' || 'ubuntu-latest' }}
     steps:
       - name: Checkout
@@ -153,7 +151,7 @@ jobs:
         if: needs.changes.outputs.source == 'true'
         run: |
           mkdir -p .vitepress/dist/nightly
-          for name in linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64; do
+          for name in linux-x86_64 linux-aarch64 macos-aarch64; do
             (cd "artifacts/rb-${name}" && zip "../../.vitepress/dist/nightly/rb-${name}.zip" rb)
           done
           echo '${{ needs.changes.outputs.timestamp }}' > .vitepress/dist/nightly/version.txt
@@ -163,7 +161,7 @@ jobs:
         if: needs.changes.outputs.source != 'true'
         run: |
           mkdir -p .vitepress/dist/nightly
-          for name in linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64; do
+          for name in linux-x86_64 linux-aarch64 macos-aarch64; do
             curl -fsSL "https://rootbeer.tale.me/nightly/rb-${name}.zip" \
               -o ".vitepress/dist/nightly/rb-${name}.zip" || true
           done
@@ -171,6 +169,14 @@ jobs:
             -o ".vitepress/dist/nightly/version.txt" || true
           curl -fsSL "https://rootbeer.tale.me/nightly/source-sha.txt" \
             -o ".vitepress/dist/nightly/source-sha.txt" || true
+
+      - name: Preserve final Intel macOS binary
+        run: |
+          mkdir -p .vitepress/dist/nightly
+          curl --fail --location --silent --show-error --retry 5 \
+            https://rootbeer.tale.me/nightly/rb-macos-x86_64.zip \
+            -o .vitepress/dist/nightly/rb-macos-x86_64.zip
+          unzip -t .vitepress/dist/nightly/rb-macos-x86_64.zip
 
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
