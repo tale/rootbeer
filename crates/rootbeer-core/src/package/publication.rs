@@ -86,11 +86,11 @@ fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), String> {
             {
                 let file = bundle.join(folder).join(format!("{digest}{suffix}"));
                 if !fs::symlink_metadata(&file)
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| format!("{}: {e}", file.display()))?
                     .is_file()
-                    || hash_file(file).map_err(|e| e.to_string())? != digest
+                    || hash_file(&file).map_err(|e| format!("{}: {e}", file.display()))? != digest
                 {
-                    return Err("missing or invalid bundle content".into());
+                    return Err(format!("invalid bundle content: {}", file.display()));
                 }
             }
         }
@@ -119,11 +119,17 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
         fragment.validate_fragment()?;
         check_files(&fragment, path.parent().unwrap())?;
         for (folder, suffix) in [("artifacts", ".tar.gz"), ("receipts", ".json")] {
-            for file in
-                fs::read_dir(path.parent().unwrap().join(folder)).map_err(|e| e.to_string())?
-            {
+            let directory = path.parent().unwrap().join(folder);
+            let files = match fs::read_dir(&directory) {
+                Ok(files) => files,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(format!("{}: {error}", directory.display())),
+            };
+            for file in files {
                 copy_verified(
-                    &file.map_err(|e| e.to_string())?.path(),
+                    &file
+                        .map_err(|e| format!("{}: {e}", directory.display()))?
+                        .path(),
                     &destination.join(folder),
                     suffix,
                 )?;
@@ -380,7 +386,7 @@ mod tests {
         assert!(empty.validate_complete().is_err());
 
         let directory = root.path().join("inputs/empty");
-        create_bundle(&directory).unwrap();
+        fs::create_dir(&directory).unwrap();
         write_json(&directory.join("index.json"), &empty).unwrap();
         assemble_indexes(
             &root.path().join("inputs"),
@@ -396,6 +402,58 @@ mod tests {
         )
         .is_err());
         assert!(!root.path().join("invalid-empty-shard").exists());
+    }
+
+    #[test]
+    fn assembles_downloaded_shards_without_unreferenced_artifact_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = complete(root.path());
+        for system in ["aarch64-linux", "x86_64-linux"] {
+            fs::remove_dir_all(root.path().join("inputs").join(system).join("artifacts")).unwrap();
+        }
+        let output = root.path().join("downloaded");
+        assemble_indexes(&root.path().join("inputs"), &output).unwrap();
+        assert_eq!(
+            fs::read(bundle.join("index.json")).unwrap(),
+            fs::read(output.join("index.json")).unwrap()
+        );
+        assert!(output.join("artifacts").is_dir());
+    }
+
+    #[test]
+    fn rejects_downloaded_shards_missing_referenced_files() {
+        for folder in ["artifacts", "receipts"] {
+            let root = tempfile::tempdir().unwrap();
+            complete(root.path());
+            let shard = root.path().join("inputs/aarch64-linux");
+            let mut index: ArtifactIndex = read_json(&shard.join("index.json")).unwrap();
+            let artifact = index
+                .artifacts
+                .values_mut()
+                .next()
+                .unwrap()
+                .values_mut()
+                .next()
+                .unwrap();
+            let LockedSource::Url { url, sha256 } = &mut artifact.package.source else {
+                panic!("expected URL source");
+            };
+            *url = format!("ghcr://owner/index/xz@sha256:{sha256}");
+            let file = if folder == "artifacts" {
+                format!("{sha256}.tar.gz")
+            } else {
+                format!("{}.json", artifact.receipt_sha256)
+            };
+            write_json(&shard.join("index.json"), &index).unwrap();
+            fs::remove_dir_all(shard.join(folder)).unwrap();
+            let output = root.path().join("missing");
+            let error = assemble_indexes(&root.path().join("inputs"), &output).unwrap_err();
+            assert!(
+                error.contains(&shard.join(folder).join(file).display().to_string()),
+                "{error}"
+            );
+            assert!(!output.exists());
+        }
     }
 
     #[test]

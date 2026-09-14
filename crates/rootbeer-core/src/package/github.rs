@@ -437,4 +437,217 @@ mod tests {
             .unwrap_err()
             .contains("multiple binaries"));
     }
+
+    fn release_fixture(
+        root: &Path,
+        repository: &str,
+        asset_name: &str,
+        bytes: &[u8],
+    ) -> GitHubResolver {
+        let dir = root.join(format!("repos/{repository}/releases/tags"));
+        fs::create_dir_all(&dir).unwrap();
+        let binary = root.join("asset");
+        fs::write(&binary, bytes).unwrap();
+        fs::write(
+            dir.join("v1"),
+            serde_json::to_vec(&serde_json::json!({
+                "id": 42, "tag_name": "v1", "assets": [{
+                    "name": asset_name,
+                    "browser_download_url": format!("file://{}", binary.display()),
+                    "digest": format!("sha256:{}", hash_bytes(bytes))
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        GitHubResolver {
+            api_url: format!("file://{}", root.display()),
+            downloads: DownloadCache::new(root.join("downloads")),
+        }
+    }
+
+    fn catalog_resolver(
+        resolver: GitHubResolver,
+        name: &str,
+        repository: &str,
+        asset_name: &str,
+        commands: &[&str],
+    ) -> super::super::catalog::CatalogResolver {
+        let catalog: crate::package::PackageCatalog = serde_json::from_value(serde_json::json!({
+            "schema": 1,
+            "packages": { name: {
+                "name": name,
+                "description": "Command contract test",
+                "homepage": format!("https://github.com/{repository}"),
+                "default_version": "1",
+                "versions": { "1": {
+                    "revision": 1,
+                    "source": format!("github:{repository}@v1"),
+                    "assets": { "aarch64-macos": asset_name },
+                    "systems": ["aarch64-macos"],
+                    "bins": commands,
+                    "checks": [[commands[0], "--version"]]
+                }}
+            }}
+        }))
+        .unwrap();
+        catalog.validate().unwrap();
+        let mut backends = crate::package::ResolverStack::new();
+        backends.push(resolver);
+        super::super::catalog::CatalogResolver::new(
+            &crate::package::PackageResolverInputs::default(),
+            backends,
+        )
+        .with_catalog(&catalog)
+    }
+
+    #[test]
+    fn catalog_raw_assets_install_the_declared_command_instead_of_the_repository_name() {
+        let contents = b"#!/bin/sh\nprintf 'version 1\\n'\n";
+        for (repository, name, command) in [
+            ("mvdan/sh", "shfmt", "shfmt"),
+            ("tealdeer-rs/tealdeer", "tealdeer", "tldr"),
+            ("docker/compose", "compose", "docker-compose"),
+            ("argoproj/argo-cd", "argo-cd", "argocd"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let asset_name = format!("{command}-darwin-arm64");
+            let resolver = release_fixture(root.path(), repository, &asset_name, contents);
+            let resolver = catalog_resolver(resolver, name, repository, &asset_name, &[command]);
+            let resolution = resolver
+                .resolve(
+                    &PackageRequest::new(name),
+                    &ResolveContext::new("aarch64-macos"),
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                resolution.package.provides.bins,
+                BTreeMap::from([(command.into(), PathBuf::from(command))])
+            );
+            assert_eq!(
+                resolution.package.install,
+                LockedInstall::Binary {
+                    path: command.into()
+                }
+            );
+            assert!(matches!(resolution.proof, ResolutionProof::Catalog(_)));
+            let realized = crate::package::PackageRealizer::with_dirs(
+                crate::store::Store::new(root.path().join("store")),
+                root.path().join("downloads"),
+                root.path().join("temp"),
+            )
+            .realize(&resolution.package)
+            .unwrap();
+            assert_eq!(fs::read(&realized.bins[command]).unwrap(), contents);
+            assert_ne!(
+                fs::metadata(&realized.bins[command])
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o111,
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_raw_assets_reject_multiple_declared_commands() {
+        let root = tempfile::tempdir().unwrap();
+        let resolver = release_fixture(root.path(), "owner/tool", "tool-darwin-arm64", b"binary");
+        let resolver = catalog_resolver(
+            resolver,
+            "tool",
+            "owner/tool",
+            "tool-darwin-arm64",
+            &["one", "two"],
+        );
+        let error = resolver
+            .resolve(
+                &PackageRequest::new("tool"),
+                &ResolveContext::new("aarch64-macos"),
+            )
+            .unwrap_err();
+        assert!(error.contains("exactly one command"));
+    }
+
+    #[test]
+    fn catalog_archives_preserve_discovered_paths_and_reject_missing_commands() {
+        let root = tempfile::tempdir().unwrap();
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        let contents = b"#!/bin/sh\n";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "release/bin/actual", &contents[..])
+            .unwrap();
+        let bytes = archive.into_inner().unwrap().finish().unwrap();
+        let resolver = release_fixture(
+            root.path(),
+            "owner/tool",
+            "tool-darwin-arm64.tar.gz",
+            &bytes,
+        );
+        let context = ResolveContext::new("aarch64-macos");
+        let valid = catalog_resolver(
+            resolver.clone(),
+            "tool",
+            "owner/tool",
+            "tool-darwin-arm64.tar.gz",
+            &["actual"],
+        );
+        let resolution = valid
+            .resolve(&PackageRequest::new("tool"), &context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            resolution.package.provides.bins["actual"],
+            PathBuf::from("release/bin/actual")
+        );
+        assert!(matches!(
+            resolution.package.install,
+            LockedInstall::Archive { .. }
+        ));
+
+        let invalid = catalog_resolver(
+            resolver,
+            "tool",
+            "owner/tool",
+            "tool-darwin-arm64.tar.gz",
+            &["missing"],
+        );
+        assert!(invalid
+            .resolve(&PackageRequest::new("tool"), &context)
+            .unwrap_err()
+            .contains("backend did not provide declared command `missing`"));
+    }
+
+    #[test]
+    fn explicit_raw_binary_overrides_keep_paths_and_reject_invalid_mappings() {
+        let root = tempfile::tempdir().unwrap();
+        let resolver = release_fixture(root.path(), "mvdan/sh", "shfmt-darwin-arm64", b"binary");
+        let mut request = PackageRequest::parse("github:mvdan/sh@v1");
+        request.bins.insert("shfmt".into(), "bin/shfmt".into());
+        let context = ResolveContext::new("aarch64-macos");
+        let resolution = resolver.resolve(&request, &context).unwrap().unwrap();
+        assert_eq!(resolution.package.provides.bins, request.bins);
+        assert_eq!(
+            resolution.package.install,
+            LockedInstall::Binary {
+                path: "bin/shfmt".into()
+            }
+        );
+
+        request.bins.insert("second".into(), "second".into());
+        assert!(resolver
+            .resolve(&request, &context)
+            .unwrap_err()
+            .contains("exactly one binary"));
+        request.bins.remove("second");
+        request.bins.insert("shfmt".into(), "../escape".into());
+        assert!(resolver.resolve(&request, &context).is_err());
+    }
 }

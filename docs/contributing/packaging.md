@@ -111,9 +111,10 @@ Patterns support `{tag}` and `{version}`. Existing recipes seed asset rules when
 available, and newly discovered asset names become saved patterns.
 
 The importer orders stable dotted numeric versions, including calendar versions;
-it skips drafts and releases marked as prereleases. Tags may have an optional `v`.
-Use `--tag-prefix` to restrict and strip another prefix. Other version schemes fail
-explicitly. Discovery reads paginated release history, up to `--max-pages` (20 by
+it skips drafts, prereleases, and tags outside that numeric format, including
+unmarked release candidates and moving tags such as `stable`. Tags may have an
+optional `v`. Use `--tag-prefix` to restrict and strip a prefix. Discovery fails
+when no matching stable releases remain or numeric versions are ambiguous. Discovery reads paginated release history, up to `--max-pages` (20 by
 default), and fails if the history is incomplete. `GITHUB_TOKEN` authenticates API
 requests.
 
@@ -145,8 +146,8 @@ The importer does not download binaries, execute imported code, or publish candi
 
 GitHub `source` settings drive both discovery and version expansion. A tag template
 such as `tool-{version}` also selects that release series; `source.tag_prefix`
-can override the discovery filter. Optional `v` prefixes remain accepted for
-numeric tags. `source.update_systems` narrows discovery without removing retained
+can override the discovery filter. `v{version}` selects only tags beginning with
+`v`; `{version}` selects bare numeric tags. `source.update_systems` narrows discovery without removing retained
 platform recipes. Set `source.track = false` to opt out. Source builds remain
 untracked; automatic discovery currently supports GitHub binary releases only.
 

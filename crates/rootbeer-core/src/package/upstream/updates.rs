@@ -60,9 +60,7 @@ pub fn seed_upstreams(catalog: &PackageCatalog, output: &Path) -> Result<usize, 
                 package.name
             )
         })?;
-        if !matches!(prefix, "" | "v") {
-            definition.tag_prefix = Some(prefix.into());
-        }
+        definition.tag_prefix = Some(prefix.into());
         definitions.push(definition);
     }
     validate_definitions(&definitions)?;
@@ -456,6 +454,6 @@ mod tests {
             .find(|definition| definition.name == "age")
             .unwrap();
         assert_eq!(age.bins, ["age", "age-keygen"]);
-        assert_eq!(age.tag_prefix, None);
+        assert_eq!(age.tag_prefix.as_deref(), Some("v"));
     }
 }

@@ -43,10 +43,7 @@ fn release_version<'a>(
                 .unwrap_or(&release.tag_name),
         ),
     };
-    if let Some(version) = version {
-        version_key(version)?;
-    }
-    Ok(version)
+    Ok(version.filter(|version| version_key(version).is_ok()))
 }
 
 fn pattern(asset: &str, tag: &str, version: &str) -> String {
@@ -400,6 +397,9 @@ mod tests {
             draft,
             prerelease,
             release("other-999", &[]),
+            release("tool-100-rc.5", &[]),
+            release("tool-100-pgo", &[]),
+            release("tool-100..1", &[]),
             release("tool-legacy-build", &[]),
             release(
                 "tool-2",
@@ -422,7 +422,27 @@ mod tests {
             None
         )
         .unwrap_err()
-        .contains("unsupported version"));
+        .contains("no matching stable releases"));
+    }
+
+    #[test]
+    fn exact_prefix_disambiguates_tags_but_duplicate_versions_still_fail() {
+        let assets = ["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"];
+        let releases = vec![release("v2", &assets), release("2", &assets)];
+        let mut upstream = upstream();
+        assert!(package(&mut upstream, &repository(), &releases, None)
+            .unwrap_err()
+            .contains("multiple release tags"));
+        upstream.tag_prefix = Some("v".into());
+        let selected = package(&mut upstream, &repository(), &releases, None).unwrap();
+        assert_eq!(
+            selected.versions["2"].source.as_deref(),
+            Some("github:owner/tool@v2")
+        );
+        let ambiguous = vec![release("v2", &assets), release("v2.0", &assets)];
+        assert!(package(&mut upstream, &repository(), &ambiguous, None)
+            .unwrap_err()
+            .contains("multiple release tags"));
     }
 
     #[test]

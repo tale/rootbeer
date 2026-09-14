@@ -245,6 +245,19 @@ impl PackageResolver for CatalogResolver {
             .resolve_package(&source, context)
             .map_err(|e| e.to_string())?;
         let mut locked = resolution.package;
+        if let (Some("github"), super::LockedInstall::Binary { path }) =
+            (source.resolver.as_deref(), &mut locked.install)
+        {
+            let [command] = recipe.bins.as_slice() else {
+                return Err(format!(
+                    "{}: raw GitHub assets must declare exactly one command",
+                    package.name
+                ));
+            };
+            // Raw assets have no internal filename; the recipe owns their installed command.
+            *path = command.into();
+            locked.provides.bins = BTreeMap::from([(command.clone(), path.clone())]);
+        }
         for bin in &recipe.bins {
             if !locked.provides.bins.contains_key(bin) {
                 return Err(format!(

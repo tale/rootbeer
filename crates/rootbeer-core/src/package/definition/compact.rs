@@ -505,9 +505,7 @@ impl CompactPackage {
 }
 
 fn inferred_prefix(tag: &str) -> Option<String> {
-    tag.strip_suffix("{version}")
-        .filter(|prefix| !matches!(*prefix, "" | "v"))
-        .map(String::from)
+    tag.strip_suffix("{version}").map(String::from)
 }
 
 #[cfg(test)]
@@ -531,6 +529,14 @@ mod tests {
             ["2"] = { systems = { "aarch64-macos" } },
         },
     }"#;
+
+    #[test]
+    fn discovery_prefix_matches_the_source_tag_template() {
+        assert_eq!(inferred_prefix("v{version}"), Some("v".into()));
+        assert_eq!(inferred_prefix("{version}"), Some(String::new()));
+        assert_eq!(inferred_prefix("cli-v{version}"), Some("cli-v".into()));
+        assert_eq!(inferred_prefix("{version}-release"), None);
+    }
 
     #[test]
     fn expands_templates_and_historical_platform_exceptions_without_changing_catalogs() {
