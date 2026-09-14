@@ -66,7 +66,6 @@ zsh.config({
     aliases = { g = "git", vim = "nvim" },
     prompt = '%F{cyan}%~%f %F{white}>%f ',
     history = { size = 10000 },
-    sources = { rb.env_export("sh") },
 })
 
 ```
@@ -74,7 +73,8 @@ zsh.config({
 ## Packages
 
 [Find packages](https://rootbeer.tale.me/packages/) to add to `init.lua`, then run
-`rb apply`. The Zsh example above makes installed commands available in a new terminal.
+`rb apply`, then run `eval "$(rb env)"` to use the installed commands.
+The Zsh example above also loads them automatically in Zsh login shells.
 Commit `rootbeer.lock` to save your package versions, and run `rb apply --update`
 when you want to update them. See the
 [package guide](https://rootbeer.tale.me/guide/packages) for other shells and version selection.

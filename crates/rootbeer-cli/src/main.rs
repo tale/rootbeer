@@ -57,6 +57,9 @@ enum Commands {
     /// Apply the rootbeer configuration
     Apply(apply::Args),
 
+    /// Print shell setup for installed packages (sh, Bash, or Zsh)
+    Env,
+
     /// View or change the git remote protocol for the source directory
     Remote(remote::Args),
 
@@ -79,6 +82,7 @@ fn main() {
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),
         Commands::Apply(args) => apply::run(args, cli.lua_dir.as_ref()),
+        Commands::Env => print!("{}", rootbeer_core::package::profile::env_contents()),
         Commands::Remote(args) => remote::run(args),
         Commands::Update => update::run(),
     }

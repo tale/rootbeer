@@ -32,6 +32,13 @@ detect_platform() {
 }
 
 main() {
+	for tool in curl unzip; do
+		if ! command -v "$tool" >/dev/null 2>&1; then
+			echo "error: $tool is required; install it with your system package manager and retry" >&2
+			exit 1
+		fi
+	done
+
 	platform=$(detect_platform)
 	artifact="rb-${platform}.zip"
 	url="${BASE_URL}/${artifact}"

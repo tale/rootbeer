@@ -2,12 +2,15 @@
 
 ## Install Rootbeer
 
+The installer requires `curl` and `unzip`. On Ubuntu, install them with
+`sudo apt install curl unzip`.
+
 ```sh
 sh -c "$(curl -fsSL https://rootbeer.tale.me/rb.sh)"
+export PATH="$HOME/.rootbeer/bin:$PATH"
 ```
 
-This installs `rb` to `~/.rootbeer/bin`. Follow the installer's instructions to
-add it to your shell's `PATH`.
+This installs `rb` to `~/.rootbeer/bin` and makes it available in your current shell.
 
 ## Create your configuration
 
@@ -17,19 +20,12 @@ rb edit
 ```
 
 Your configuration lives in `~/.config/rootbeer/`. Edit `init.lua` to choose your
-tools and settings. For example, this installs ripgrep and sets up Zsh:
+tools and settings. This installs ripgrep:
 
 ```lua
 local rb = require("rootbeer")
-local zsh = require("rootbeer.zsh")
 
 rb.package("ripgrep")
-
-zsh.config({
-    sources = { rb.env_export("sh") },
-    aliases = { g = "git" },
-    history = { size = 10000 },
-})
 ```
 
 [Find more packages](/packages/) or use [modules](/modules/) to configure Git,
@@ -48,8 +44,22 @@ rb apply --dry-run
 rb apply
 ```
 
-Open a new terminal to load your shell settings. Run `rg --version` to check
-that ripgrep is available.
+Make installed commands available in your current shell:
+
+```sh
+eval "$(rb env)"
+rg --version
+```
+
+Add both lines, in this order, to `~/.bashrc` for Bash or `~/.zshrc` for Zsh:
+
+```sh
+export PATH="$HOME/.rootbeer/bin:$PATH"
+eval "$(rb env)"
+```
+
+Future terminals will find Rootbeer and your installed commands. If you manage
+Zsh with Rootbeer, follow the [Zsh setup](/guide/packages#configure-zsh).
 
 Keep your configuration in Git, including the generated `rootbeer.lock` file.
 It saves package versions so subsequent installs use the same ones. See

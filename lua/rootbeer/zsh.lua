@@ -359,9 +359,7 @@ function M.config(cfg)
 	local dir = cfg.dir or "~/.config/zsh"
 	build_zshenv_bootstrap(dir)
 
-	if cfg.env then
-		build_zshenv(dir, cfg.env)
-	end
+	build_zshenv(dir, cfg.env or {})
 
 	build_zprofile(dir, cfg.profile)
 

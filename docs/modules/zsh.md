@@ -30,9 +30,9 @@ zsh.config({
 })
 ```
 
-Rootbeer manages your Zsh startup files through `~/.zshenv`.
-To use tools installed by Rootbeer, add the shell setup from the
-[package guide](/guide/packages).
+Rootbeer manages your Zsh startup files through `~/.zshenv` and makes installed
+packages available in login shells. Zsh must already be installed; after
+`rb apply`, run `zsh -l` to start it with your settings.
 
 For machine-specific values like work-only aliases or a different `EDITOR`, use
 [Profiles](/guide/profiles).

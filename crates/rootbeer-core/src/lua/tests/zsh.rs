@@ -58,6 +58,16 @@ fn zsh_config_writes_bootstrap_and_zshrc() {
 }
 
 #[test]
+fn zsh_config_without_environment_writes_the_bootstrap_target() {
+    let ops = run(r#"
+        local zsh = require("rootbeer.zsh")
+        zsh.config({})
+    "#);
+    let writes = writes(&ops);
+    assert_eq!(find(&writes, "/.config/zsh/.zshenv"), "\n");
+}
+
+#[test]
 fn zsh_config_respects_custom_dir() {
     let ops = run(r#"
         local zsh = require("rootbeer.zsh")

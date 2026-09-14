@@ -47,7 +47,6 @@ local zsh = require("rootbeer.zsh")
 rb.package("ripgrep")
 
 zsh.config({
-    sources = { rb.env_export("sh") },
     history = { size = 10000 },
 })
 ```
@@ -55,9 +54,11 @@ zsh.config({
 ```sh
 rb apply --dry-run
 rb apply
+eval "$(rb env)"
 ```
 
-Open a new terminal to use `rg`. [Get started](/guide/getting-started) to create
+You can now use `rg`. Zsh must be installed to use the shell configuration;
+start it with `zsh -l`. [Get started](/guide/getting-started) to create
 your own configuration, or [find more packages](/packages/).
 
 </div>

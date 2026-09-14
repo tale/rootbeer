@@ -4,32 +4,51 @@ Install command-line tools from the same configuration as your shell and dotfile
 
 ## Install your tools
 
-Add packages to `init.lua`. This example installs [ripgrep](https://github.com/BurntSushi/ripgrep)
-and makes its `rg` command available in Zsh:
+Add packages to `init.lua`. This example installs [ripgrep](https://github.com/BurntSushi/ripgrep):
 
 ```lua
 local rb = require("rootbeer")
-local zsh = require("rootbeer.zsh")
 
 rb.package("ripgrep")
-
-zsh.config({
-    sources = { rb.env_export("sh") },
-})
 ```
 
-If you already call `zsh.config()`, add the `sources` entry to that configuration.
-Then apply:
+Apply, then make installed commands available in your current shell:
 
 ```sh
 rb apply
+eval "$(rb env)"
+rg --version
 ```
 
-Open a new terminal and run `rg --version`. [Find more packages](/packages/)
-to add to your configuration.
+[Find more packages](/packages/) to add to your configuration.
 
-For Bash or another POSIX-compatible shell, source the file returned by
-`rb.env_export("sh")` from your shell startup file. Fish syntax is not supported.
+## Set up your shell
+
+Add both lines, in this order, to `~/.bashrc` for Bash or `~/.zshrc` for Zsh:
+
+```sh
+export PATH="$HOME/.rootbeer/bin:$PATH"
+eval "$(rb env)"
+```
+
+New terminals will then find your installed commands. Fish syntax is not supported.
+
+### Configure Zsh
+
+If you manage Zsh with Rootbeer, `zsh.config()` makes installed commands available
+automatically in login shells. You do not need to add the lines above:
+
+```lua
+local zsh = require("rootbeer.zsh")
+
+zsh.config({
+    aliases = { g = "git" },
+    history = { size = 10000 },
+})
+```
+
+Zsh must already be installed. Run `rb apply`, then `zsh -l` to start a Zsh login
+shell with your settings. This does not change your default shell.
 
 ## Choose a version
 
