@@ -1,6 +1,8 @@
 # Packages
 
-Run a tool immediately, install it for your user, or manage it alongside your dotfiles.
+[Browse packages](/packages/) to find a tool, check its commands and supported
+platforms, and choose a version. You can run it immediately, keep it installed,
+or declare it in your dotfile configuration.
 
 ## Run a tool
 
@@ -9,44 +11,59 @@ No configuration or shell setup is required:
 ```sh
 rb run jq -- --version
 rb run ripgrep -- --hidden TODO .
-rb run jq@1.8.2 -- '.name' package.json
 ```
 
-Arguments after `--` go directly to the tool. Rootbeer uses the command matching
-the package name, or its only exported command (`ripgrep` runs `rg`). Use
-`--bin <command>` to choose from a package's other commands. Add `-p <package>`
-to put another tool on the process's PATH.
+Arguments after `--` go to the tool. Its commands are available on PATH for that
+process and its children; your current shell stays unchanged. Downloads are cached
+for later runs.
 
-## Install without a configuration
+### Package names and commands
+
+A package name identifies what to install. Its commands are the executables you
+run: the `ripgrep` package provides `rg`. Package aliases are alternate names for
+requesting the same package; `rg` is also a declared alias of `ripgrep`.
+
+```sh
+rb run rg -- --version
+rb run xz --bin xzdec -- --version
+```
+
+Rootbeer chooses a command matching your request or the canonical package name,
+then the only command if the package exports just one. Use `--bin` to select
+another exported command. The package browser lists commands and aliases separately.
+
+Add `-p` for each additional package the command needs. For example, benchmark
+`jq` with `hyperfine`:
+
+```sh
+rb run hyperfine -p jq -- 'jq --version'
+```
+
+## Keep tools installed
 
 ```sh
 rb use jq ripgrep
 eval "$(rb env)"
-jq --version
+rg --version
 ```
 
-`rb use` adds packages to your user profile and replaces previously installed
-versions of the same tool. Other installed tools remain available. This profile
-is independent of `init.lua` and `rb apply`; its commands take precedence when
-both profiles provide the same name. See [shell setup](#set-up-your-shell) to
-make them available in new terminals.
+`rb use` adds packages to your user profile. Requesting another version replaces
+that package while keeping your other tools. The commands stay available in later
+terminals once you add [shell setup](#set-up-your-shell).
 
-Both commands cache resolved versions and verified downloads. Repeat a request
-with `--offline` to use only cached data, or `--update` to refresh its version.
-Exact `@version` requests stay exact. These commands keep their own locks in
-Rootbeer's state directory and do not modify your configuration's `rootbeer.lock`.
+This profile is independent of `init.lua` and `rb apply`. Its commands take
+precedence when both profiles provide the same name.
 
-## Install your tools
+## Declare tools in your configuration
 
-Add packages to `init.lua`. This example installs [ripgrep](https://github.com/BurntSushi/ripgrep):
+Use Lua when you want to keep your package list alongside your shell and dotfiles:
 
 ```lua
 local rb = require("rootbeer")
 
+rb.package("jq")
 rb.package("ripgrep")
 ```
-
-Apply, then make installed commands available in your current shell:
 
 ```sh
 rb apply
@@ -54,67 +71,51 @@ eval "$(rb env)"
 rg --version
 ```
 
-[Find more packages](/packages/) to add to your configuration.
+Commit `init.lua` and the resulting `rootbeer.lock` to keep the configuration and
+resolved package versions together.
+
+## Choose a version
+
+An unversioned request selects the catalog's default for your platform when first
+resolved. This is usually the newest packaged release; platforms an upstream has
+dropped can have an older default. The package browser shows retained versions
+and their platform support, so you can choose an exact release:
+
+```sh
+rb run jq@1.8.2 -- --version
+rb use jq@1.8.2
+```
+
+The same syntax works in Lua: `rb.package("jq@1.8.2")`. Explicit versions never
+fall back to another release. A retained version is available for selection;
+it does not necessarily become the default.
+
+Repeated runs and installs reuse saved resolutions. Use `--update` to refresh
+unversioned requests; exact versions stay fixed. See
+[updates and offline use](/guide/package-locks) for each workflow.
 
 ## Set up your shell
 
-Add both lines, in this order, to `~/.bashrc` for Bash or `~/.zshrc` for Zsh:
+Add these lines to `~/.bashrc` for Bash or `~/.zshrc` for Zsh:
 
 ```sh
 export PATH="$HOME/.rootbeer/bin:$PATH"
 eval "$(rb env)"
 ```
 
-New terminals will then find your installed commands. Fish syntax is not supported.
+The first line finds `rb` in its default installation directory. The second adds
+commands from your user and configuration profiles. Fish syntax is not supported.
 
-### Configure Zsh
+If you manage Zsh with Rootbeer, [`zsh.config()`](/modules/zsh) sets up package
+commands automatically in login shells. Run `rb apply`, then `zsh -l` to load them.
 
-If you manage Zsh with Rootbeer, `zsh.config()` makes installed commands available
-automatically in login shells. You do not need to add the lines above:
-
-```lua
-local zsh = require("rootbeer.zsh")
-
-zsh.config({
-    aliases = { g = "git" },
-    history = { size = 10000 },
-})
-```
-
-Zsh must already be installed. Run `rb apply`, then `zsh -l` to start a Zsh login
-shell with your settings. This does not change your default shell.
-
-## Choose a version
-
-Without a version, Rootbeer installs the newest available release for your platform.
-To choose an exact version, include it after `@`:
-
-```lua
-rb.package("ripgrep@15.2.0")
-```
-
-Rootbeer saves installed versions in `rootbeer.lock`. Commit this file with your
-configuration. Running `rb apply` again keeps those versions unless your package
-configuration or platform changes.
-
-Run `rb apply --update` to update unpinned packages. Exact versions stay fixed.
-See [updates and offline use](/guide/package-locks) for the other options.
-
-## Supported packages
+## Platform support
 
 Rootbeer installs prebuilt command-line tools on macOS and Linux, on ARM64 and
-x86-64. Use the platform filter in [package search](/packages/) to check a tool.
-Some tools have older releases on platforms they no longer support; compatibility
-with every Linux distribution or OS release is not guaranteed.
-
-An unavailable package or exact version produces an error. Rootbeer does not
-compile a replacement during installation.
-
-Rootbeer does not yet install desktop applications, manage services, or
-necessarily install every runtime dependency a tool needs. Continue using
-[Homebrew](/modules/brew) or another package manager for those needs. Adding a
-package to Rootbeer does not remove a copy installed by another manager.
+x86-64. Filter the package browser for your platform; support varies by version
+and does not imply compatibility with every OS release or Linux distribution.
+Installation does not compile packages locally.
 
 For tools outside the catalog, see [other package sources](/guide/package-sources).
-For sharing a configuration between platforms, see
-[using multiple machines](/guide/package-locks#using-multiple-machines).
+For desktop applications and services, use [Homebrew](/modules/brew) or another
+system package manager.

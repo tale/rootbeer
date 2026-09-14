@@ -1,11 +1,19 @@
 # Other package sources
 
-Use [package search](/packages/) for tools available directly by name. If a tool
-is missing, you can install a release from GitHub or use an Aqua recipe.
+[Browse the catalog](/packages/) for packages available by name. For another tool,
+you can request a GitHub release or an Aqua recipe with `rb run`, `rb use`, or
+`rb.package()`.
 
 ## Install from GitHub
 
-Pass the repository and release tag to `rb.package()`:
+Use `github:owner/repository@tag`:
+
+```sh
+rb run github:BurntSushi/ripgrep@15.2.0 -- --version
+rb use github:BurntSushi/ripgrep@15.2.0
+```
+
+Or declare the same request in your configuration:
 
 ```lua
 local rb = require("rootbeer")
@@ -13,36 +21,40 @@ local rb = require("rootbeer")
 rb.package("github:BurntSushi/ripgrep@15.2.0")
 ```
 
-The tag must match exactly, including a leading `v` if the project uses one.
-Rootbeer downloads a release for your platform. If several files match, use the
-`asset` option to choose the filename and `bins` to specify commands inside it;
-see the [package API](/reference/core#rootbeer-package).
+The release tag must match exactly, including a leading `v` when the project uses
+one. Rootbeer selects a release asset for your platform. Supported formats include
+tar.gz, tar.xz, ZIP, and standalone executables.
 
-Rootbeer supports tar.gz, tar.xz, ZIP, and standalone executables. Not every
-project's release layout is supported.
+If automatic selection is ambiguous, use Lua's `asset` option to choose a filename
+and `bins` to declare command paths inside it; see the
+[package API](/reference/core#rootbeer-package). The CLI's `--bin` chooses an
+already exported command; it does not select a release asset or an archive path.
 
 ## Install from Aqua
 
-Use `aqua:owner/repository@version` to select a recipe from the Aqua registry.
-You do not need to install Aqua separately.
+Use `aqua:owner/repository@version` to select an Aqua registry recipe. The prefix
+works with all three installation methods; you do not need Aqua installed.
 
-Direct GitHub and Aqua downloads are hashed and saved in your lockfile, but are
-not signed by the Rootbeer index publisher. Aqua signatures and attestations
-are not verified.
+Direct GitHub and Aqua requests record download hashes in their saved resolutions.
+They do not carry the Rootbeer index publisher's signature. Aqua signatures and
+attestations are not verified.
 
 ## Use another index
 
-For a private or custom package collection, call `rb.package_index()` before
-adding packages. Supply the snapshot URL and SHA-256 supplied by its publisher.
-See the [API reference](/reference/core#rootbeer-package-index) for the fields.
+A Lua configuration can select a custom collection before declaring packages:
+call `rb.package_index()` with the snapshot URL and SHA-256 supplied by its
+publisher. See the [API reference](/reference/core#rootbeer-package-index) for the
+fields. HTTPS and absolute local `file://` snapshot URLs are supported.
 
-Use a source you trust: the checksum identifies the download but does not verify
-who published it. HTTPS URLs and absolute local `file://` URLs are supported.
+Use a publisher you trust: the checksum identifies exact contents but does not
+verify who published them. Rootbeer uses this collection instead of its official
+catalog for the configuration. Standalone `rb run` and `rb use` do not read this
+Lua setting.
 
-Rootbeer uses that collection instead of its official catalog.
-`rb apply --update` keeps your selected snapshot; change the URL and checksum to
-use a different one. Changing or removing this setting updates the lock on your
+`rb apply --update` keeps the selected snapshot. Change its URL and checksum to
+select a newer one; changing or removing the setting refreshes your lock on the
 next apply. Offline installs still require a matching lock and cached packages.
 
-For verification and fallback details, see
-[index hosting and trust](/contributing/package-hosting).
+See [updates and offline use](/guide/package-locks) for saved versions, or
+[index hosting and trust](/contributing/package-hosting) for verification and
+fallback behavior.

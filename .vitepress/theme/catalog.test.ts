@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createHash, sign } from "node:crypto";
 import { test } from "node:test";
-import { defaultVersion, loadCatalog, matchesPackage, type CatalogPackage } from "./catalog";
+import {
+  availableVersions,
+  compareVersions,
+  defaultVersion,
+  loadCatalog,
+  matchesPackage,
+  packageCommand,
+  preferredVersion,
+  primaryCommand,
+  searchPackages,
+  type CatalogPackage,
+} from "./catalog";
 
 const pkg: CatalogPackage = {
   name: "test-tool",
@@ -10,18 +21,27 @@ const pkg: CatalogPackage = {
   homepage: "https://example.org/project",
   default_version: "2.0",
   default_versions: { "x86_64-macos": "1.0" },
-  versions: { "2.0": { systems: ["aarch64-macos"] }, "1.0": { systems: ["x86_64-macos"] } },
+  versions: {
+    "2.0": { systems: ["aarch64-macos"], bins: ["test-tool", "test-scan"], revision: 1 },
+    "1.0": { systems: ["x86_64-macos"], bins: ["test-tool"], revision: 2 },
+  },
 };
 
-function fixture() {
+function fixture(
+  packages: CatalogPackage[] = [pkg],
+  artifacts: Record<string, Record<string, unknown>> = {
+    "test-tool@2.0": { "aarch64-macos": {} },
+    "test-tool@1.0": { "x86_64-macos": {} },
+  },
+) {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const snapshot = JSON.stringify({
     schema: 1,
-    catalog: { schema: 1, packages: { "test-tool": pkg } },
-    artifacts: {
-      "test-tool@2.0": { "aarch64-macos": {} },
-      "test-tool@1.0": { "x86_64-macos": {} },
+    catalog: {
+      schema: 1,
+      packages: Object.fromEntries(packages.map((entry) => [entry.name, entry])),
     },
+    artifacts,
   });
   const index = {
     url: "https://example.org/snapshot.json",
@@ -98,4 +118,126 @@ test("reports unavailable catalog responses", async () => {
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test("orders numeric releases, prereleases, and calendar tags newest first", () => {
+  const versions = ["1.9.0", "1.10.0-rc.2", "1.10.0", "1.10.0-rc.10", "1.10.0-beta", "1.10.0-1"];
+  assert.deepEqual(
+    versions.sort((a, b) => compareVersions(b, a)),
+    ["1.10.0", "1.10.0-rc.10", "1.10.0-rc.2", "1.10.0-beta", "1.10.0-1", "1.9.0"],
+  );
+  assert.deepEqual(
+    ["2025-9-1", "2025-10-1", "2026-1-1"].sort((a, b) => compareVersions(b, a)),
+    ["2026-1-1", "2025-10-1", "2025-9-1"],
+  );
+  assert.equal(compareVersions("v1.10.0+build.7", "1.10.0+build.8"), 0);
+  assert(compareVersions("1.10.0-rc.1", "1.10.0-rc") > 0);
+});
+
+test("keeps a lower platform default while sorting available releases newest first", () => {
+  const entry = structuredClone(pkg);
+  entry.versions["2.0"].systems.push("x86_64-macos");
+  entry.versions["3.0"] = { systems: ["aarch64-macos"], bins: ["test-tool"], revision: 1 };
+  entry.versions["4.0"] = { systems: [], bins: ["future-tool"], revision: 1 };
+
+  assert.deepEqual(availableVersions(entry), ["3.0", "2.0", "1.0"]);
+  assert.deepEqual(availableVersions(entry, "x86_64-macos"), ["2.0", "1.0"]);
+  assert.equal(preferredVersion(entry, "x86_64-macos"), "1.0");
+  assert.equal(preferredVersion(entry), "2.0");
+  assert.deepEqual(availableVersions(entry, "x86_64-linux"), []);
+  assert.equal(preferredVersion(entry, "x86_64-linux"), "");
+});
+
+test("falls back to the newest published version when the default is unavailable", () => {
+  const entry = structuredClone(pkg);
+  entry.versions["2.0"].systems = [];
+  assert.equal(preferredVersion(entry), "1.0");
+  assert(matchesPackage(entry, "test-tool", "x86_64-macos"));
+});
+
+test("filters unpublished systems, versions, and packages from the signed catalog", async () => {
+  const entry = structuredClone(pkg);
+  entry.versions["2.0"].systems.push("x86_64-linux");
+  entry.versions["3.0"] = { systems: ["aarch64-macos"], bins: ["future-tool"], revision: 1 };
+  const unpublished = { ...structuredClone(pkg), name: "unpublished-tool" };
+  const data = fixture([entry, unpublished]);
+
+  await withResponses(data, async () => {
+    const { packages } = await loadCatalog(data.source);
+    assert.deepEqual(
+      packages.map((entry) => entry.name),
+      ["test-tool"],
+    );
+    assert.deepEqual(packages[0].versions["2.0"].systems, ["aarch64-macos"]);
+    assert.deepEqual(availableVersions(packages[0]), ["2.0", "1.0"]);
+    assert.deepEqual(availableVersions(packages[0], "x86_64-linux"), []);
+    assert.equal(packages[0].versions["1.0"].revision, 2);
+    assert.deepEqual(packages[0].versions["2.0"].bins, ["test-tool", "test-scan"]);
+  });
+});
+
+test("ranks exact names before aliases, exported commands, prefixes, and descriptions", () => {
+  const named = { ...structuredClone(pkg), name: "scan", aliases: [] };
+  const alias = { ...structuredClone(pkg), name: "alias-package", aliases: ["scan"] };
+  const exported = { ...structuredClone(pkg), name: "command-package", aliases: [] };
+  exported.versions["2.0"].bins = ["scan"];
+  const prefix = { ...structuredClone(pkg), name: "scan-utils", aliases: [] };
+  const described = {
+    ...structuredClone(pkg),
+    name: "description-package",
+    aliases: [],
+    description: "Scan files",
+  };
+  const entries = [described, prefix, exported, alias, named];
+
+  assert.deepEqual(
+    searchPackages(entries, " SCAN ").map((entry) => entry.name),
+    ["scan", "alias-package", "command-package", "scan-utils", "description-package"],
+  );
+  assert(matchesPackage(exported, "SCAN local", "aarch64-macos"));
+  assert.deepEqual(searchPackages(entries, "scan", "x86_64-linux"), []);
+});
+
+test("does not advertise commands absent from published versions on the selected platform", () => {
+  const entry = structuredClone(pkg);
+  entry.versions["3.0"] = { systems: [], bins: ["future-tool"], revision: 1 };
+
+  assert(!matchesPackage(entry, "future-tool", ""));
+  assert(!matchesPackage(entry, "test-scan", "x86_64-macos"));
+  assert(matchesPackage(entry, "test-scan", "aarch64-macos"));
+});
+
+test("selects canonical or sole commands and emits explicit overrides for multi-command packages", () => {
+  assert.equal(primaryCommand(pkg, "2.0"), "test-tool");
+  assert.equal(packageCommand(pkg, "run", "2.0", "test-tool"), "rb run test-tool@2.0");
+  assert.equal(
+    packageCommand(pkg, "run", "2.0", "test-scan"),
+    "rb run --bin test-scan test-tool@2.0",
+  );
+  assert.equal(packageCommand(pkg, "use", "2.0", "test-scan"), "rb use test-tool@2.0");
+
+  const entry = structuredClone(pkg);
+  entry.versions["2.0"].bins = ["one", "two"];
+  assert.equal(primaryCommand(entry, "2.0"), "");
+  assert.equal(packageCommand(entry, "run", "2.0", "two"), "rb run --bin two test-tool@2.0");
+  entry.versions["2.0"].bins = ["one"];
+  assert.equal(primaryCommand(entry, "2.0"), "one");
+  assert.equal(packageCommand(entry, "run", "2.0", "one"), "rb run test-tool@2.0");
+});
+
+test("quotes pinned shell requests and emits a complete Lua declaration", () => {
+  assert.equal(packageCommand(pkg, "run"), "rb run test-tool");
+  assert.equal(
+    packageCommand(pkg, "use", "release candidate"),
+    "rb use 'test-tool@release candidate'",
+  );
+  assert.equal(
+    packageCommand(pkg, "run", "$(touch /tmp/oops)"),
+    "rb run 'test-tool@$(touch /tmp/oops)'",
+  );
+  assert.equal(packageCommand(pkg, "use", "it's-ready"), "rb use 'test-tool@it'\\''s-ready'");
+  assert.equal(
+    packageCommand(pkg, "config", 'release"candidate'),
+    'local rb = require("rootbeer")\n\nrb.package("test-tool@release\\"candidate")',
+  );
 });

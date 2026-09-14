@@ -9,6 +9,7 @@ export default defineConfig({
   description: "Declare your packages and system configuration in Lua.",
   themeConfig: {
     catalog: {
+      repositoryUrl: "https://github.com/tale/rootbeer-index",
       url: process.env.ROOTBEER_INDEX_URL || "https://tale.github.io/rootbeer-index/latest.json",
       publicKey:
         process.env.ROOTBEER_INDEX_PUBLIC_KEY ||
@@ -37,7 +38,7 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: "Find Packages", link: "/packages/" },
-          { text: "Declare and Install", link: "/guide/packages" },
+          { text: "Run and Install", link: "/guide/packages" },
           { text: "Updates and Offline Use", link: "/guide/package-locks" },
           { text: "Other Package Sources", link: "/guide/package-sources" },
         ],

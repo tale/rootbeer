@@ -1,52 +1,79 @@
 # Updates and offline use
 
-`rootbeer.lock` saves the package versions and downloads used by your configuration.
-Commit it alongside `init.lua` so later installs use the same packages.
+Rootbeer remembers resolved versions so repeated installs do not unexpectedly
+change your tools. `rb run` and `rb use` save requests in Rootbeer's state directory;
+Lua configurations save them in `rootbeer.lock` alongside `init.lua`.
 
-## Update packages
+## Update tools installed with run or use
+
+Refresh a request before running it, or update selected installed packages:
+
+```sh
+rb run jq --update -- --version
+rb use --update jq ripgrep
+```
+
+`rb use --update` updates the packages you name and keeps other installed tools.
+`rb run --update` refreshes its process's packages without changing your installed
+user profile. Both commands share cached request resolutions, so a later
+`rb use jq` can use the version refreshed by `rb run jq --update`.
+
+An exact request such as `jq@1.8.2` keeps that upstream version, including with
+`--update`; its packaging or download details may change. These commands do not
+read or modify your configuration's `rootbeer.lock`.
+
+### Run or install offline
+
+After resolving and downloading a request on this machine:
+
+```sh
+rb run jq --offline -- --version
+rb use --offline jq
+```
+
+Offline use requires both the saved request and its installed or cached contents.
+For `rb run -p`, every requested package must be cached. A different version or
+request may need an online run first. `--offline` and `--update` cannot be combined.
+
+## Update a Lua configuration
 
 ```sh
 rb apply --update
 ```
 
-This updates unpinned packages and saves the new versions in `rootbeer.lock`.
-Review and commit the changes. Versions specified in `init.lua` stay fixed,
-but their packaging or download details can change.
+This refreshes unpinned packages declared in your configuration and saves the
+results in `rootbeer.lock`. Review and commit that file alongside `init.lua`.
+Exact versions in your configuration stay fixed, though packaging details may change.
 
-`rb update` updates Rootbeer itself. `rb apply --update` updates your packages.
-
-| Command | Behavior |
-| ------- | -------- |
-| `rb apply` | Use saved versions. Update the lock if your package configuration or platform changed. |
-| `rb apply --update` | Fetch current package information and update unpinned packages. Requires internet access. |
-| `rb apply --locked` | Require the lock to match your package configuration and platform. Missing packages may be downloaded. |
-| `rb apply --offline` | Require a matching lock and packages already downloaded on this machine. |
+| Command              | Behavior                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| `rb apply`           | Use saved versions. Update the lock if your package configuration or platform changed.                 |
+| `rb apply --update`  | Fetch current package information and refresh unpinned packages. Requires internet access.             |
+| `rb apply --locked`  | Require the lock to match your configuration and platform. Missing package contents may be downloaded. |
+| `rb apply --offline` | Require a matching lock and packages already installed or cached on this machine.                      |
 
 If you [selected a custom index](/guide/package-sources#use-another-index),
-updates keep using it until you change that selection in your configuration.
+updates keep using that snapshot until you change its URL and checksum.
 
-## Install without internet access
+`rb update` updates Rootbeer itself. It does not update your packages, and a
+matching package lock remains usable after upgrading `rb`.
 
-```sh
-rb apply --offline
-```
+## What offline mode covers
 
-The packages must already be installed or cached on this machine. A lockfile
-alone is not enough. If a package is missing, Rootbeer reports an error instead
-of downloading it. Cached packages remain usable even if the original download
-is no longer available.
+A saved lock alone is not enough: package contents must already be on the machine.
+Rootbeer reports missing contents instead of downloading them. Cached contents can
+remain usable even if the original download is no longer available.
 
-This flag controls package downloads; commands and other integrations in your
-configuration may still need internet access.
+Offline mode controls package resolution and downloads. A tool launched by
+`rb run`, or a command in your Lua configuration, can still access the network.
 
 ## Using multiple machines
 
-A lockfile currently covers one platform. Applying your configuration on a
-different platform rewrites the lock for that machine; `--locked` refuses this
-change. [Profiles](/guide/profiles) can choose different packages per machine,
-but cannot make one lockfile cover multiple platforms.
+A configuration lockfile covers one platform. Applying on a different platform
+rewrites it for that machine; `--locked` refuses this change.
+[Profiles](/guide/profiles) can choose packages per machine, but cannot make one
+lockfile cover multiple platforms.
 
-If you need to preserve locks for different platforms, keep a checkout and its
-lock on each machine, and avoid overwriting one platform's lock with another's.
-
-Updating Rootbeer itself does not require replacing a matching lockfile.
+Keep a checkout and lock on each machine when you need to preserve different
+platforms' resolutions. Standalone `rb run` and `rb use` caches are local to each
+machine; resolving there selects that platform's packages.

@@ -10,8 +10,23 @@ export interface CatalogPackage {
   homepage: string;
   default_version: string;
   default_versions?: Record<string, string>;
-  versions: Record<string, { systems: string[] }>;
+  versions: Record<string, CatalogRecipe>;
 }
+
+export interface CatalogRecipe {
+  systems: string[];
+  bins: string[];
+  revision: number;
+  source?: string;
+  build?: { url: string };
+}
+
+export const platforms = [
+  { id: "aarch64-macos", label: "macOS · Apple silicon", short: "macOS ARM64" },
+  { id: "x86_64-macos", label: "macOS · Intel", short: "macOS Intel" },
+  { id: "aarch64-linux", label: "Linux · ARM64", short: "Linux ARM64" },
+  { id: "x86_64-linux", label: "Linux · x86-64", short: "Linux x86-64" },
+];
 
 export interface Catalog {
   packages: CatalogPackage[];
@@ -110,12 +125,23 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
     }
     pkg.homepage = https(pkg.homepage);
     for (const [version, recipe] of Object.entries(pkg.versions)) {
+      if (
+        !Array.isArray(recipe.systems) ||
+        !recipe.systems.every((system) => platforms.some(({ id }) => id === system)) ||
+        !Array.isArray(recipe.bins) ||
+        !recipe.bins.length ||
+        !recipe.bins.every((bin) => typeof bin === "string" && /^[a-z0-9][a-z0-9+._-]*$/.test(bin))
+      ) {
+        throw new Error("The catalog contains invalid package commands or platforms.");
+      }
       const published = index.artifacts[`${pkg.name}@${version}`] ?? {};
       recipe.systems = recipe.systems.filter((system) => Object.hasOwn(published, system));
     }
   }
   return {
-    packages: packages.sort((a, b) => a.name.localeCompare(b.name)),
+    packages: packages
+      .filter((pkg) => availableVersions(pkg).length)
+      .sort((a, b) => a.name.localeCompare(b.name)),
     snapshotUrl: manifest.index.url,
   };
 }
@@ -126,7 +152,109 @@ export function defaultVersion(pkg: CatalogPackage, system: string): string {
 
 export function matchesPackage(pkg: CatalogPackage, query: string, system: string): boolean {
   const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const text = [pkg.name, ...pkg.aliases, pkg.description].join(" ").toLowerCase();
+  const versions = availableVersions(pkg, system);
+  const text = [
+    pkg.name,
+    ...pkg.aliases,
+    pkg.description,
+    ...versions.flatMap((version) => pkg.versions[version].bins),
+  ]
+    .join(" ")
+    .toLowerCase();
   if (!terms.every((term) => text.includes(term))) return false;
-  return !system || Boolean(pkg.versions[defaultVersion(pkg, system)]?.systems.includes(system));
+  return versions.length > 0;
+}
+
+const natural = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+
+export function compareVersions(a: string, b: string): number {
+  const calendar = /^\d{4}-\d{1,2}(?:-\d{1,2})?$/;
+  if (calendar.test(a) && calendar.test(b)) return natural.compare(a, b);
+  const pattern = /^v?(\d+(?:\.\d+)*)(?:-([\da-z.-]+))?(?:\+[\da-z.-]+)?$/i;
+  const left = a.match(pattern);
+  const right = b.match(pattern);
+  if (!left || !right) return natural.compare(a, b);
+
+  const coreA = left[1].split(".");
+  const coreB = right[1].split(".");
+  for (let i = 0; i < Math.max(coreA.length, coreB.length); i++) {
+    const order = natural.compare(coreA[i] ?? "0", coreB[i] ?? "0");
+    if (order) return order;
+  }
+  if (!left[2] || !right[2]) return Number(!left[2]) - Number(!right[2]);
+
+  const preA = left[2].split(".");
+  const preB = right[2].split(".");
+  for (let i = 0; i < Math.max(preA.length, preB.length); i++) {
+    if (preA[i] === undefined) return -1;
+    if (preB[i] === undefined) return 1;
+    const numericA = /^\d+$/.test(preA[i]);
+    const numericB = /^\d+$/.test(preB[i]);
+    if (numericA !== numericB) return numericA ? -1 : 1;
+    const order = numericA
+      ? natural.compare(preA[i], preB[i])
+      : preA[i] < preB[i]
+        ? -1
+        : Number(preA[i] > preB[i]);
+    if (order) return order;
+  }
+  return 0;
+}
+
+export function availableVersions(pkg: CatalogPackage, system = ""): string[] {
+  return Object.keys(pkg.versions)
+    .filter((version) =>
+      system
+        ? pkg.versions[version].systems.includes(system)
+        : pkg.versions[version].systems.length > 0,
+    )
+    .sort((a, b) => compareVersions(b, a) || b.localeCompare(a));
+}
+
+export function preferredVersion(pkg: CatalogPackage, system = ""): string {
+  const versions = availableVersions(pkg, system);
+  const preferred = defaultVersion(pkg, system);
+  return versions.includes(preferred) ? preferred : (versions[0] ?? "");
+}
+
+export function searchPackages(
+  packages: CatalogPackage[],
+  query: string,
+  system = "",
+): CatalogPackage[] {
+  const term = query.trim().toLowerCase();
+  const rank = (pkg: CatalogPackage) => {
+    if (pkg.name === term) return 0;
+    if (pkg.aliases.includes(term)) return 1;
+    if (availableVersions(pkg, system).some((version) => pkg.versions[version].bins.includes(term)))
+      return 2;
+    if (pkg.name.startsWith(term)) return 3;
+    return 4;
+  };
+  return packages
+    .filter((pkg) => matchesPackage(pkg, query, system))
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+
+export function primaryCommand(pkg: CatalogPackage, version: string): string {
+  const bins = pkg.versions[version]?.bins ?? [];
+  return bins.includes(pkg.name) ? pkg.name : bins.length === 1 ? bins[0] : "";
+}
+
+export function packageCommand(
+  pkg: CatalogPackage,
+  mode: "run" | "use" | "config",
+  version = "",
+  bin = "",
+): string {
+  const request = version ? `${pkg.name}@${version}` : pkg.name;
+  if (mode === "config")
+    return `local rb = require("rootbeer")\n\nrb.package(${JSON.stringify(request)})`;
+  const quote = (value: string) =>
+    /^[a-zA-Z0-9._+@:/-]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
+  const selectedBin =
+    mode === "run" && bin && bin !== primaryCommand(pkg, version || pkg.default_version)
+      ? ` --bin ${quote(bin)}`
+      : "";
+  return `rb ${mode}${selectedBin} ${quote(request)}`;
 }
