@@ -20,10 +20,10 @@ const pkg: CatalogPackage = {
   description: "Search local files",
   homepage: "https://example.org/project",
   default_version: "2.0",
-  default_versions: { "x86_64-macos": "1.0" },
+  default_versions: { "aarch64-linux": "1.0" },
   versions: {
     "2.0": { systems: ["aarch64-macos"], bins: ["test-tool", "test-scan"], revision: 1 },
-    "1.0": { systems: ["x86_64-macos"], bins: ["test-tool"], revision: 2 },
+    "1.0": { systems: ["aarch64-linux"], bins: ["test-tool"], revision: 2 },
   },
 };
 
@@ -31,7 +31,7 @@ function fixture(
   packages: CatalogPackage[] = [pkg],
   artifacts: Record<string, Record<string, unknown>> = {
     "test-tool@2.0": { "aarch64-macos": {} },
-    "test-tool@1.0": { "x86_64-macos": {} },
+    "test-tool@1.0": { "aarch64-linux": {} },
   },
   schema = 1,
 ) {
@@ -83,7 +83,7 @@ test("loads a signed published snapshot and preserves platform defaults", async 
   await withResponses(data, async () => {
     const result = await loadCatalog(data.source);
     assert.equal(result.packages.length, 1);
-    assert.equal(defaultVersion(result.packages[0], "x86_64-macos"), "1.0");
+    assert.equal(defaultVersion(result.packages[0], "aarch64-linux"), "1.0");
     assert.equal(defaultVersion(result.packages[0], "aarch64-macos"), "2.0");
   });
 });
@@ -118,7 +118,7 @@ test("rejects changed snapshot bytes", async () => {
 });
 
 test("searches aliases and descriptions while respecting platform availability", () => {
-  assert(matchesPackage(pkg, "TEST-ALIAS", "x86_64-macos"));
+  assert(matchesPackage(pkg, "TEST-ALIAS", "aarch64-linux"));
   assert(matchesPackage(pkg, "local search", "aarch64-macos"));
   assert(!matchesPackage(pkg, "missing", ""));
   assert(!matchesPackage(pkg, "", "x86_64-linux"));
@@ -150,13 +150,13 @@ test("orders numeric releases, prereleases, and calendar tags newest first", () 
 
 test("keeps a lower platform default while sorting available releases newest first", () => {
   const entry = structuredClone(pkg);
-  entry.versions["2.0"].systems.push("x86_64-macos");
+  entry.versions["2.0"].systems.push("aarch64-linux");
   entry.versions["3.0"] = { systems: ["aarch64-macos"], bins: ["test-tool"], revision: 1 };
   entry.versions["4.0"] = { systems: [], bins: ["future-tool"], revision: 1 };
 
   assert.deepEqual(availableVersions(entry), ["3.0", "2.0", "1.0"]);
-  assert.deepEqual(availableVersions(entry, "x86_64-macos"), ["2.0", "1.0"]);
-  assert.equal(preferredVersion(entry, "x86_64-macos"), "1.0");
+  assert.deepEqual(availableVersions(entry, "aarch64-linux"), ["2.0", "1.0"]);
+  assert.equal(preferredVersion(entry, "aarch64-linux"), "1.0");
   assert.equal(preferredVersion(entry), "2.0");
   assert.deepEqual(availableVersions(entry, "x86_64-linux"), []);
   assert.equal(preferredVersion(entry, "x86_64-linux"), "");
@@ -166,7 +166,7 @@ test("falls back to the newest published version when the default is unavailable
   const entry = structuredClone(pkg);
   entry.versions["2.0"].systems = [];
   assert.equal(preferredVersion(entry), "1.0");
-  assert(matchesPackage(entry, "test-tool", "x86_64-macos"));
+  assert(matchesPackage(entry, "test-tool", "aarch64-linux"));
 });
 
 test("filters unpublished systems, versions, and packages from the signed catalog", async () => {
@@ -217,7 +217,7 @@ test("does not advertise commands absent from published versions on the selected
   entry.versions["3.0"] = { systems: [], bins: ["future-tool"], revision: 1 };
 
   assert(!matchesPackage(entry, "future-tool", ""));
-  assert(!matchesPackage(entry, "test-scan", "x86_64-macos"));
+  assert(!matchesPackage(entry, "test-scan", "aarch64-linux"));
   assert(matchesPackage(entry, "test-scan", "aarch64-macos"));
 });
 

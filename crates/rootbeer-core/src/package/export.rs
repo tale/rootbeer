@@ -66,10 +66,26 @@ pub fn export_catalog_shard(
     cache_options: Option<&ExportCache>,
     shard: Option<ExportShard>,
 ) -> Result<(), String> {
+    export_catalog_with_workers(catalog, registry, output, jobs, 2, cache_options, shard)
+}
+
+/// Qualifies recipes concurrently, limiting source compilation to one package at a time.
+pub fn export_catalog_with_workers(
+    catalog: &PackageCatalog,
+    registry: &str,
+    output: &Path,
+    jobs: usize,
+    workers: usize,
+    cache_options: Option<&ExportCache>,
+    shard: Option<ExportShard>,
+) -> Result<(), String> {
     catalog.validate()?;
     super::ghcr::validate_repository(registry)?;
     if jobs == 0 || jobs > 64 {
         return Err("jobs must be between 1 and 64".into());
+    }
+    if workers == 0 || workers > 64 {
+        return Err("workers must be between 1 and 64".into());
     }
     if let Some(shard) = shard {
         shard.validate()?;
@@ -85,209 +101,124 @@ pub fn export_catalog_shard(
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),
     };
-    let mut backend = None;
+    let mut tasks = Vec::new();
+    let mut failures = BTreeMap::new();
     for package in catalog.packages.values() {
         for (version, recipe) in &package.versions {
-            if !recipe.systems.contains(&context.system) {
-                continue;
-            }
             let key = format!("{}@{version}", package.name);
-            if shard.is_some_and(|shard| !shard.contains(&key)) {
+            if !recipe.systems.contains(&context.system)
+                || shard.is_some_and(|shard| !shard.contains(&key))
+            {
                 continue;
             }
-            let fingerprint = cache
-                .as_ref()
-                .map(|cache| cache.fingerprint(catalog, &key, &context.system, registry))
-                .transpose()?;
-            if let (Some(cache), Some(fingerprint)) = (&cache, &fingerprint) {
-                if let Some(artifact) =
-                    cache.restore(fingerprint, &key, &context.system, recipe, &destination)?
-                {
+            let cached = (|| {
+                let fingerprint = cache
+                    .as_ref()
+                    .map(|cache| cache.fingerprint(catalog, &key, &context.system, registry))
+                    .transpose()?;
+                let restored = match (&cache, &fingerprint) {
+                    (Some(cache), Some(fingerprint)) => {
+                        cache.restore(fingerprint, &key, &context.system, recipe, &destination)?
+                    }
+                    _ => None,
+                };
+                Ok::<_, String>((fingerprint, restored))
+            })();
+            match cached {
+                Ok((_, Some(artifact))) => {
                     index
                         .artifacts
                         .entry(key.clone())
                         .or_default()
                         .insert(context.system.clone(), artifact);
                     eprintln!("REUSE {key} on {}", context.system);
-                    continue;
+                }
+                Ok((fingerprint, None)) => tasks.push((
+                    recipe.build.is_some(),
+                    (key, &package.name, recipe, fingerprint),
+                )),
+                Err(error) => {
+                    failures.insert(key, error);
                 }
             }
-            if backend.is_none() {
-                let mut inputs = if catalog.packages.values().any(|package| {
-                    package.versions.values().any(|recipe| {
-                        recipe
-                            .source
-                            .as_deref()
-                            .is_some_and(|source| source.starts_with("aqua:"))
-                            && recipe.systems.contains(&context.system)
-                    })
-                }) {
-                    PackageResolverInputs::resolve_current().map_err(|e| e.to_string())?
-                } else {
-                    PackageResolverInputs::default()
-                };
-                inputs.resolvers.insert(
-                    "rootbeer".into(),
-                    ResolverInput::Catalog {
-                        sha256: catalog.sha256(),
-                    },
-                );
-                let mut resolver = super::backend_stack(&inputs).with_implicit_resolver("rootbeer");
-                resolver.push(
-                    super::catalog::CatalogResolver::new(&inputs, super::backend_stack(&inputs))
-                        .with_catalog(catalog),
-                );
-                backend = Some((inputs, resolver));
-            }
-            let (inputs, resolver) = backend.as_ref().unwrap();
-            let work = tempfile::tempdir_in(staging.path()).map_err(|e| e.to_string())?;
-            let root = work.path();
-            let downloads = root.join("downloads");
-            let realizer = PackageRealizer::with_dirs(
-                Store::new(root.join("store")),
-                &downloads,
-                root.join("install"),
-            );
-            let (mut artifact, receipt_bytes, proof) = if recipe.build.is_some() {
-                let build = root.join("build");
-                build_package(catalog, &key, &build, jobs)?;
-                let (_, artifact, receipt) = super::bundle::prepare_artifact(
-                    catalog,
-                    &build.join("receipt.json"),
-                    &format!("ghcr://{registry}/{}", package.name),
-                    &destination,
-                    &realizer,
-                )?;
-                let LockedSource::Url { sha256, .. } = &artifact.package.source else {
-                    unreachable!()
-                };
-                let archive = destination
-                    .join("artifacts")
-                    .join(format!("{sha256}.tar.gz"));
-                DownloadCache::new(&downloads)
-                    .materialize(&format!("file://{}", archive.display()), Some(sha256))
-                    .map_err(|e| e.to_string())?;
-                (artifact, receipt, None)
-            } else {
-                let resolution = resolver
-                    .resolve_package(&PackageRequest::parse(&key), &context)
-                    .map_err(|e| e.to_string())?;
-                let mut locked = resolution.package;
-                let realized = realizer.realize(&locked).map_err(|e| e.to_string())?;
-                locked.output_sha256 = Some(realized.store_entry.output_sha256);
-                let upstream = recipe.mirror.then(|| locked.clone());
-                if recipe.mirror {
-                    mirror_package(
-                        &mut locked,
-                        &realized.store_entry.path,
-                        registry,
-                        &destination,
-                        &downloads,
-                    )?;
-                }
-                let mut receipt = serde_json::json!({"schema": 1, "catalog_sha256": catalog.sha256(), "revision": recipe.revision, "system": context.system, "package": locked, "proof": resolution.proof, "resolver_inputs": inputs});
-                if let Some(upstream) = upstream {
-                    receipt["upstream_package"] =
-                        serde_json::to_value(upstream).map_err(|e| e.to_string())?;
-                }
-                let receipt = serde_json::to_vec(&receipt).map_err(|e| e.to_string())?;
-                let artifact = PublishedArtifact {
-                    revision: recipe.revision,
-                    receipt_sha256: hash_bytes(&receipt),
-                    package: locked,
-                };
-                (artifact, receipt, Some(resolution.proof))
-            };
-            let realized = realizer
-                .realize(&artifact.package)
-                .map_err(|e| e.to_string())?;
-            artifact.package.output_sha256 = Some(realized.store_entry.output_sha256.clone());
-            let profile = root.join("profile");
-            fs::create_dir(&profile).map_err(|e| e.to_string())?;
-            for (name, path) in &realized.bins {
-                symlink(path, profile.join(name)).map_err(|e| e.to_string())?;
-            }
-            let environment = BTreeMap::from([
-                ("HOME", root.to_string_lossy().into_owned()),
-                ("PATH", format!("{}:/usr/bin:/bin", profile.display())),
-                ("LC_ALL", "C".into()),
-                ("TMPDIR", root.to_string_lossy().into_owned()),
-            ]);
-            for check in &recipe.checks {
-                let mut command = check.clone();
-                command[0] = profile.join(&command[0]).to_string_lossy().into_owned();
-                super::build::run(
-                    &command,
-                    root,
-                    &environment,
-                    &root.join("checks.log"),
-                    Duration::from_secs(30),
-                )?;
-            }
-            let entry = match proof {
-                Some(proof) => PackageLockEntry::resolved(
-                    &PackageRequest::parse(&key),
-                    &context,
-                    PackageResolution::new(artifact.package.clone(), proof),
-                )
-                .map_err(|e| e.to_string())?,
-                None => PackageLockEntry::locked(artifact.package.clone()),
-            };
-            let lock = RootbeerLock::from_package_entries([entry]).map_err(|e| e.to_string())?;
-            let path = root.join("rootbeer.lock");
-            lock.write(&path).map_err(|e| e.to_string())?;
-            let locked_bytes = fs::read(&path).map_err(|e| e.to_string())?;
-            fs::remove_dir_all(&profile).map_err(|e| e.to_string())?;
-            fs::remove_dir_all(root.join("store")).map_err(|e| e.to_string())?;
-            let replay = RootbeerLock::read(&path).map_err(|e| e.to_string())?;
-            let offline = PackageRealizer::with_dirs_and_offline(
-                Store::new(root.join("store")),
-                &downloads,
-                root.join("offline"),
-                true,
-            );
-            let restored = offline
-                .realize(replay.packages.values().next().unwrap())
-                .map_err(|e| e.to_string())?;
-            fs::create_dir(&profile).map_err(|e| e.to_string())?;
-            for (name, path) in &restored.bins {
-                symlink(path, profile.join(name)).map_err(|e| e.to_string())?;
-            }
-            if fs::read(&path).map_err(|e| e.to_string())? != locked_bytes
-                || recipe.bins.iter().any(|bin| !profile.join(bin).is_file())
-            {
-                return Err(format!(
-                    "{key}: offline replay changed the lock or lost commands"
-                ));
-            }
-            let receipt_sha256 = hash_bytes(&receipt_bytes);
-            if receipt_sha256 != artifact.receipt_sha256 {
-                return Err(format!("{key}: receipt digest mismatch"));
-            }
-            fs::write(
-                destination
-                    .join("receipts")
-                    .join(format!("{receipt_sha256}.json")),
-                receipt_bytes,
-            )
-            .map_err(|e| e.to_string())?;
-            if let (Some(cache), Some(fingerprint)) = (&cache, &fingerprint) {
-                cache.save(
-                    fingerprint,
-                    &key,
-                    &context.system,
-                    recipe,
-                    &artifact,
-                    &destination,
-                )?;
-            }
-            index
-                .artifacts
-                .entry(key.clone())
-                .or_default()
-                .insert(context.system.clone(), artifact);
-            eprintln!("PASS {key} on {}", context.system);
         }
+    }
+    if !tasks.is_empty() {
+        let inputs = export_inputs(catalog, tasks.iter().map(|(_, (key, ..))| key.as_str()))?;
+        let environment = ExportEnvironment {
+            catalog,
+            registry,
+            jobs,
+            inputs: &inputs,
+        };
+        run_workers(
+            tasks,
+            workers,
+            |(key, name, recipe, fingerprint)| {
+                let result = (|| {
+                    let work = tempfile::tempdir_in(staging.path()).map_err(|e| e.to_string())?;
+                    let bundle = work.path().join("bundle");
+                    publication::create_bundle(&bundle)?;
+                    let artifact =
+                        export_recipe(&environment, &key, name, recipe, work.path(), &bundle)?;
+                    Ok::<_, String>((work, artifact))
+                })();
+                (key, recipe, fingerprint, result)
+            },
+            |(key, recipe, fingerprint, result)| {
+                let result = result.and_then(|(work, artifact)| {
+                    let bundle = work.path().join("bundle");
+                    for (directory, extension) in [("receipts", ".json"), ("artifacts", ".tar.gz")]
+                    {
+                        for entry in
+                            fs::read_dir(bundle.join(directory)).map_err(|e| e.to_string())?
+                        {
+                            publication::copy_verified(
+                                &entry.map_err(|e| e.to_string())?.path(),
+                                &destination.join(directory),
+                                extension,
+                            )?;
+                        }
+                    }
+                    if let (Some(cache), Some(fingerprint)) = (&cache, &fingerprint) {
+                        cache.save(
+                            fingerprint,
+                            &key,
+                            &context.system,
+                            recipe,
+                            &artifact,
+                            &bundle,
+                        )?;
+                    }
+                    Ok(artifact)
+                });
+                match result {
+                    Ok(artifact) => {
+                        index
+                            .artifacts
+                            .entry(key.clone())
+                            .or_default()
+                            .insert(context.system.clone(), artifact);
+                        eprintln!("PASS {key} on {}", context.system);
+                    }
+                    Err(error) => {
+                        eprintln!("FAIL {key} on {}: {error}", context.system);
+                        failures.insert(key, error);
+                    }
+                }
+            },
+        );
+    }
+    if !failures.is_empty() {
+        return Err(format!(
+            "{} package(s) failed:\n{}",
+            failures.len(),
+            failures
+                .into_iter()
+                .map(|(key, error)| format!("{key}: {error}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
     }
     if shard.is_some() {
         index.validate_fragment()?;
@@ -296,6 +227,261 @@ pub fn export_catalog_shard(
     }
     publication::write_json(&destination.join("index.json"), &index)?;
     fs::rename(destination, output).map_err(|e| e.to_string())
+}
+
+fn export_inputs<'a>(
+    catalog: &PackageCatalog,
+    keys: impl Iterator<Item = &'a str>,
+) -> Result<PackageResolverInputs, String> {
+    let mut pending: Vec<String> = keys.map(str::to_owned).collect();
+    let mut visited = std::collections::BTreeSet::new();
+    let mut needs_aqua = false;
+    while let Some(key) = pending.pop() {
+        if !visited.insert(key.clone()) {
+            continue;
+        }
+        let request = PackageRequest::parse(&key);
+        let package = catalog
+            .find(&request.name)
+            .ok_or_else(|| format!("unknown package {key}"))?;
+        let recipe = package
+            .versions
+            .get(
+                request
+                    .version
+                    .as_deref()
+                    .ok_or("export dependencies must use exact versions")?,
+            )
+            .ok_or_else(|| format!("unknown recipe {key}"))?;
+        needs_aqua |= recipe
+            .source
+            .as_deref()
+            .is_some_and(|source| source.starts_with("aqua:"));
+        if let Some(build) = &recipe.build {
+            pending.extend(build.dependencies.iter().cloned());
+        }
+    }
+    let mut inputs = if needs_aqua {
+        PackageResolverInputs::resolve_current().map_err(|e| e.to_string())?
+    } else {
+        PackageResolverInputs::default()
+    };
+    inputs.resolvers.insert(
+        "rootbeer".into(),
+        ResolverInput::Catalog {
+            sha256: catalog.sha256(),
+        },
+    );
+    Ok(inputs)
+}
+
+fn run_workers<T: Send, R: Send>(
+    tasks: Vec<(bool, T)>,
+    workers: usize,
+    operation: impl Fn(T) -> R + Sync,
+    mut complete: impl FnMut(R),
+) {
+    use std::sync::{mpsc, Condvar, Mutex};
+    let queue = Mutex::new((std::collections::VecDeque::from(tasks), false));
+    let ready = Condvar::new();
+    let (sender, receiver) = mpsc::sync_channel(workers);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let (queue, ready, operation, sender) = (&queue, &ready, &operation, sender.clone());
+            scope.spawn(move || loop {
+                let (is_source, task) = {
+                    let mut state = queue.lock().unwrap();
+                    loop {
+                        if state.0.is_empty() {
+                            return;
+                        }
+                        if let Some(position) = state
+                            .0
+                            .iter()
+                            .position(|(is_source, _)| !is_source || !state.1)
+                        {
+                            let task = state.0.remove(position).unwrap();
+                            state.1 |= task.0;
+                            break task;
+                        }
+                        state = ready.wait(state).unwrap();
+                    }
+                };
+                let result = operation(task);
+                if is_source {
+                    queue.lock().unwrap().1 = false;
+                    ready.notify_all();
+                }
+                if sender.send(result).is_err() {
+                    return;
+                }
+            });
+        }
+        drop(sender);
+        for result in receiver {
+            complete(result);
+        }
+    });
+}
+
+#[derive(Clone, Copy)]
+struct ExportEnvironment<'a> {
+    catalog: &'a PackageCatalog,
+    registry: &'a str,
+    jobs: usize,
+    inputs: &'a PackageResolverInputs,
+}
+
+fn export_recipe(
+    environment: &ExportEnvironment<'_>,
+    key: &str,
+    package_name: &str,
+    recipe: &CatalogRecipe,
+    root: &Path,
+    destination: &Path,
+) -> Result<PublishedArtifact, String> {
+    let ExportEnvironment {
+        catalog,
+        registry,
+        jobs,
+        inputs,
+    } = *environment;
+    let context = ResolveContext::current();
+    let mut resolver = super::backend_stack(inputs).with_implicit_resolver("rootbeer");
+    resolver.push(
+        super::catalog::CatalogResolver::new(inputs, super::backend_stack(inputs))
+            .with_catalog(catalog),
+    );
+    let downloads = root.join("downloads");
+    let realizer = PackageRealizer::with_dirs(
+        Store::new(root.join("store")),
+        &downloads,
+        root.join("install"),
+    );
+    let (mut artifact, receipt_bytes, proof) = if recipe.build.is_some() {
+        let build = root.join("build");
+        super::build::build_package_with_inputs(catalog, key, &build, jobs, inputs)?;
+        let (_, artifact, receipt) = super::bundle::prepare_artifact(
+            catalog,
+            &build.join("receipt.json"),
+            &format!("ghcr://{registry}/{}", package_name),
+            destination,
+            &realizer,
+        )?;
+        let LockedSource::Url { sha256, .. } = &artifact.package.source else {
+            unreachable!()
+        };
+        let archive = destination
+            .join("artifacts")
+            .join(format!("{sha256}.tar.gz"));
+        DownloadCache::new(&downloads)
+            .materialize(&format!("file://{}", archive.display()), Some(sha256))
+            .map_err(|e| e.to_string())?;
+        (artifact, receipt, None)
+    } else {
+        let resolution = resolver
+            .resolve_package(&PackageRequest::parse(key), &context)
+            .map_err(|e| e.to_string())?;
+        let mut locked = resolution.package;
+        let realized = realizer.realize(&locked).map_err(|e| e.to_string())?;
+        locked.output_sha256 = Some(realized.store_entry.output_sha256);
+        let upstream = recipe.mirror.then(|| locked.clone());
+        if recipe.mirror {
+            mirror_package(
+                &mut locked,
+                &realized.store_entry.path,
+                registry,
+                destination,
+                &downloads,
+            )?;
+        }
+        let mut receipt = serde_json::json!({"schema": 1, "catalog_sha256": catalog.sha256(), "revision": recipe.revision, "system": context.system, "package": locked, "proof": resolution.proof, "resolver_inputs": inputs});
+        if let Some(upstream) = upstream {
+            receipt["upstream_package"] =
+                serde_json::to_value(upstream).map_err(|e| e.to_string())?;
+        }
+        let receipt = serde_json::to_vec(&receipt).map_err(|e| e.to_string())?;
+        let artifact = PublishedArtifact {
+            revision: recipe.revision,
+            receipt_sha256: hash_bytes(&receipt),
+            package: locked,
+        };
+        (artifact, receipt, Some(resolution.proof))
+    };
+    let realized = realizer
+        .realize(&artifact.package)
+        .map_err(|e| e.to_string())?;
+    artifact.package.output_sha256 = Some(realized.store_entry.output_sha256.clone());
+    let profile = root.join("profile");
+    fs::create_dir(&profile).map_err(|e| e.to_string())?;
+    for (name, path) in &realized.bins {
+        symlink(path, profile.join(name)).map_err(|e| e.to_string())?;
+    }
+    let environment = BTreeMap::from([
+        ("HOME", root.to_string_lossy().into_owned()),
+        ("PATH", format!("{}:/usr/bin:/bin", profile.display())),
+        ("LC_ALL", "C".into()),
+        ("TMPDIR", root.to_string_lossy().into_owned()),
+    ]);
+    for check in &recipe.checks {
+        let mut command = check.clone();
+        command[0] = profile.join(&command[0]).to_string_lossy().into_owned();
+        super::build::run(
+            &command,
+            root,
+            &environment,
+            &root.join("checks.log"),
+            Duration::from_secs(30),
+        )?;
+    }
+    let entry = match proof {
+        Some(proof) => PackageLockEntry::resolved(
+            &PackageRequest::parse(key),
+            &context,
+            PackageResolution::new(artifact.package.clone(), proof),
+        )
+        .map_err(|e| e.to_string())?,
+        None => PackageLockEntry::locked(artifact.package.clone()),
+    };
+    let lock = RootbeerLock::from_package_entries([entry]).map_err(|e| e.to_string())?;
+    let path = root.join("rootbeer.lock");
+    lock.write(&path).map_err(|e| e.to_string())?;
+    let locked_bytes = fs::read(&path).map_err(|e| e.to_string())?;
+    fs::remove_dir_all(&profile).map_err(|e| e.to_string())?;
+    fs::remove_dir_all(root.join("store")).map_err(|e| e.to_string())?;
+    let replay = RootbeerLock::read(&path).map_err(|e| e.to_string())?;
+    let offline = PackageRealizer::with_dirs_and_offline(
+        Store::new(root.join("store")),
+        &downloads,
+        root.join("offline"),
+        true,
+    );
+    let restored = offline
+        .realize(replay.packages.values().next().unwrap())
+        .map_err(|e| e.to_string())?;
+    fs::create_dir(&profile).map_err(|e| e.to_string())?;
+    for (name, path) in &restored.bins {
+        symlink(path, profile.join(name)).map_err(|e| e.to_string())?;
+    }
+    if fs::read(&path).map_err(|e| e.to_string())? != locked_bytes
+        || recipe.bins.iter().any(|bin| !profile.join(bin).is_file())
+    {
+        return Err(format!(
+            "{key}: offline replay changed the lock or lost commands"
+        ));
+    }
+    let receipt_sha256 = hash_bytes(&receipt_bytes);
+    if receipt_sha256 != artifact.receipt_sha256 {
+        return Err(format!("{key}: receipt digest mismatch"));
+    }
+    fs::write(
+        destination
+            .join("receipts")
+            .join(format!("{receipt_sha256}.json")),
+        receipt_bytes,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(artifact)
 }
 
 fn mirror_package(
@@ -329,6 +515,123 @@ fn mirror_package(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workers_skip_waiting_sources_and_bound_parallelism() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc, Mutex,
+        };
+        let (sender, receiver) = mpsc::channel();
+        let receiver = Mutex::new(receiver);
+        let active = AtomicUsize::new(0);
+        let source_active = AtomicUsize::new(0);
+        let maximum = AtomicUsize::new(0);
+        let mut completed = Vec::new();
+        run_workers(
+            vec![(true, 0), (true, 1), (false, 2), (false, 3)],
+            2,
+            |task| {
+                let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+                maximum.fetch_max(count, Ordering::SeqCst);
+                if task < 2 {
+                    assert_eq!(source_active.fetch_add(1, Ordering::SeqCst), 0);
+                }
+                if task == 0 {
+                    receiver
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                }
+                if task == 2 {
+                    sender.send(()).unwrap();
+                }
+                if task < 2 {
+                    source_active.fetch_sub(1, Ordering::SeqCst);
+                }
+                active.fetch_sub(1, Ordering::SeqCst);
+                task
+            },
+            |task| completed.push(task),
+        );
+        completed.sort();
+        assert_eq!(completed, [0, 1, 2, 3]);
+        assert_eq!(maximum.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn failed_recipes_do_not_discard_other_verified_results() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir_all(source.join("fixture")).unwrap();
+        fs::write(
+            source.join("fixture/configure"),
+            r#"#!/bin/sh
+cat > Makefile <<'MAKE'
+all:
+	true
+check:
+	true
+install:
+	mkdir -p $(DESTDIR)/bin
+	printf '#!/bin/sh\n[ "$$1" != "--fail" ]\n' > $(DESTDIR)/bin/xz
+	chmod +x $(DESTDIR)/bin/xz
+MAKE
+"#,
+        )
+        .unwrap();
+        let archive = root.path().join("source.tar.gz");
+        super::super::build::pack(&source, &archive).unwrap();
+        let downloaded = DownloadCache::default()
+            .materialize(&format!("file://{}", archive.display()), None)
+            .unwrap();
+        let mut catalog = PackageCatalog::embedded().unwrap().clone();
+        catalog.packages.retain(|name, _| name == "xz");
+        let package = catalog.packages.get_mut("xz").unwrap();
+        let recipe = package.versions.get_mut(&package.default_version).unwrap();
+        recipe.systems = vec![ResolveContext::current().system];
+        recipe.bins = vec!["xz".into()];
+        recipe.checks = vec![vec!["xz".into(), "--version".into()]];
+        let build = recipe.build.as_mut().unwrap();
+        build.url = "https://example.invalid/rootbeer-worker-test.tar.gz".into();
+        build.sha256 = downloaded.sha256;
+        build.strip_prefix = "fixture".into();
+        build.configure.clear();
+        build.dependencies.clear();
+        let mut failed = package.clone();
+        failed.name = "a-failure".into();
+        failed
+            .versions
+            .get_mut(&failed.default_version)
+            .unwrap()
+            .checks = vec![vec!["xz".into(), "--fail".into()]];
+        catalog.packages.insert(failed.name.clone(), failed);
+        let options = ExportCache {
+            directory: root.path().join("cache"),
+            context: "worker-test".into(),
+            recheck: false,
+        };
+        let output = root.path().join("output");
+        let error = export_catalog_with_workers(
+            &catalog,
+            "owner/index",
+            &output,
+            1,
+            2,
+            Some(&options),
+            None,
+        )
+        .unwrap_err();
+        assert!(error.contains("a-failure@"), "{error}");
+        assert!(!output.exists());
+        assert_eq!(fs::read_dir(&options.directory).unwrap().count(), 1);
+        catalog.packages.remove("a-failure");
+        export_catalog_with_workers(&catalog, "owner/index", &output, 1, 2, Some(&options), None)
+            .unwrap();
+        let index: ArtifactIndex = publication::read_json(&output.join("index.json")).unwrap();
+        assert_eq!(index.artifacts.len(), 1);
+    }
 
     #[test]
     fn mirrored_archives_replay_without_upstream_and_preserve_resources() {

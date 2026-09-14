@@ -56,9 +56,12 @@ enum Command {
         registry: String,
         #[arg(long)]
         output: PathBuf,
-        /// Compiler jobs per source build; use shards to qualify packages in parallel
+        /// Compiler jobs for the single active source build
         #[arg(short, long, default_value_t = 2)]
         jobs: usize,
+        /// Maximum packages to qualify concurrently
+        #[arg(long, default_value_t = 2)]
+        workers: usize,
         /// Zero-based partition to export
         #[arg(long, requires = "shards")]
         shard: Option<usize>,
@@ -203,7 +206,10 @@ fn execute(args: Args) -> Result<(), String> {
                     writeln!(output, "  {system}: {version}").map_err(|e| e.to_string())?;
                 }
             }
-            eprintln!("Generated {} candidate packages; run package export on each declared platform before publication.", candidates.packages.len());
+            eprintln!(
+                "Generated {} candidate packages; run package export on each declared platform before publication.",
+                candidates.packages.len()
+            );
         }
         Command::List => {
             let system = rootbeer_core::package::ResolveContext::current().system;
@@ -289,6 +295,7 @@ fn execute(args: Args) -> Result<(), String> {
             registry,
             output,
             jobs,
+            workers,
             shard,
             shards,
             cache,
@@ -300,11 +307,12 @@ fn execute(args: Args) -> Result<(), String> {
                 context: cache_context.unwrap(),
                 recheck,
             });
-            rootbeer_core::package::export_catalog_shard(
+            rootbeer_core::package::export_catalog_with_workers(
                 catalog,
                 &registry,
                 &output,
                 jobs,
+                workers,
                 cache.as_ref(),
                 shard.map(|index| rootbeer_core::package::ExportShard {
                     index,

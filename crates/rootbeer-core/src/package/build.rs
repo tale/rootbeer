@@ -232,6 +232,37 @@ pub fn build_package(
     output: &Path,
     jobs: usize,
 ) -> Result<BuildArtifact, String> {
+    let order = build_order(catalog, request, jobs)?;
+    let mut inputs = if needs_aqua(catalog, &order) {
+        PackageResolverInputs::resolve_current().map_err(|e| e.to_string())?
+    } else {
+        PackageResolverInputs::default()
+    };
+    inputs.resolvers.insert(
+        "rootbeer".into(),
+        super::ResolverInput::Catalog {
+            sha256: catalog.sha256(),
+        },
+    );
+    build_package_with_inputs(catalog, request, output, jobs, &inputs)
+}
+
+fn needs_aqua(catalog: &PackageCatalog, order: &[String]) -> bool {
+    order.iter().any(|key| {
+        find_recipe(catalog, key).is_ok_and(|(_, _, recipe)| {
+            recipe
+                .source
+                .as_deref()
+                .is_some_and(|source| source.starts_with("aqua:"))
+        })
+    })
+}
+
+fn build_order(
+    catalog: &PackageCatalog,
+    request: &str,
+    jobs: usize,
+) -> Result<Vec<String>, String> {
     catalog.validate()?;
     if jobs == 0 || jobs > 64 {
         return Err("jobs must be between 1 and 64".into());
@@ -255,37 +286,55 @@ pub fn build_package(
             return Err(format!("{key} has no recipe for {}", system.system));
         }
     }
+    Ok(order)
+}
+
+pub(super) fn build_package_with_inputs(
+    catalog: &PackageCatalog,
+    request: &str,
+    output: &Path,
+    jobs: usize,
+    inputs: &PackageResolverInputs,
+) -> Result<BuildArtifact, String> {
+    build_package_in_cache(
+        catalog,
+        request,
+        output,
+        jobs,
+        inputs,
+        &crate::state_dir().join("downloads"),
+    )
+}
+
+fn build_package_in_cache(
+    catalog: &PackageCatalog,
+    request: &str,
+    output: &Path,
+    jobs: usize,
+    inputs: &PackageResolverInputs,
+    downloads_root: &Path,
+) -> Result<BuildArtifact, String> {
+    let order = build_order(catalog, request, jobs)?;
+    if inputs.catalog_sha256() != Some(catalog.sha256().as_str()) {
+        return Err("source build resolver inputs must pin the current catalog".into());
+    }
+    if needs_aqua(catalog, &order) && inputs.aqua_registry().is_none() {
+        return Err("source build dependencies require a pinned Aqua registry".into());
+    }
+    let system = ResolveContext::current();
     fs::create_dir(output)
         .map_err(|e| format!("cannot create build output {}: {e}", output.display()))?;
     let output = output.canonicalize().map_err(|e| e.to_string())?;
     let workspace = tempfile::tempdir_in(&output).map_err(|e| e.to_string())?;
     let realizer = PackageRealizer::with_dirs(
         Store::new(workspace.path().join("store")),
-        crate::state_dir().join("downloads"),
+        downloads_root,
         workspace.path().join("install"),
     );
-    let downloads = DownloadCache::new(crate::state_dir().join("downloads"));
-    let mut inputs = if order.iter().any(|key| {
-        find_recipe(catalog, key).is_ok_and(|(_, _, recipe)| {
-            recipe
-                .source
-                .as_deref()
-                .is_some_and(|source| source.starts_with("aqua:"))
-        })
-    }) {
-        PackageResolverInputs::resolve_current().map_err(|e| e.to_string())?
-    } else {
-        PackageResolverInputs::default()
-    };
-    inputs.resolvers.insert(
-        "rootbeer".into(),
-        super::ResolverInput::Catalog {
-            sha256: catalog.sha256(),
-        },
-    );
-    let mut backends = super::backend_stack(&inputs).with_implicit_resolver("rootbeer");
+    let downloads = DownloadCache::new(downloads_root);
+    let mut backends = super::backend_stack(inputs).with_implicit_resolver("rootbeer");
     backends.push(
-        super::catalog::CatalogResolver::new(&inputs, super::backend_stack(&inputs))
+        super::catalog::CatalogResolver::new(inputs, super::backend_stack(inputs))
             .with_catalog(catalog),
     );
     let mut resolved = BTreeMap::<String, LockedPackage>::new();
@@ -788,6 +837,48 @@ mod tests {
     }
 
     #[test]
+    fn pinned_build_rejects_missing_catalog_and_dependency_inputs_before_io() {
+        let mut catalog = source_catalog();
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("output");
+        let mut inputs = PackageResolverInputs::default();
+        assert!(
+            build_package_with_inputs(&catalog, "xz", &output, 1, &inputs)
+                .unwrap_err()
+                .contains("pin the current catalog")
+        );
+        let mut dependency = catalog.packages["xz"].clone();
+        dependency.name = "tool".into();
+        let recipe = dependency.versions.get_mut("5.8.3").unwrap();
+        recipe.build = None;
+        recipe.source = Some("aqua:fixture/tool@5.8.3".into());
+        catalog.packages.insert("tool".into(), dependency);
+        catalog
+            .packages
+            .get_mut("xz")
+            .unwrap()
+            .versions
+            .get_mut("5.8.3")
+            .unwrap()
+            .build
+            .as_mut()
+            .unwrap()
+            .dependencies = vec!["tool@5.8.3".into()];
+        inputs.resolvers.insert(
+            "rootbeer".into(),
+            super::super::ResolverInput::Catalog {
+                sha256: catalog.sha256(),
+            },
+        );
+        assert!(
+            build_package_with_inputs(&catalog, "xz", &output, 1, &inputs)
+                .unwrap_err()
+                .contains("pinned Aqua registry")
+        );
+        assert!(!output.exists());
+    }
+
+    #[test]
     fn source_packages_do_not_implicitly_compile_during_resolution() {
         let error = super::super::default_resolver_stack()
             .resolve(&PackageRequest::parse("xz"), &ResolveContext::current())
@@ -943,5 +1034,75 @@ EOF
         assert!(fs::read_to_string(output.join("build.log"))
             .unwrap()
             .contains("source-patch-applied\n"));
+
+        fs::create_dir(source.join("tool")).unwrap();
+        let configure = fs::read_to_string(source.join("fixture/configure"))
+            .unwrap()
+            .replace("fixture-tool\n", "")
+            .replace("fixture", "fixture-tool");
+        fs::write(source.join("tool/configure"), configure).unwrap();
+        pack(&source, &archive).unwrap();
+        let cached = downloads
+            .materialize(&format!("file://{}", archive.display()), None)
+            .unwrap();
+        let mut dependency = catalog.packages["fixture"].clone();
+        dependency.name = "tool".into();
+        let recipe = dependency.versions.get_mut("5.8.3").unwrap();
+        recipe.bins = vec!["fixture-tool".into()];
+        recipe.checks = vec![vec!["fixture-tool".into()]];
+        let build = recipe.build.as_mut().unwrap();
+        build.sha256 = cached.sha256;
+        build.strip_prefix = "tool".into();
+        build.patches.clear();
+        catalog.packages.insert("tool".into(), dependency);
+        catalog
+            .packages
+            .get_mut("fixture")
+            .unwrap()
+            .versions
+            .get_mut("5.8.3")
+            .unwrap()
+            .build
+            .as_mut()
+            .unwrap()
+            .dependencies = vec!["tool@5.8.3".into()];
+        let inputs = PackageResolverInputs {
+            resolvers: BTreeMap::from([
+                (
+                    "rootbeer".into(),
+                    super::super::ResolverInput::Catalog {
+                        sha256: catalog.sha256(),
+                    },
+                ),
+                (
+                    "aqua".into(),
+                    super::super::ResolverInput::AquaRegistry(super::super::GitHubRepositoryPin {
+                        owner: "fixture".into(),
+                        repo: "pinned-registry".into(),
+                        rev: "a".repeat(40),
+                    }),
+                ),
+            ]),
+        };
+        let output = directory.path().join("build-with-inputs");
+        let artifact = build_package_in_cache(
+            &catalog,
+            "fixture",
+            &output,
+            1,
+            &inputs,
+            &directory.path().join("downloads"),
+        )
+        .unwrap();
+        assert_eq!(artifact.resolver_inputs, inputs);
+        let dependency: BuildArtifact = serde_json::from_slice(
+            &fs::read(output.join("dependency-tool@5.8.3/receipt.json")).unwrap(),
+        )
+        .unwrap();
+        let receipt: BuildArtifact =
+            serde_json::from_slice(&fs::read(output.join("receipt.json")).unwrap()).unwrap();
+        assert_eq!(receipt.resolver_inputs, inputs);
+        assert_eq!(dependency.resolver_inputs, inputs);
+        assert_eq!(receipt.dependencies["tool@5.8.3"], dependency.package);
     }
 }

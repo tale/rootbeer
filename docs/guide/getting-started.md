@@ -15,9 +15,7 @@ export PATH="$HOME/.rootbeer/bin:$PATH"
 This installs the current nightly `rb` to `~/.rootbeer/bin` and makes it available
 in this shell.
 
-Intel macOS is retired and receives no further Rootbeer or package catalog updates.
-The installer still provides its [frozen final binary](/nightly/rb-macos-x86_64.zip).
-Existing Intel installations can continue using their frozen catalog.
+Intel macOS is unsupported.
 
 ## Run a package
 

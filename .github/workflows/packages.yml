@@ -42,6 +42,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: stable
+      - name: Identify Rust toolchain
+        id: rust
+        run: echo "version=$(rustc --version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: package-cargo-${{ matrix.runner }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            package-cargo-${{ matrix.runner }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-
       - name: Test package engine
         run: cargo test --locked --workspace --quiet
       - name: Build standalone rb
@@ -49,6 +62,6 @@ jobs:
       - name: Validate catalog
         run: target/release/rb package check
       - name: Install and check package commands
-        run: target/release/rb package --catalog packages export --registry tale/rootbeer-index --output result
+        run: target/release/rb package --catalog packages export --registry tale/rootbeer-index --output result --workers 2 --jobs 2
         env:
           GITHUB_TOKEN: ${{ github.token }}

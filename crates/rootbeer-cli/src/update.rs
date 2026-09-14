@@ -104,7 +104,6 @@ fn extract_rb_from_zip(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error
 fn detect_platform() -> &'static str {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => "macos-aarch64",
-        ("macos", "x86_64") => "macos-x86_64",
         ("linux", "x86_64") => "linux-x86_64",
         ("linux", "aarch64") => "linux-aarch64",
         (os, arch) => {

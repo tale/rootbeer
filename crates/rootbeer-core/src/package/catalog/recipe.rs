@@ -131,7 +131,7 @@ pub(in crate::package) fn validate_systems(declared: &[String]) -> Result<(), St
         || systems.iter().any(|system| {
             !matches!(
                 system.as_str(),
-                "aarch64-macos" | "x86_64-macos" | "aarch64-linux" | "x86_64-linux"
+                "aarch64-macos" | "aarch64-linux" | "x86_64-linux"
             )
         })
     {
@@ -182,13 +182,18 @@ pub(in crate::package) fn validate_bin_paths(
 mod tests {
     use super::*;
 
+    #[test]
+    fn rejects_retired_intel_macos() {
+        assert!(validate_systems(&["x86_64-macos".into()]).is_err());
+    }
+
     fn recipe() -> CatalogRecipe {
         CatalogRecipe {
             revision: 1,
             source: Some("github:owner/tool@v1".into()),
             build: None,
             assets: BTreeMap::new(),
-            systems: vec!["aarch64-macos".into(), "x86_64-macos".into()],
+            systems: vec!["aarch64-macos".into(), "x86_64-linux".into()],
             bins: vec!["tool".into()],
             bin_paths: BTreeMap::new(),
             checksums: BTreeMap::new(),
@@ -247,7 +252,7 @@ mod tests {
             .contains("each declared platform"));
         recipe
             .checksums
-            .insert("x86_64-macos".into(), "b".repeat(64));
+            .insert("x86_64-linux".into(), "b".repeat(64));
         recipe.validate().unwrap();
         for digest in [
             "A".repeat(64),
@@ -255,10 +260,10 @@ mod tests {
             "a".repeat(63),
             "a".repeat(65),
         ] {
-            recipe.checksums.insert("x86_64-macos".into(), digest);
+            recipe.checksums.insert("x86_64-linux".into(), digest);
             assert!(recipe.validate().is_err());
         }
-        recipe.checksums.remove("x86_64-macos");
+        recipe.checksums.remove("x86_64-linux");
         recipe
             .checksums
             .insert("aarch64-linux".into(), "b".repeat(64));
@@ -266,7 +271,7 @@ mod tests {
         recipe.checksums.remove("aarch64-linux");
         recipe
             .checksums
-            .insert("x86_64-macos".into(), "b".repeat(64));
+            .insert("x86_64-linux".into(), "b".repeat(64));
         recipe.mirror = false;
         recipe.validate().unwrap();
         recipe.source = Some("aqua:owner/tool@1".into());

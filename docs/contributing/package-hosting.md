@@ -47,18 +47,10 @@ cannot parse these additions, even when selecting an unrelated package.
 The active catalog uses `--manifest current.json`. CLI and website builds use
 `https://tale.github.io/rootbeer-index/current.json` with the existing public key.
 
-Retain the frozen channels for older builds:
-
-| Manifest         | Contents                                               |
-| ---------------- | ------------------------------------------------------ |
-| `current.json`   | Active catalog for macOS ARM64 and Linux ARM64/x86-64. |
-| `latest-v2.json` | Final Intel-compatible schema 2 catalog.               |
-| `latest.json`    | Earlier schema 1 catalog for pre-schema-2 clients.     |
-
-The final Intel client remains at `/nightly/rb-macos-x86_64.zip`. Deployment copies
-that verified release forward without rebuilding it. Retain the frozen manifests,
-immutable snapshots, receipts, and package archives so old clients and locks work.
-Older clients on active platforms need `rb update` to move to the current channel.
+Intel macOS is unsupported. Publish the three supported platforms through
+`current.json`; retired Intel binaries and catalog channels are no longer served.
+Retain immutable snapshots, receipts, and package archives for existing locks.
+Clients on supported platforms should run `rb update` to use the current channel.
 
 Manifest signatures keep the same format; rollback sequences are checked per
 endpoint. Publish and verify a new channel before switching the public CLI and

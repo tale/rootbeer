@@ -34,7 +34,8 @@ pub use bundle::{bundle_artifacts, ArtifactIndex, PublishedArtifact};
 pub use catalog::{CatalogPackage, CatalogProof, CatalogRecipe, PackageCatalog};
 pub use definition::{PackageDefinition, PackageUpstream};
 pub use export::{
-    export_catalog, export_catalog_shard, export_catalog_with_cache, ExportCache, ExportShard,
+    export_catalog, export_catalog_shard, export_catalog_with_cache, export_catalog_with_workers,
+    ExportCache, ExportShard,
 };
 pub use github::GitHubResolver;
 pub use index::{PackageIndexPin, PublishedIndexProof};

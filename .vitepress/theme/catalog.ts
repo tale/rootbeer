@@ -126,9 +126,7 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
     for (const [version, recipe] of Object.entries(pkg.versions)) {
       if (
         !Array.isArray(recipe.systems) ||
-        !recipe.systems.every(
-          (system) => system === "x86_64-macos" || platforms.some(({ id }) => id === system),
-        ) ||
+        !recipe.systems.every((system) => platforms.some(({ id }) => id === system)) ||
         !Array.isArray(recipe.bins) ||
         !recipe.bins.length ||
         !recipe.bins.every((bin) => typeof bin === "string" && /^[a-z0-9][a-z0-9+._-]*$/.test(bin))

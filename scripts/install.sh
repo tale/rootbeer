@@ -41,7 +41,8 @@ main() {
 
 	platform=$(detect_platform)
 	if [ "$platform" = "macos-x86_64" ]; then
-		echo "Intel macOS is unsupported. Installing the frozen final binary; no future Rootbeer or catalog updates are available." >&2
+		echo "error: Intel macOS is unsupported; use Apple silicon macOS or Linux ARM64/x86-64." >&2
+		exit 1
 	fi
 
 	artifact="rb-${platform}.zip"

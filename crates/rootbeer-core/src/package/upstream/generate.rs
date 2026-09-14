@@ -297,7 +297,7 @@ mod tests {
     fn upstream() -> GitHubUpstream {
         let mut upstream =
             GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
-        upstream.systems = vec!["aarch64-macos".into(), "x86_64-macos".into()];
+        upstream.systems = vec!["aarch64-macos".into(), "x86_64-linux".into()];
         upstream
     }
 
@@ -309,14 +309,14 @@ mod tests {
                 "v1.9.0",
                 &[
                     "tool-v1.9.0-darwin-arm64.tar.gz",
-                    "tool-v1.9.0-darwin-amd64.tar.gz",
+                    "tool-v1.9.0-linux-amd64.tar.gz",
                 ],
             ),
         ];
         let mut upstream = upstream();
         let package = package(&mut upstream, &repository(), &releases, None).unwrap();
         assert_eq!(package.default_version, "1.10.0");
-        assert_eq!(package.default_version_for("x86_64-macos"), "1.9.0");
+        assert_eq!(package.default_version_for("x86_64-linux"), "1.9.0");
         assert_eq!(
             upstream.assets["aarch64-macos"],
             "tool-{tag}-darwin-arm64.tar.gz"
@@ -336,13 +336,13 @@ mod tests {
         let mut upstream = upstream();
         let old_releases = vec![release(
             "v1.0.0",
-            &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
+            &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
         )];
         let old = package(&mut upstream, &repository(), &old_releases, None).unwrap();
         let new_releases = vec![release("v2.0.0", &["tool-darwin-arm64.tar.gz"])];
         let updated = package(&mut upstream, &repository(), &new_releases, Some(&old)).unwrap();
         assert_eq!(updated.default_version, "2.0.0");
-        assert_eq!(updated.default_version_for("x86_64-macos"), "1.0.0");
+        assert_eq!(updated.default_version_for("x86_64-linux"), "1.0.0");
         assert_eq!(
             serde_json::to_value(&updated.versions["1.0.0"]).unwrap(),
             serde_json::to_value(&old.versions["1.0.0"]).unwrap()
@@ -357,7 +357,7 @@ mod tests {
         let mut upstream = upstream();
         let old_releases = vec![release(
             "v1",
-            &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
+            &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
         )];
         let old = package(&mut upstream, &repository(), &old_releases, None).unwrap();
         upstream.systems = vec!["aarch64-macos".into()];
@@ -373,7 +373,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(updated.default_version_for("aarch64-macos"), "2");
-        assert_eq!(updated.default_version_for("x86_64-macos"), "1");
+        assert_eq!(updated.default_version_for("x86_64-linux"), "1");
         assert_eq!(updated.description, "Updated description");
     }
 
@@ -383,7 +383,7 @@ mod tests {
             release("v2", &["tool-darwin-arm64.tar.gz", "tool-darwin-arm64.zip"]),
             release(
                 "v1",
-                &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
+                &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
             ),
         ];
         assert!(package(&mut upstream(), &repository(), &releases, None)
@@ -412,7 +412,7 @@ mod tests {
             release("tool-legacy-build", &[]),
             release(
                 "tool-2",
-                &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
+                &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
             ),
         ];
         let mut upstream = upstream();
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn exact_prefix_disambiguates_tags_but_duplicate_versions_still_fail() {
-        let assets = ["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"];
+        let assets = ["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"];
         let releases = vec![release("v2", &assets), release("2", &assets)];
         let mut upstream = upstream();
         assert!(package(&mut upstream, &repository(), &releases, None)
@@ -458,7 +458,7 @@ mod tests {
     fn preserves_pinned_contracts_and_rejects_missing_targets() {
         let releases = vec![release(
             "v1",
-            &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
+            &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
         )];
         let mut upstream = upstream();
         let previous = package(&mut upstream, &repository(), &releases, None).unwrap();
@@ -473,7 +473,7 @@ mod tests {
             &repository(),
             &[release(
                 "v2",
-                &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
+                &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
             )],
             Some(&previous),
         )
@@ -483,7 +483,7 @@ mod tests {
         let releases = vec![release("v1", &["tool-darwin-arm64.tar.gz"])];
         assert!(package(&mut upstream, &repository(), &releases, None)
             .unwrap_err()
-            .contains("no supported release for x86_64-macos"));
+            .contains("no supported release for x86_64-linux"));
     }
 
     #[test]
@@ -494,7 +494,7 @@ mod tests {
             .insert("tool".into(), "Tool.app/Contents/MacOS/client".into());
         let releases = vec![release(
             "v1.0.0",
-            &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
+            &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
         )];
         let generated = package(&mut upstream, &repository(), &releases, None).unwrap();
         assert_eq!(generated.versions["1.0.0"].bin_paths, upstream.bin_paths);

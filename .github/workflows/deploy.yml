@@ -170,14 +170,6 @@ jobs:
           curl -fsSL "https://rootbeer.tale.me/nightly/source-sha.txt" \
             -o ".vitepress/dist/nightly/source-sha.txt" || true
 
-      - name: Preserve final Intel macOS binary
-        run: |
-          mkdir -p .vitepress/dist/nightly
-          curl --fail --location --silent --show-error --retry 5 \
-            https://rootbeer.tale.me/nightly/rb-macos-x86_64.zip \
-            -o .vitepress/dist/nightly/rb-macos-x86_64.zip
-          unzip -t .vitepress/dist/nightly/rb-macos-x86_64.zip
-
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

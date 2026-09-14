@@ -143,7 +143,7 @@ impl CompactPackage {
             if source.assets.keys().any(|system| {
                 !matches!(
                     system.as_str(),
-                    "aarch64-linux" | "x86_64-linux" | "aarch64-macos" | "x86_64-macos"
+                    "aarch64-linux" | "x86_64-linux" | "aarch64-macos"
                 )
             }) {
                 return Err("source assets reference an unsupported platform".into());
@@ -549,17 +549,17 @@ mod tests {
 
     const BINARY: &str = r#"return {
         name = "tool", description = "Tool", homepage = "https://example.com",
-        default_version = "2", default_versions = { ["x86_64-macos"] = "1" },
+        default_version = "2", default_versions = { ["x86_64-linux"] = "1" },
         source = {
             github = "owner/tool", tag = "tool-{version}", repository_id = 42,
             assets = {
                 ["aarch64-macos"] = "tool-{tag}-arm64.tar.gz",
-                ["x86_64-macos"] = "tool-{version}-intel.tar.gz",
+                ["x86_64-linux"] = "tool-{version}-linux.tar.gz",
             },
         },
         bins = { "tool" }, checks = { { "tool", "--version" } },
         versions = {
-            ["1"] = { revision = 2, tag = "legacy-1", assets = { ["x86_64-macos"] = "old.zip" } },
+            ["1"] = { revision = 2, tag = "legacy-1", assets = { ["x86_64-linux"] = "old.zip" } },
             ["2"] = { systems = { "aarch64-macos" } },
         },
     }"#;
@@ -579,11 +579,11 @@ mod tests {
         let new = &definition.package.versions["2"];
         assert_eq!(old.source.as_deref(), Some("github:owner/tool@legacy-1"));
         assert_eq!(old.assets["aarch64-macos"], "tool-legacy-1-arm64.tar.gz");
-        assert_eq!(old.assets["x86_64-macos"], "old.zip");
+        assert_eq!(old.assets["x86_64-linux"], "old.zip");
         assert_eq!(old.revision, 2);
         assert_eq!(new.revision, 1);
         assert_eq!(new.assets.len(), 1);
-        assert_eq!(definition.package.default_version_for("x86_64-macos"), "1");
+        assert_eq!(definition.package.default_version_for("x86_64-linux"), "1");
         let upstream = definition.github_upstream().unwrap().unwrap();
         assert_eq!(upstream.tag_prefix.as_deref(), Some("tool-"));
         assert_eq!(upstream.systems.len(), 2);
@@ -707,17 +707,17 @@ mod tests {
     #[test]
     fn discovery_retains_shared_targets_not_yet_available_in_pinned_versions() {
         let source = BINARY.replace(
-            "revision = 2, tag = \"legacy-1\", assets = { [\"x86_64-macos\"] = \"old.zip\" }",
+            "revision = 2, tag = \"legacy-1\", assets = { [\"x86_64-linux\"] = \"old.zip\" }",
             "revision = 2, tag = \"legacy-1\", systems = { \"aarch64-macos\" }",
         );
-        let source = source.replace("default_versions = { [\"x86_64-macos\"] = \"1\" },", "");
+        let source = source.replace("default_versions = { [\"x86_64-linux\"] = \"1\" },", "");
         let definition = PackageDefinition::from_lua(&source).unwrap();
         let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
         for definition in [definition, repeated] {
             assert_eq!(definition.package.versions["1"].systems, ["aarch64-macos"]);
             assert_eq!(
                 definition.github_upstream().unwrap().unwrap().systems,
-                ["aarch64-macos", "x86_64-macos"]
+                ["aarch64-macos", "x86_64-linux"]
             );
         }
     }
@@ -827,10 +827,10 @@ mod tests {
             BINARY.replace("systems = { \"aarch64-macos\" }", "systems = {}"),
             BINARY.replace("revision = 2", "revision = 0"),
             BINARY.replace(
-                "[\"x86_64-macos\"] = \"old.zip\"",
                 "[\"x86_64-linux\"] = \"old.zip\"",
+                "[\"aarch64-linux\"] = \"old.zip\"",
             ),
-            BINARY.replace("tool-{version}-intel.tar.gz", "tool-{unknown}-intel.tar.gz"),
+            BINARY.replace("tool-{version}-linux.tar.gz", "tool-{unknown}-linux.tar.gz"),
             BINARY.replace(
                 "[\"2\"] = { systems",
                 "[\"2\"] = { sha256 = \"bad\", systems",
