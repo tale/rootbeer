@@ -88,11 +88,11 @@ test("loads a signed published snapshot and preserves platform defaults", async 
   });
 });
 
-test("accepts signed schemas 2 and 3 and rejects unsupported schemas", async () => {
-  for (const schema of [2, 3, 4]) {
+test("accepts signed schemas 2 through 4 and rejects unsupported schemas", async () => {
+  for (const schema of [2, 3, 4, 5]) {
     const data = fixture(undefined, undefined, schema);
     await withResponses(data, async () => {
-      if (schema < 4) {
+      if (schema < 5) {
         assert.equal((await loadCatalog(data.source)).packages[0].name, pkg.name);
         return;
       }
@@ -107,6 +107,24 @@ test("rejects a changed manifest signature", async () => {
   await withResponses(data, async () => {
     await assert.rejects(loadCatalog(data.source), /signature could not be verified/);
   });
+});
+
+test("accepts library-only recipes in schema 4 and rejects unsafe archive paths", async () => {
+  for (const library of ["lib/libtest.a", "lib/../escape.a", "/lib/test.a", "lib/test.so"]) {
+    const entry = structuredClone(pkg);
+    for (const recipe of Object.values(entry.versions)) {
+      recipe.bins = [];
+      recipe.build = { url: "https://example.org/source.tar.gz", libraries: [library] };
+    }
+    const data = fixture([entry], undefined, 4);
+    await withResponses(data, async () => {
+      if (library === "lib/libtest.a") {
+        assert.equal((await loadCatalog(data.source)).packages[0].versions["1.0"].bins.length, 0);
+      } else {
+        await assert.rejects(loadCatalog(data.source));
+      }
+    });
+  }
 });
 
 test("rejects changed snapshot bytes", async () => {

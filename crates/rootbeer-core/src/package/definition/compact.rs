@@ -85,6 +85,10 @@ struct BuildTemplate {
     patches: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     dependencies: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    libraries: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    steps: Option<crate::package::BuildSteps>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -789,6 +793,8 @@ mod tests {
                 args: build.args.clone(),
                 patches: build.patches.clone(),
                 dependencies: build.dependencies.clone(),
+                libraries: build.libraries.clone(),
+                steps: build.steps.clone(),
             }),
             systems: Some(recipe.systems.clone()),
             bins: recipe.bins.clone(),

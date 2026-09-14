@@ -19,7 +19,7 @@ export interface CatalogRecipe {
   apps?: Record<string, string>;
   revision: number;
   source?: string;
-  build?: { url: string };
+  build?: { url: string; libraries?: string[] };
 }
 
 export const platforms = [
@@ -106,7 +106,7 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
     throw new Error("The package catalog contents could not be verified.");
   const index = JSON.parse(decoder.decode(snapshot));
   if (
-    ![1, 2, 3].includes(index.schema) ||
+    ![1, 2, 3, 4].includes(index.schema) ||
     index.catalog?.schema !== 1 ||
     !index.catalog.packages ||
     !index.artifacts
@@ -125,11 +125,25 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
     }
     pkg.homepage = https(pkg.homepage);
     for (const [version, recipe] of Object.entries(pkg.versions)) {
+      const libraries = recipe.build?.libraries ?? [];
+      if (
+        !Array.isArray(libraries) ||
+        !libraries.every(
+          (path) =>
+            typeof path === "string" &&
+            /^(lib|lib64)\/.+\.a$/.test(path) &&
+            !/[\\\0]/.test(path) &&
+            path.split("/").every((part) => part && part !== "." && part !== ".."),
+        ) ||
+        (libraries.length > 0 && index.schema < 4)
+      ) {
+        throw new Error("The catalog contains invalid library exports.");
+      }
       if (
         !Array.isArray(recipe.systems) ||
         !recipe.systems.every((system) => platforms.some(({ id }) => id === system)) ||
         !Array.isArray(recipe.bins) ||
-        !recipe.bins.length ||
+        (!recipe.bins.length && !libraries.length) ||
         !recipe.bins.every((bin) => typeof bin === "string" && /^[a-z0-9][a-z0-9+._-]*$/.test(bin))
       ) {
         throw new Error("The catalog contains invalid package commands or platforms.");

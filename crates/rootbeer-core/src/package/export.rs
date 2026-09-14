@@ -411,6 +411,9 @@ fn export_recipe(
     let realized = realizer
         .realize(&artifact.package)
         .map_err(|e| e.to_string())?;
+    if let Some(build) = &recipe.build {
+        super::build::dependencies::validate(&realized.store_entry.path, &build.libraries)?;
+    }
     artifact.package.output_sha256 = Some(realized.store_entry.output_sha256.clone());
     let profile = root.join("profile");
     fs::create_dir(&profile).map_err(|e| e.to_string())?;
@@ -459,6 +462,9 @@ fn export_recipe(
     let restored = offline
         .realize(replay.packages.values().next().unwrap())
         .map_err(|e| e.to_string())?;
+    if let Some(build) = &recipe.build {
+        super::build::dependencies::validate(&restored.store_entry.path, &build.libraries)?;
+    }
     fs::create_dir(&profile).map_err(|e| e.to_string())?;
     for (name, path) in &restored.bins {
         symlink(path, profile.join(name)).map_err(|e| e.to_string())?;

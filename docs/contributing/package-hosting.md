@@ -41,8 +41,10 @@ sequence to compare. The manifest currently has no expiry policy.
 ## Snapshot format versions
 
 Schema 2 snapshots support command-path mappings, pinned mirrors, Zig builds, and
-source patches. Schema 3 adds declared macOS app exports. New clients and package
-search read schemas 1, 2, and 3. Older clients
+source patches. Schema 3 adds declared macOS app exports. Schema 4 adds static
+library exports and command build phases. New clients and package search read
+schemas 1 through 4. Upgrade the publishing engine, clients, and website before
+introducing schema 4 recipes. Older clients
 cannot parse these additions, even when selecting an unrelated package.
 
 The active catalog uses `--manifest current.json`. CLI and website builds use

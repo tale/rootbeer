@@ -92,6 +92,16 @@ impl ArtifactIndex {
 
     pub(super) fn schema_for(catalog: &super::PackageCatalog) -> u32 {
         if catalog.packages.values().any(|package| {
+            package.versions.values().any(|recipe| {
+                recipe.build.as_ref().is_some_and(|build| {
+                    !build.libraries.is_empty()
+                        || matches!(build.backend, super::BuildBackend::Commands)
+                })
+            })
+        }) {
+            return 4;
+        }
+        if catalog.packages.values().any(|package| {
             package
                 .versions
                 .values()
@@ -105,8 +115,13 @@ impl ArtifactIndex {
 
     pub(super) fn validate_fragment(&self) -> Result<(), String> {
         self.catalog.validate()?;
-        if !matches!(self.schema, 1..=3) || self.catalog_sha256 != self.catalog.sha256() {
+        if !matches!(self.schema, 1..=4) || self.catalog_sha256 != self.catalog.sha256() {
             return Err("invalid artifact index schema or catalog digest".into());
+        }
+        if self.schema < 4 && Self::schema_for(&self.catalog) == 4 {
+            return Err(
+                "library dependencies and command builds require artifact index schema 4".into(),
+            );
         }
         if self.schema < 3 && Self::schema_for(&self.catalog) == 3 {
             return Err("application exports require artifact index schema 3".into());
@@ -668,7 +683,7 @@ mod tests {
             index.validate_fragment().unwrap();
         }
 
-        for schema in [0, 4] {
+        for schema in [0, 5] {
             index.schema = schema;
             assert!(index.validate().unwrap_err().contains("schema"));
         }

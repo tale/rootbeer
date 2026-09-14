@@ -261,7 +261,9 @@ onUnmounted(() => {
             <p class="description">{{ pkg.description }}</p>
             <div class="result-facts">
               <span
-                >Commands
+                >{{
+                  pkg.versions[preferredVersion(pkg, system)].bins.length ? "Commands" : "Library"
+                }}
                 <code v-for="bin in pkg.versions[preferredVersion(pkg, system)].bins" :key="bin">{{
                   bin
                 }}</code></span

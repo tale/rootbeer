@@ -89,7 +89,7 @@ from the verified store with `rb run bobrwm --app Bobrwm.app`.
 ### Source builds
 
 Use a shared `build` instead of `source`. It declares the supported `backend`
-(`autotools` or `zig`), archive format, source URL, strip prefix, and exact build
+(`autotools`, `zig`, or `commands`), archive format, source URL, strip prefix, and exact build
 dependencies. Autotools accepts `configure` flags. URL and strip prefix accept `{version}`. Build
 packages must declare `homepage` and `systems` explicitly.
 
@@ -108,6 +108,58 @@ Patch contents are part of the recipe and build receipt. Keep changes narrowly
 focused, such as pinning a git-derived version or replacing a fixed installation
 path with executable-relative lookup. Pin unreleased source archives to a full
 commit and use an exact snapshot version, retaining the original source checksum.
+
+### Library dependencies
+
+Declare static archives in `build.libraries`, for example
+`libraries = { "lib/libssl.a", "lib/libcrypto.a" }`. Library-only packages use
+`bins = {}` and `checks = {}`; their build must still run the upstream test suite.
+Rootbeer validates declared archives before export and after offline reconstruction.
+Archives must be self-contained `.a` files under `lib/` or `lib64/`.
+
+Add exact packages to `build.dependencies`. Rootbeer makes the complete transitive
+dependency set available during the build: commands on `PATH`, headers under
+`include/`, declared archives under `lib/` and `lib64/`, and package metadata from
+`lib/pkgconfig`, `lib64/pkgconfig`, and `share/pkgconfig`. Conflicting exports fail
+the build. Dependency store entries remain unchanged.
+
+The builder supplies `CPPFLAGS`, `LDFLAGS`, `PKG_CONFIG_LIBDIR`, and
+`PKG_CONFIG_SYSROOT_DIR` for the merged dependency prefix. Declare a package
+providing `pkg-config` or `pkgconf` when the project needs that tool. Configure
+flags can use `{dependencies}`, such as `--with-openssl={dependencies}`.
+Metadata should use the installation prefix `/`; `pkg-config` applies the build
+sysroot to header and library flags.
+
+Static dependencies become part of the consuming binary. Shared-library runtime
+dependencies are not resolved by this mechanism. Recipes must select static
+dependencies explicitly and verify the installed program after relocation. The
+host C toolchain and operating-system libraries remain build inputs; this is not
+a complete compiler sysroot.
+
+### Command build phases
+
+Use `backend = "commands"` when a project's build does not fit a preset. Each
+phase contains argument arrays, executed in order from the unpacked source root:
+
+```lua
+steps = {
+    configure = {
+        { "perl", "./Configure", "--prefix=/", "--libdir=lib",
+          "--openssldir=/etc/ssl", "no-shared", "no-module" },
+    },
+    build = { { "make", "-j{jobs}" } },
+    check = { { "make", "test" } },
+    install = { { "make", "DESTDIR={prefix}", "install_sw" } },
+}
+```
+
+`{prefix}` is the isolated staging directory, `{dependencies}` is the dependency
+prefix, and `{jobs}` is the compiler parallelism limit. Build, check, and install
+phases must contain commands; configure may be empty. Arguments are passed
+directly, without shell evaluation. For shell syntax, explicitly invoke `sh` and
+pass paths as positional arguments. Rootbeer applies the same environment,
+logging, time limits, and artifact verification as the presets. Recipe commands
+and upstream build scripts execute trusted code.
 
 ### Expansion and compatibility
 

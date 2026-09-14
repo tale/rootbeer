@@ -30,7 +30,7 @@ pub mod standalone;
 mod upstream;
 
 pub use aqua::AquaResolver;
-pub use build::{build_package, BuildArtifact, BuildBackend, SourceBuild};
+pub use build::{build_package, BuildArtifact, BuildBackend, BuildSteps, SourceBuild};
 pub use bundle::{bundle_artifacts, ArtifactIndex, PublishedArtifact};
 pub use catalog::{CatalogPackage, CatalogProof, CatalogRecipe, PackageCatalog};
 pub use definition::{PackageDefinition, PackageUpstream};

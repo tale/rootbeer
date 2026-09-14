@@ -17,11 +17,16 @@ use super::{
 };
 use crate::store::{hash_file, hash_tree, Store};
 
+pub(super) mod dependencies;
+#[cfg(test)]
+mod libraries_test;
+
 /// Supported source compilation mechanisms.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BuildBackend {
     Autotools,
+    Commands,
     Zig,
 }
 
@@ -46,6 +51,21 @@ pub struct SourceBuild {
     pub patches: Vec<String>,
     #[serde(default)]
     pub dependencies: Vec<String>,
+    /// Static archives exported for other source packages to link against.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub libraries: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<BuildSteps>,
+}
+
+/// Explicit command phases for source projects without a built-in preset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildSteps {
+    pub configure: Vec<Vec<String>>,
+    pub build: Vec<Vec<String>>,
+    pub check: Vec<Vec<String>>,
+    pub install: Vec<Vec<String>>,
 }
 
 fn serialize_archive<S: serde::Serializer>(
@@ -105,6 +125,9 @@ impl SourceBuild {
             BuildBackend::Zig if !self.configure.is_empty() => {
                 return Err("Zig builds use args, not configure".into());
             }
+            BuildBackend::Commands if !self.configure.is_empty() || !self.args.is_empty() => {
+                return Err("command builds use steps, not configure or args".into());
+            }
             BuildBackend::Zig
                 if self
                     .args
@@ -117,8 +140,44 @@ impl SourceBuild {
             }
             _ => {}
         }
+        if matches!(self.backend, BuildBackend::Commands) != self.steps.is_some() {
+            return Err("steps are required only for the commands backend".into());
+        }
+        if let Some(steps) = &self.steps {
+            if steps.build.is_empty() || steps.check.is_empty() || steps.install.is_empty() {
+                return Err("command builds require build, check, and install commands".into());
+            }
+            for command in steps
+                .configure
+                .iter()
+                .chain(&steps.build)
+                .chain(&steps.check)
+                .chain(&steps.install)
+            {
+                if command
+                    .first()
+                    .is_none_or(|program| program.trim().is_empty())
+                    || command.iter().any(|argument| argument.contains('\0'))
+                {
+                    return Err(
+                        "build steps require nonempty command arrays without NUL bytes".into(),
+                    );
+                }
+            }
+        }
         if self.patches.iter().any(|patch| patch.trim().is_empty()) {
             return Err("source patches must not be empty".into());
+        }
+        let mut libraries = BTreeSet::new();
+        for path in &self.libraries {
+            super::realize::validate_relative_path("static library", path)
+                .map_err(|e| e.to_string())?;
+            if !matches!(path.components().next(), Some(Component::Normal(name)) if name == "lib" || name == "lib64")
+                || path.extension().is_none_or(|extension| extension != "a")
+                || !libraries.insert(path)
+            {
+                return Err("libraries must name unique static archives under lib or lib64".into());
+            }
         }
         let mut dependencies = BTreeSet::new();
         for dependency in &self.dependencies {
@@ -339,6 +398,7 @@ fn build_package_in_cache(
     );
     let mut resolved = BTreeMap::<String, LockedPackage>::new();
     let mut dependency_bins = BTreeMap::new();
+    let mut dependency_roots = BTreeMap::<String, PathBuf>::new();
     let mut root_artifact = None;
     for (index, key) in order.iter().enumerate() {
         let (_, _, recipe) = find_recipe(catalog, key)?;
@@ -353,8 +413,18 @@ fn build_package_in_cache(
             if !is_root {
                 fs::create_dir(&destination).map_err(|e| e.to_string())?;
             }
-            let dependencies = build
-                .dependencies
+            let mut dependency_order = Vec::new();
+            let mut visited = BTreeSet::new();
+            for request in &build.dependencies {
+                visit(
+                    catalog,
+                    request,
+                    &mut BTreeSet::new(),
+                    &mut visited,
+                    &mut dependency_order,
+                )?;
+            }
+            let dependencies = dependency_order
                 .iter()
                 .map(|request| {
                     let (package, version, _) = find_recipe(catalog, request)?;
@@ -367,9 +437,21 @@ fn build_package_in_cache(
             for key in dependencies.keys() {
                 let bins: &BTreeMap<String, PathBuf> = &dependency_bins[key];
                 for (name, path) in bins {
+                    if fs::read_link(tools.join(name)).ok().as_ref() == Some(path) {
+                        continue;
+                    }
                     symlink(path, tools.join(name)).map_err(|e| {
                         format!("build dependency command collision for {name}: {e}")
                     })?;
+                }
+                let (_, _, dependency) = find_recipe(catalog, key)?;
+                if let Some(build) = &dependency.build {
+                    dependencies::stage(
+                        &dependency_roots[key],
+                        &build.libraries,
+                        &tools.join(".rootbeer-libraries"),
+                    )
+                    .map_err(|error| format!("{key}: {error}"))?;
                 }
             }
             let mut artifact = compile(
@@ -421,6 +503,7 @@ fn build_package_in_cache(
         let mut locked = locked;
         locked.output_sha256 = Some(realized.store_entry.output_sha256);
         dependency_bins.insert(key.clone(), realized.bins);
+        dependency_roots.insert(key.clone(), realized.store_entry.path);
         resolved.insert(key.clone(), locked);
     }
     root_artifact.ok_or_else(|| "source build produced no artifact".into())
@@ -467,10 +550,12 @@ fn compile(
         ("CONFIG_SHELL", "/bin/sh".into()),
     ]);
     environment.insert("CC", "/usr/bin/cc".into());
+    let dependency_prefix = tools.join(".rootbeer-libraries");
+    dependencies::environment(&dependency_prefix, &mut environment)?;
     let mut toolchain = BTreeMap::new();
     let zig = tools.join("zig");
     let compiler_tools = match build.backend {
-        BuildBackend::Autotools => vec![
+        BuildBackend::Autotools | BuildBackend::Commands => vec![
             ("/usr/bin/cc", "--version"),
             ("make", "--version"),
             ("/usr/bin/uname", "-a"),
@@ -547,7 +632,12 @@ fn compile(
         }
         BuildBackend::Autotools => {
             let mut configure = vec!["/bin/sh".into(), "./configure".into(), "--prefix=/".into()];
-            configure.extend(build.configure.clone());
+            configure.extend(
+                build
+                    .configure
+                    .iter()
+                    .map(|arg| arg.replace("{dependencies}", &dependency_prefix.to_string_lossy())),
+            );
             run(
                 &configure,
                 &source,
@@ -581,6 +671,32 @@ fn compile(
                 Duration::from_secs(1200),
             )?;
         }
+        BuildBackend::Commands => {
+            let steps = build.steps.as_ref().ok_or("missing command build steps")?;
+            for command in steps
+                .configure
+                .iter()
+                .chain(&steps.build)
+                .chain(&steps.check)
+                .chain(&steps.install)
+            {
+                let args = command
+                    .iter()
+                    .map(|arg| {
+                        arg.replace("{prefix}", &prefix.to_string_lossy())
+                            .replace("{dependencies}", &dependency_prefix.to_string_lossy())
+                            .replace("{jobs}", &jobs.to_string())
+                    })
+                    .collect::<Vec<_>>();
+                run(
+                    &args,
+                    &source,
+                    &environment,
+                    &log,
+                    Duration::from_secs(1200),
+                )?;
+            }
+        }
     }
     let bins: BTreeMap<String, PathBuf> = recipe
         .bins
@@ -596,6 +712,7 @@ fn compile(
             return Err(format!("invalid output command {name}"));
         }
     }
+    dependencies::validate(&prefix, &build.libraries)?;
     let artifact_path = output.join("package.tar.gz");
     pack(&prefix, &artifact_path).map_err(|e| e.to_string())?;
     let artifact = BuildArtifact {

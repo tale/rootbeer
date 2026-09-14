@@ -104,7 +104,13 @@ impl CatalogRecipe {
         {
             return Err("assets must name one GitHub release asset per declared system".into());
         }
-        validate_commands(&self.bins, &self.checks)?;
+        let is_library = self
+            .build
+            .as_ref()
+            .is_some_and(|build| !build.libraries.is_empty());
+        if !is_library || !self.bins.is_empty() || !self.checks.is_empty() {
+            validate_commands(&self.bins, &self.checks)?;
+        }
         if (!self.bin_paths.is_empty() || !self.checksums.is_empty() || self.mirror)
             && self
                 .source

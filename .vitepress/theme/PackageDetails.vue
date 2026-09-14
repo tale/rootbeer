@@ -26,6 +26,7 @@ const isInvalidVersion = computed(
   () => Boolean(version.value) && !versions.value.includes(version.value),
 );
 const recipe = computed(() => props.pkg.versions[selectedVersion.value]);
+const isLibrary = computed(() => recipe.value.bins.length === 0);
 const isDefaultAvailable = computed(() =>
   versions.value.includes(defaultVersion(props.pkg, props.system)),
 );
@@ -44,7 +45,11 @@ const command = computed(() =>
   ),
 );
 const snippet = computed(() =>
-  mode.value === "use" ? `${command.value}\neval "$(rb env)"` : command.value,
+  isLibrary.value
+    ? `dependencies = { "${props.pkg.name}@${selectedVersion.value}" }`
+    : mode.value === "use"
+      ? `${command.value}\neval "$(rb env)"`
+      : command.value,
 );
 const recipeUrl = computed(() =>
   props.repositoryUrl ? `${props.repositoryUrl}/blob/main/packages/${props.pkg.name}.lua` : "",
@@ -110,7 +115,7 @@ function chooseCommand(command: string) {
 
     <div class="detail-columns">
       <section class="usage" :aria-label="`Use ${pkg.name}`">
-        <fieldset class="usage-modes">
+        <fieldset v-if="!isLibrary" class="usage-modes">
           <legend>Use this package</legend>
           <label
             v-for="[id, label] in [
@@ -157,7 +162,11 @@ function chooseCommand(command: string) {
             </select>
           </label>
         </div>
-        <p v-if="mode === 'run'" class="usage-note">
+        <p v-if="isLibrary" class="usage-note">
+          Add this dependency to your package recipe's <code>build</code> table. Rootbeer supplies
+          its libraries and headers during the build.
+        </p>
+        <p v-else-if="mode === 'run'" class="usage-note">
           Download and run <code>{{ bin }}</code
           >. No configuration or shell setup required. Pass arguments after <code>--</code>.
         </p>
@@ -175,10 +184,12 @@ function chooseCommand(command: string) {
         </p>
         <div v-else class="command-block">
           <div class="command-bar">
-            <span>{{ mode === "config" ? "init.lua" : "Terminal" }}</span
+            <span>{{
+              isLibrary ? "Package recipe" : mode === "config" ? "init.lua" : "Terminal"
+            }}</span
             ><button
               type="button"
-              :aria-label="`Copy ${mode} instructions for ${pkg.name}`"
+              :aria-label="`Copy ${isLibrary ? 'build dependency' : mode} instructions for ${pkg.name}`"
               @click="copy"
             >
               {{ copied ? "Copied" : "Copy" }}
@@ -187,7 +198,7 @@ function chooseCommand(command: string) {
           <pre><code>{{ snippet }}</code></pre>
         </div>
         <p v-if="copyError" class="usage-note" role="status">{{ copyError }}</p>
-        <p v-if="!isInvalidVersion && isPinned" class="version-note">
+        <p v-if="!isInvalidVersion && (isPinned || isLibrary)" class="version-note">
           Pinned to {{ selectedVersion }}. Updating keeps this version.
         </p>
         <p v-else-if="!isInvalidVersion" class="version-note">
@@ -197,18 +208,22 @@ function chooseCommand(command: string) {
         <a
           class="guide-link"
           :href="
-            mode === 'run'
-              ? '/guide/packages#run-a-tool'
-              : mode === 'use'
-                ? '/guide/packages#set-up-your-shell'
-                : '/guide/packages#declare-tools-in-your-configuration'
+            isLibrary
+              ? '/contributing/packaging#library-dependencies'
+              : mode === 'run'
+                ? '/guide/packages#run-a-tool'
+                : mode === 'use'
+                  ? '/guide/packages#set-up-your-shell'
+                  : '/guide/packages#declare-tools-in-your-configuration'
           "
           >{{
-            mode === "run"
-              ? "More run examples"
-              : mode === "use"
-                ? "Set up new terminals"
-                : "Configuration guide"
+            isLibrary
+              ? "Build with libraries"
+              : mode === "run"
+                ? "More run examples"
+                : mode === "use"
+                  ? "Set up new terminals"
+                  : "Configuration guide"
           }}
           →</a
         >
@@ -216,7 +231,8 @@ function chooseCommand(command: string) {
 
       <section class="metadata" :aria-label="`${pkg.name} package details`">
         <h3>
-          Commands provided <span>{{ selectedVersion }}</span>
+          {{ isLibrary ? "Libraries provided" : "Commands provided" }}
+          <span>{{ selectedVersion }}</span>
         </h3>
         <div class="command-list">
           <button
@@ -229,7 +245,10 @@ function chooseCommand(command: string) {
             <code>{{ name }}</code>
           </button>
         </div>
-        <p v-if="!recipe.bins.includes(pkg.name)" class="metadata-note">
+        <p v-if="recipe.build?.libraries?.length" class="metadata-note">
+          <code v-for="library in recipe.build.libraries" :key="library">{{ library }}</code>
+        </p>
+        <p v-if="recipe.bins.length && !recipe.bins.includes(pkg.name)" class="metadata-note">
           Install as <code>{{ pkg.name }}</code
           >; run it with
           {{ recipe.bins.length === 1 ? "the command above" : "one of these commands" }}.
@@ -243,8 +262,8 @@ function chooseCommand(command: string) {
             <code v-for="name in Object.keys(recipe.apps)" :key="name">{{ name }}</code>
           </p>
           <p class="metadata-note">
-            Installing with <code>rb use</code> or <code>rb apply</code> creates managed
-            links in <code>~/Applications</code>. Existing apps are never overwritten.
+            Installing with <code>rb use</code> or <code>rb apply</code> creates managed links in
+            <code>~/Applications</code>. Existing apps are never overwritten.
           </p>
         </template>
         <h3>Platform defaults</h3>
