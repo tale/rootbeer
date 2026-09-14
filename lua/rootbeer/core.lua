@@ -80,6 +80,7 @@ function rootbeer.exec(cmd, args) end
 --- @field source rootbeer.PackageSource Locked package source.
 --- @field install rootbeer.PackageInstall Package install recipe.
 --- @field bins table<string, string> Binary name → relative path in the installed output tree.
+--- @field apps? table<string, string> macOS application filename → relative .app bundle path. Apply manages links in ~/Applications.
 
 --- @class rootbeer.PackageSource
 --- @field path? string Local directory tree source. The `sha256` is a deterministic tree hash.

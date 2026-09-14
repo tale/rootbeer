@@ -93,7 +93,10 @@ impl GitHubResolver {
                 sha256: source.sha256,
             },
             install,
-            provides: Provides { bins },
+            provides: Provides {
+                apps: Default::default(),
+                bins,
+            },
             output_sha256: None,
         };
         let proof = ResolutionProof::GitRelease(GitReleaseProof {

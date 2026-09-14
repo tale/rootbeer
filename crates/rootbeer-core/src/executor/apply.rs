@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::{self, BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -5,7 +6,7 @@ use std::{fs, os::unix::fs as unix_fs, process, process::Command, thread};
 
 use crate::{
     executor::{ExecutionHandler, ExecutionReport, OpResult},
-    package::{profile as package_profile, PackageRealizer},
+    package::{applications::Applications, profile as package_profile, PackageRealizer},
     plan::WriteSource,
     store::Store,
     Op,
@@ -62,12 +63,23 @@ pub fn apply_with_options(
         PackageRealizer::default()
     };
 
+    #[cfg(test)]
+    let application_root = tempfile::tempdir()?;
+    #[cfg(test)]
+    let applications = Applications::new(
+        application_root.path().join("state"),
+        application_root.path().join("Applications"),
+    );
+    #[cfg(not(test))]
+    let applications = Applications::default();
+
     apply_with_package_realizer(
         ops,
         force,
         handler,
         &package_realizer,
         &package_profile::bin_dir(),
+        &applications,
     )
 }
 
@@ -77,8 +89,10 @@ fn apply_with_package_realizer(
     handler: &mut impl ExecutionHandler,
     package_realizer: &PackageRealizer,
     package_bin_dir: &Path,
+    applications: &Applications,
 ) -> io::Result<ExecutionReport> {
     let mut report = ExecutionReport::default();
+    let mut desired_apps = BTreeMap::new();
 
     for op in ops {
         handler.on_start(op);
@@ -276,6 +290,16 @@ fn apply_with_package_realizer(
 
             Op::RealizePackage { package } => {
                 let realized = package_realizer.realize(package)?;
+                for (name, path) in &realized.apps {
+                    if desired_apps
+                        .insert(name.clone(), path.clone())
+                        .is_some_and(|previous| previous != *path)
+                    {
+                        return Err(io::Error::other(format!(
+                            "packages export conflicting application '{name}'"
+                        )));
+                    }
+                }
                 activate_package_bins(&realized.bins, force, package_bin_dir)?;
                 package_profile::write_env_file_for_bin_dir(package_bin_dir)?;
                 let result = OpResult::PackageRealized {
@@ -296,6 +320,13 @@ fn apply_with_package_realizer(
         }
     }
 
+    if !report
+        .results
+        .iter()
+        .any(|result| matches!(result, OpResult::CommandRan { status, .. } if *status != 0))
+    {
+        applications.synchronize("configuration", &desired_apps)?;
+    }
     Ok(report)
 }
 
@@ -574,6 +605,16 @@ mod tests {
         builder
             .append_data(&mut header, "demo/bin/demo", &body[..])
             .unwrap();
+        for (path, bytes) in [
+            ("demo/Demo.app/Contents/Info.plist", b"<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleExecutable</key><string>demo</string><key>CFBundleIdentifier</key><string>me.tale.rootbeer.fixture</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>".as_slice()),
+            ("demo/Demo.app/Contents/MacOS/demo", body.as_slice()),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append_data(&mut header, path, bytes).unwrap();
+        }
         builder.finish().unwrap();
         builder.into_inner().unwrap().finish().unwrap();
 
@@ -593,6 +634,7 @@ mod tests {
                 strip_prefix: Some(PathBuf::from("demo")),
             },
             provides: Provides {
+                apps: BTreeMap::new(),
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
             output_sha256: None,
@@ -620,6 +662,10 @@ mod tests {
             &mut h,
             &package_realizer,
             &root.path().join("profile/bin"),
+            &Applications::new(
+                root.path().join("app-state"),
+                root.path().join("Applications"),
+            ),
         )
         .unwrap();
 
@@ -642,5 +688,109 @@ mod tests {
         assert!(fs::read_to_string(root.path().join("profile/env.sh"))
             .unwrap()
             .contains("profile/bin"));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn application_links_reconcile_only_after_success_and_preserve_user_owner() {
+        let root = tempfile::tempdir().unwrap();
+        let (_archive_root, archive) = archive_source();
+        let mut package = locked_package(&archive);
+        package.provides.apps = BTreeMap::from([("Demo.app".into(), "Demo.app".into())]);
+        let realizer = PackageRealizer::with_dirs(
+            Store::new(root.path().join("store")),
+            root.path().join("downloads"),
+            root.path().join("tmp"),
+        );
+        let applications = Applications::new(
+            root.path().join("app-state"),
+            root.path().join("Applications"),
+        );
+        let apply = |ops: &[Op]| {
+            apply_with_package_realizer(
+                ops,
+                false,
+                &mut Recorder::default(),
+                &realizer,
+                &root.path().join("profile/bin"),
+                &applications,
+            )
+        };
+        apply(&[Op::RealizePackage {
+            package: package.clone(),
+        }])
+        .unwrap();
+        let link = root.path().join("Applications/Demo.app");
+        let original = fs::read_link(&link).unwrap();
+        let desired = BTreeMap::from([("Demo.app".into(), original.clone())]);
+        applications.synchronize("user", &desired).unwrap();
+        apply(&[]).unwrap();
+        assert_eq!(fs::read_link(&link).unwrap(), original);
+        apply(&[Op::RealizePackage {
+            package: package.clone(),
+        }])
+        .unwrap();
+        applications.synchronize("user", &BTreeMap::new()).unwrap();
+        let failed = Op::Chmod {
+            path: root.path().join("missing"),
+            mode: 0o755,
+        };
+        assert!(apply(&[failed]).is_err());
+        assert_eq!(fs::read_link(&link).unwrap(), original);
+        apply(&[Op::Exec {
+            cmd: "/bin/sh".into(),
+            args: vec!["-c".into(), "exit 7".into()],
+            cwd: root.path().into(),
+        }])
+        .unwrap();
+        assert_eq!(fs::read_link(&link).unwrap(), original);
+        let mut update = package.clone();
+        update.version = "2.0.0".into();
+        apply(&[Op::RealizePackage {
+            package: update.clone(),
+        }])
+        .unwrap();
+        let updated = fs::read_link(&link).unwrap();
+        assert_ne!(updated, original);
+        let error = apply(&[
+            Op::RealizePackage { package },
+            Op::RealizePackage { package: update },
+        ])
+        .unwrap_err();
+        assert!(error.to_string().contains("conflicting application"));
+        assert_eq!(fs::read_link(&link).unwrap(), updated);
+        apply(&[]).unwrap();
+        assert!(!link.is_symlink());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn application_links_do_not_overwrite_unowned_paths_even_with_force() {
+        let root = tempfile::tempdir().unwrap();
+        let (_archive_root, archive) = archive_source();
+        let mut package = locked_package(&archive);
+        package.provides.apps = BTreeMap::from([("Demo.app".into(), "Demo.app".into())]);
+        let realizer = PackageRealizer::with_dirs(
+            Store::new(root.path().join("store")),
+            root.path().join("downloads"),
+            root.path().join("tmp"),
+        );
+        let directory = root.path().join("Applications");
+        fs::create_dir_all(directory.join("Demo.app")).unwrap();
+        fs::write(directory.join("Demo.app/user-file"), "preserve").unwrap();
+        let applications = Applications::new(root.path().join("app-state"), directory.clone());
+        assert!(apply_with_package_realizer(
+            &[Op::RealizePackage { package }],
+            true,
+            &mut Recorder::default(),
+            &realizer,
+            &root.path().join("profile/bin"),
+            &applications
+        )
+        .is_err());
+        assert_eq!(
+            fs::read_to_string(directory.join("Demo.app/user-file")).unwrap(),
+            "preserve"
+        );
     }
 }

@@ -96,7 +96,7 @@ pub fn export_catalog_with_workers(
     let context = ResolveContext::current();
     let cache = cache_options.map(cache::Cache::new).transpose()?;
     let mut index = ArtifactIndex {
-        schema: 2,
+        schema: ArtifactIndex::schema_for(catalog),
         catalog: catalog.clone(),
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),
@@ -658,10 +658,17 @@ MAKE
             },
             install: LockedInstall::Directory { strip_prefix: None },
             provides: Provides {
+                apps: Default::default(),
                 bins: BTreeMap::from([("app".into(), command.into())]),
             },
             output_sha256: None,
         };
+        if cfg!(target_os = "macos") {
+            package
+                .provides
+                .apps
+                .insert("App.app".into(), "App.app".into());
+        }
         let downloads = root.path().join("downloads");
         let store = root.path().join("store");
         let realizer =
@@ -685,6 +692,15 @@ MAKE
         assert_eq!(
             hash_file(bundle.join("artifacts").join(format!("{sha256}.tar.gz"))).unwrap(),
             *sha256
+        );
+        let lock = RootbeerLock::from_package_entries([PackageLockEntry::locked(package.clone())])
+            .unwrap();
+        let lock_path = root.path().join("rootbeer.lock");
+        lock.write(&lock_path).unwrap();
+        let replay = RootbeerLock::read(&lock_path).unwrap();
+        assert_eq!(
+            replay.packages.values().next().unwrap().provides.apps,
+            package.provides.apps
         );
         fs::remove_dir_all(source).unwrap();
         fs::remove_dir_all(&store).unwrap();

@@ -206,7 +206,7 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
         }
     }
     let mut index = combined.unwrap();
-    index.schema = 2;
+    index.schema = ArtifactIndex::schema_for(&index.catalog);
     index.validate_complete()?;
     write_json(&destination.join("index.json"), &index)?;
     fs::rename(destination, output).map_err(|e| e.to_string())

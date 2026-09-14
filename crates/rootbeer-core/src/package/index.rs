@@ -90,10 +90,26 @@ impl ArtifactIndex {
         self.validate_fragment()
     }
 
+    pub(super) fn schema_for(catalog: &super::PackageCatalog) -> u32 {
+        if catalog.packages.values().any(|package| {
+            package
+                .versions
+                .values()
+                .any(|recipe| !recipe.apps.is_empty())
+        }) {
+            3
+        } else {
+            2
+        }
+    }
+
     pub(super) fn validate_fragment(&self) -> Result<(), String> {
         self.catalog.validate()?;
-        if !matches!(self.schema, 1 | 2) || self.catalog_sha256 != self.catalog.sha256() {
+        if !matches!(self.schema, 1..=3) || self.catalog_sha256 != self.catalog.sha256() {
             return Err("invalid artifact index schema or catalog digest".into());
+        }
+        if self.schema < 3 && Self::schema_for(&self.catalog) == 3 {
+            return Err("application exports require artifact index schema 3".into());
         }
         if self.schema == 1
             && self.catalog.packages.values().any(|package| {
@@ -162,6 +178,12 @@ impl super::PublishedArtifact {
         {
             return Err(format!("{key}: invalid platform artifact contract"));
         }
+        if package.provides.apps != recipe.apps {
+            return Err(format!(
+                "{key}: artifact application paths differ from the recipe"
+            ));
+        }
+        super::catalog::validate_apps(&package.provides.apps)?;
         if !recipe.bin_paths.is_empty() && package.provides.bins != recipe.bin_paths {
             return Err(format!(
                 "{key}: artifact command paths differ from the recipe"
@@ -350,6 +372,47 @@ mod tests {
             downloads: DownloadCache::new(root.join("downloads")),
             index: OnceLock::new(),
         }
+    }
+
+    #[test]
+    fn application_contracts_require_schema_three_and_exact_artifact_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut index, _) = fixture(root.path());
+        let package = index.catalog.packages.get_mut("new-tool").unwrap();
+        let recipe = package.versions.get_mut(&package.default_version).unwrap();
+        recipe.systems = vec!["aarch64-macos".into()];
+        recipe.apps.insert("Tool.app".into(), "Tool.app".into());
+        let key = format!("new-tool@{}", package.default_version);
+        let mut artifact = index.artifacts[&key]["aarch64-linux"].clone();
+        artifact.package.provides.apps = recipe.apps.clone();
+        index.artifacts = std::collections::BTreeMap::from([(
+            key.clone(),
+            std::collections::BTreeMap::from([("aarch64-macos".into(), artifact)]),
+        )]);
+        index.catalog_sha256 = index.catalog.sha256();
+        for schema in [1, 2] {
+            index.schema = schema;
+            assert!(index.validate().unwrap_err().contains("schema 3"));
+        }
+        index.schema = 3;
+        index.validate().unwrap();
+        let mut decoded: ArtifactIndex =
+            serde_json::from_slice(&serde_json::to_vec(&index).unwrap()).unwrap();
+        decoded.validate().unwrap();
+        decoded
+            .artifacts
+            .get_mut(&key)
+            .unwrap()
+            .get_mut("aarch64-macos")
+            .unwrap()
+            .package
+            .provides
+            .apps
+            .clear();
+        assert!(decoded
+            .validate()
+            .unwrap_err()
+            .contains("application paths"));
     }
 
     #[test]
@@ -605,7 +668,7 @@ mod tests {
             index.validate_fragment().unwrap();
         }
 
-        for schema in [0, 3] {
+        for schema in [0, 4] {
             index.schema = schema;
             assert!(index.validate().unwrap_err().contains("schema"));
         }

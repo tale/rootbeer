@@ -45,6 +45,8 @@ pub struct GitHubUpstream {
     pub bins: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bin_paths: BTreeMap<String, PathBuf>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub apps: BTreeMap<String, PathBuf>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub mirror: bool,
     pub checks: Vec<Vec<String>>,
@@ -80,6 +82,7 @@ impl GitHubUpstream {
             assets: BTreeMap::new(),
             bins,
             bin_paths: BTreeMap::new(),
+            apps: BTreeMap::new(),
             mirror: false,
             checks,
         }
@@ -127,6 +130,15 @@ impl GitHubUpstream {
         super::catalog::validate_systems(&self.systems)?;
         super::catalog::validate_commands(&self.bins, &self.checks)?;
         super::catalog::validate_bin_paths(&self.bins, &self.bin_paths)?;
+        super::catalog::validate_apps(&self.apps)?;
+        if !self.apps.is_empty()
+            && self
+                .systems
+                .iter()
+                .any(|system| !system.ends_with("-macos"))
+        {
+            return Err("application exports require macOS-only upstream systems".into());
+        }
         for (system, pattern) in &self.assets {
             if !self.systems.contains(system) || pattern.trim().is_empty() {
                 return Err(

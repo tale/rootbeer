@@ -16,6 +16,7 @@ export interface CatalogPackage {
 export interface CatalogRecipe {
   systems: string[];
   bins: string[];
+  apps?: Record<string, string>;
   revision: number;
   source?: string;
   build?: { url: string };
@@ -105,7 +106,7 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
     throw new Error("The package catalog contents could not be verified.");
   const index = JSON.parse(decoder.decode(snapshot));
   if (
-    ![1, 2].includes(index.schema) ||
+    ![1, 2, 3].includes(index.schema) ||
     index.catalog?.schema !== 1 ||
     !index.catalog.packages ||
     !index.artifacts
@@ -132,6 +133,27 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
         !recipe.bins.every((bin) => typeof bin === "string" && /^[a-z0-9][a-z0-9+._-]*$/.test(bin))
       ) {
         throw new Error("The catalog contains invalid package commands or platforms.");
+      }
+      if (recipe.apps !== undefined) {
+        if (
+          !recipe.apps ||
+          typeof recipe.apps !== "object" ||
+          Array.isArray(recipe.apps) ||
+          (Object.keys(recipe.apps).length > 0 &&
+            (index.schema < 3 || recipe.systems.some((system) => !system.endsWith("-macos")))) ||
+          !Object.entries(recipe.apps).every(
+            ([name, path]) =>
+              name.endsWith(".app") &&
+              name !== ".app" &&
+              !/[\/\\\0]/.test(name) &&
+              typeof path === "string" &&
+              path.endsWith(".app") &&
+              !path.includes("\0") &&
+              path.split("/").every((part) => part && part !== "." && part !== ".."),
+          )
+        ) {
+          throw new Error("The catalog contains invalid app exports.");
+        }
       }
       const published = index.artifacts[`${pkg.name}@${version}`] ?? {};
       recipe.systems = recipe.systems.filter((system) => Object.hasOwn(published, system));

@@ -202,6 +202,7 @@ pub(super) fn package(
                 systems: Vec::new(),
                 bins: upstream.bins.clone(),
                 bin_paths: upstream.bin_paths.clone(),
+                apps: upstream.apps.clone(),
                 checksums: BTreeMap::new(),
                 mirror: upstream.mirror,
                 checks: upstream.checks.clone(),

@@ -24,6 +24,7 @@ pub struct RealizedPackage {
     pub package: LockedPackage,
     pub store_entry: StoreEntry,
     pub bins: BTreeMap<String, PathBuf>,
+    pub apps: BTreeMap<String, PathBuf>,
 }
 
 impl PackageRealizer {
@@ -154,6 +155,7 @@ impl PackageRealizer {
 
         Ok(RealizedPackage {
             package: package.clone(),
+            apps: realized_apps(&store_entry.path, &package.provides)?,
             store_entry,
             bins,
         })
@@ -172,6 +174,7 @@ impl PackageRealizer {
         }
 
         self.store.verify_entry(&path)?;
+        validate_provides(&path, &package.provides)?;
         let store_entry = StoreEntry {
             path,
             name: package.name.clone(),
@@ -187,6 +190,7 @@ impl PackageRealizer {
 
         Ok(Some(RealizedPackage {
             package: package.clone(),
+            apps: realized_apps(&store_entry.path, &package.provides)?,
             store_entry,
             bins,
         }))
@@ -349,6 +353,7 @@ fn extract_zip(file: fs::File, dest: &Path) -> io::Result<()> {
 /// validates that the provided binaries exist in the install root and have
 /// valid relative paths.
 fn validate_provides(root: &Path, provides: &Provides) -> io::Result<()> {
+    realized_apps(root, provides)?;
     let canonical_root = root.canonicalize()?;
     for (name, rel) in &provides.bins {
         if name.is_empty() || name == "." || name == ".." || name.contains('/') {
@@ -379,6 +384,37 @@ fn validate_provides(root: &Path, provides: &Provides) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn realized_apps(root: &Path, provides: &Provides) -> io::Result<BTreeMap<String, PathBuf>> {
+    super::catalog::validate_apps(&provides.apps).map_err(io::Error::other)?;
+    if !provides.apps.is_empty() && !cfg!(target_os = "macos") {
+        return Err(io::Error::other("application exports require macOS"));
+    }
+    let canonical_root = root.canonicalize()?;
+    provides
+        .apps
+        .iter()
+        .map(|(name, relative)| {
+            let path = root.join(relative);
+            if !path.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "provided application `{name}` points to missing bundle {}",
+                        path.display()
+                    ),
+                ));
+            }
+            let path = path.canonicalize()?;
+            if !path.starts_with(&canonical_root) {
+                return Err(io::Error::other(format!(
+                    "provided application `{name}` escapes the install root"
+                )));
+            }
+            Ok((name.clone(), path))
+        })
+        .collect()
 }
 
 pub(super) fn validate_relative_path(label: &str, path: &Path) -> io::Result<()> {
@@ -430,6 +466,7 @@ mod tests {
                 strip_prefix: Some(PathBuf::from("pkg")),
             },
             provides: Provides {
+                apps: Default::default(),
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
             output_sha256: None,
@@ -490,10 +527,77 @@ mod tests {
                 strip_prefix: Some(PathBuf::from("pkg")),
             },
             provides: Provides {
+                apps: Default::default(),
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
             output_sha256: None,
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn realizes_application_directories_and_revalidates_cached_contracts() {
+        let source = source_tree();
+        fs::create_dir_all(source.path().join("pkg/Demo.app/Contents")).unwrap();
+        fs::write(
+            source.path().join("pkg/Demo.app/Contents/Info.plist"),
+            "fixture",
+        )
+        .unwrap();
+        let mut package = package(source.path(), hash_tree(source.path()).unwrap());
+        package
+            .provides
+            .apps
+            .insert("Demo.app".into(), "Demo.app".into());
+        let root = tempfile::tempdir().unwrap();
+        let realizer = PackageRealizer::with_dirs(
+            Store::new(root.path().join("store")),
+            root.path().join("downloads"),
+            root.path().join("tmp"),
+        );
+        let realized = realizer.realize(&package).unwrap();
+        assert_eq!(
+            realized.apps["Demo.app"],
+            realized
+                .store_entry
+                .path
+                .join("Demo.app")
+                .canonicalize()
+                .unwrap()
+        );
+        package.output_sha256 = Some(realized.store_entry.output_sha256);
+        package
+            .provides
+            .apps
+            .insert("Missing.app".into(), "Missing.app".into());
+        assert!(realizer
+            .realize(&package)
+            .unwrap_err()
+            .to_string()
+            .contains("missing bundle"));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn rejects_missing_and_escaping_application_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let provides = Provides {
+            bins: BTreeMap::new(),
+            apps: BTreeMap::from([("Demo.app".into(), "Demo.app".into())]),
+        };
+        assert!(realized_apps(root.path(), &provides)
+            .unwrap_err()
+            .to_string()
+            .contains("missing bundle"));
+        fs::write(root.path().join("Demo.app"), "not a directory").unwrap();
+        assert!(realized_apps(root.path(), &provides).is_err());
+        fs::remove_file(root.path().join("Demo.app")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("Demo.app")).unwrap();
+        assert!(realized_apps(root.path(), &provides)
+            .unwrap_err()
+            .to_string()
+            .contains("escapes"));
     }
 
     #[test]

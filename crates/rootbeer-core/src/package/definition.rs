@@ -23,6 +23,7 @@ pub struct PackageDefinition {
 struct Contract {
     bins: Vec<String>,
     bin_paths: BTreeMap<String, PathBuf>,
+    apps: BTreeMap<String, PathBuf>,
     mirror: bool,
     checks: Vec<Vec<String>>,
 }
@@ -148,6 +149,7 @@ impl PackageDefinition {
             contract: Some(Contract {
                 bins: upstream.bins.clone(),
                 bin_paths: upstream.bin_paths.clone(),
+                apps: upstream.apps.clone(),
                 mirror: upstream.mirror,
                 checks: upstream.checks.clone(),
             }),
@@ -203,10 +205,12 @@ impl PackageDefinition {
         upstream.homepage = Some(package.homepage.clone());
         upstream.checks = recipe.checks.clone();
         upstream.bin_paths = recipe.bin_paths.clone();
+        upstream.apps = recipe.apps.clone();
         upstream.mirror = recipe.mirror;
         if let Some(contract) = &self.contract {
             upstream.bins = contract.bins.clone();
             upstream.bin_paths = contract.bin_paths.clone();
+            upstream.apps = contract.apps.clone();
             upstream.mirror = contract.mirror;
             upstream.checks = contract.checks.clone();
         }

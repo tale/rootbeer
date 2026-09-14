@@ -50,6 +50,23 @@ pub struct UseArgs {
     update: bool,
 }
 
+#[derive(clap::Args, Debug)]
+pub struct UnuseArgs {
+    /// Installed package names to remove from your user profile
+    #[arg(required = true)]
+    packages: Vec<String>,
+}
+
+pub fn uninstall(args: UnuseArgs) {
+    if let Err(error) = standalone::remove(&args.packages) {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
+    for name in args.packages {
+        eprintln!("removed {name}");
+    }
+}
+
 pub fn run(args: RunArgs) {
     if let Err(error) = execute(args) {
         eprintln!("error: {error}");
@@ -201,6 +218,7 @@ mod tests {
             .map(|command| (command.to_string(), PathBuf::from(command)))
             .collect::<BTreeMap<_, _>>();
         RealizedPackage {
+            apps: Default::default(),
             package: LockedPackage {
                 name: name.into(),
                 version: "1.0.0".into(),
@@ -211,7 +229,10 @@ mod tests {
                 install: LockedInstall::Binary {
                     path: "tool".into(),
                 },
-                provides: Provides { bins: bins.clone() },
+                provides: Provides {
+                    apps: Default::default(),
+                    bins: bins.clone(),
+                },
                 output_sha256: None,
             },
             store_entry: StoreEntry {

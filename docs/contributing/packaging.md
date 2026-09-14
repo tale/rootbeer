@@ -61,6 +61,19 @@ For example, bobrwm maps `bobrwm` to `Bobrwm.app/Contents/MacOS/bobrwm-cli`.
 Mappings must cover every declared command and stay inside the archive. The full
 archive tree is retained, including resources and app bundles.
 
+Declare macOS app exports explicitly:
+
+```lua
+apps = { ["Bobrwm.app"] = "Bobrwm.app" },
+```
+
+Keys are exported `.app` filenames; values are relative paths to contained `.app`
+directories. App recipes must target macOS only. Versions inherit `apps` unless
+an explicit version map overrides it. `rb use` and Lua package application manage
+links in `~/Applications`; existing apps and unmanaged links cause a conflict.
+Temporary `rb run --app` launches do not create these links. Neither operation
+configures login items or grants permissions.
+
 A moving tag such as `tip` is not a package version. Give each approved snapshot
 an exact version, select its exact asset name, and pin every platform's verified
 SHA-256 in that version's `checksums` map. Set `mirror = true` to retain the

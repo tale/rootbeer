@@ -12,7 +12,7 @@ use crate::store::hash_bytes;
 
 mod recipe;
 
-pub(super) use recipe::{validate_bin_paths, validate_commands, validate_systems};
+pub(super) use recipe::{validate_apps, validate_bin_paths, validate_commands, validate_systems};
 pub use recipe::{CatalogPackage, CatalogRecipe};
 
 include!(concat!(env!("OUT_DIR"), "/package_catalog.rs"));
@@ -246,6 +246,7 @@ impl PackageResolver for CatalogResolver {
             .resolve_package(&source, context)
             .map_err(|e| e.to_string())?;
         let mut locked = resolution.package;
+        locked.provides.apps = recipe.apps.clone();
         if let (Some("github"), super::LockedInstall::Binary { path }, true) = (
             source.resolver.as_deref(),
             &mut locked.install,
@@ -486,6 +487,7 @@ mod tests {
                         path: PathBuf::from("rg"),
                     },
                     provides: Provides {
+                        apps: Default::default(),
                         bins: BTreeMap::from([("rg".into(), "rg".into())]),
                     },
                     output_sha256: None,

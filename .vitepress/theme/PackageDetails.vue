@@ -237,6 +237,16 @@ function chooseCommand(command: string) {
         <p v-if="pkg.aliases.length" class="metadata-note">
           Package aliases: <code v-for="alias in pkg.aliases" :key="alias">{{ alias }}</code>
         </p>
+        <template v-if="recipe.apps && Object.keys(recipe.apps).length">
+          <h3>Apps provided</h3>
+          <p class="metadata-note">
+            <code v-for="name in Object.keys(recipe.apps)" :key="name">{{ name }}</code>
+          </p>
+          <p class="metadata-note">
+            Installing with <code>rb use</code> or <code>rb apply</code> creates managed
+            links in <code>~/Applications</code>. Existing apps are never overwritten.
+          </p>
+        </template>
         <h3>Platform defaults</h3>
         <dl class="platform-defaults">
           <div

@@ -25,6 +25,7 @@ fn package(root: &Path, name: &str, version: &str, bin: &str) -> RealizedPackage
             path: PathBuf::from(bin),
         },
         provides: Provides {
+            apps: BTreeMap::new(),
             bins: BTreeMap::from([(bin.into(), PathBuf::from(bin))]),
         },
         output_sha256: None,
@@ -203,4 +204,87 @@ fn cached_environments_reject_changed_commands_and_lock() {
             "accepted {change}"
         );
     }
+}
+
+fn install_profile(
+    root: &Path,
+    profile: &Path,
+    packages: &[RealizedPackage],
+    realizer: &PackageRealizer,
+) -> io::Result<()> {
+    super::install_profile(
+        root,
+        profile,
+        packages,
+        realizer,
+        &Applications::new(root.join("app-state"), root.join("Applications")),
+    )
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn persistent_apps_update_remove_and_protect_unowned_paths() {
+    use crate::store::hash_tree;
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path();
+    let realizer = realizer(root);
+    let applications = Applications::new(root.join("app-state"), root.join("Applications"));
+    let profile = root.join("profiles/user/current");
+    let app_package = |version: &str| {
+        let source = root.join(version);
+        fs::create_dir_all(source.join("Example.app")).unwrap();
+        fs::write(source.join("Example.app/version"), version).unwrap();
+        let package = LockedPackage {
+            name: "app".into(),
+            version: version.into(),
+            source: LockedSource::Path {
+                path: source.clone(),
+                sha256: hash_tree(&source).unwrap(),
+            },
+            install: LockedInstall::Directory { strip_prefix: None },
+            provides: Provides {
+                bins: BTreeMap::new(),
+                apps: BTreeMap::from([("Example.app".into(), "Example.app".into())]),
+            },
+            output_sha256: None,
+        };
+        realizer.realize(&package).unwrap()
+    };
+    let first = app_package("1");
+    let second = app_package("2");
+    write_environment(root, std::slice::from_ref(&first)).unwrap();
+    assert!(!root.join("Applications").exists());
+    super::install_profile(
+        root,
+        &profile,
+        std::slice::from_ref(&first),
+        &realizer,
+        &applications,
+    )
+    .unwrap();
+    let link = root.join("Applications/Example.app");
+    assert_eq!(fs::read_to_string(link.join("version")).unwrap(), "1");
+    super::install_profile(
+        root,
+        &profile,
+        std::slice::from_ref(&second),
+        &realizer,
+        &applications,
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(link.join("version")).unwrap(), "2");
+    let old_profile = fs::read_link(&profile).unwrap();
+    fs::remove_file(&link).unwrap();
+    fs::create_dir(&link).unwrap();
+    assert!(super::install_profile(root, &profile, &[first], &realizer, &applications).is_err());
+    assert_eq!(fs::read_link(&profile).unwrap(), old_profile);
+    remove_from_profile(root, &profile, &["app".into()], &realizer, &applications).unwrap();
+    assert!(link.is_dir());
+    assert!(!link.is_symlink());
+    assert!(second.store_entry.path.exists());
+    assert!(read_lock(&profile.join("packages.json"))
+        .unwrap()
+        .unwrap()
+        .packages
+        .is_empty());
 }

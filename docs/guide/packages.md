@@ -48,11 +48,31 @@ rb run bobrwm --app Bobrwm.app
 rb run bobrwm --app Bobrwm.app -- --config "$HOME/.config/bobrwm/config.zon"
 ```
 
-`--app` opens that exact bundle from the verified package store. It does not copy
-it into Applications or configure login items. Arguments after `--` go to the app;
+`--app` opens that exact bundle from the verified package store without creating
+an Applications link. Arguments after `--` go to the app;
 macOS may reuse an already running instance. Use `--bin` separately for command-line
 tools. App permissions, such as Bobrwm's Accessibility access, remain managed by
 macOS.
+
+To keep a declared app export available in `~/Applications`, install its package:
+
+```sh
+rb use bobrwm
+```
+
+If you installed Bobrwm before app exports were added, run `rb update`, then
+`rb use bobrwm --update` to refresh its package metadata.
+
+Or declare `rb.package("bobrwm")` in Lua and run `rb apply`. Both manage a
+`~/Applications/Bobrwm.app` symlink into the verified package store. Existing apps
+are never overwritten; a conflicting app or unmanaged link makes installation fail.
+User and Lua profiles may share an app link when they select the exact same
+stored bundle; different versions conflict. Rootbeer does not configure login
+items or grant app permissions.
+
+Remove a package from your user profile with `rb unuse bobrwm`. This removes its
+owned app link when no other profile needs it, while retaining cached package files.
+For Lua-managed apps, remove the declaration and run `rb apply`.
 
 ## Keep tools installed
 
@@ -133,5 +153,5 @@ and does not imply compatibility with every OS release or Linux distribution.
 Installation does not compile packages locally.
 
 For tools outside the catalog, see [other package sources](/guide/package-sources).
-For desktop applications and services, use [Homebrew](/modules/brew) or another
-system package manager.
+Catalog packages may also export macOS app bundles. For other desktop apps and
+service integration, use [Homebrew](/modules/brew) or another system package manager.

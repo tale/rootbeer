@@ -27,6 +27,8 @@ pub(super) struct CompactPackage {
     bins: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     bin_paths: BTreeMap<String, PathBuf>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    apps: BTreeMap<String, PathBuf>,
     #[serde(default, skip_serializing_if = "is_false")]
     mirror: bool,
     checks: Vec<Vec<String>>,
@@ -106,6 +108,8 @@ struct Version {
     bins: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bin_paths: Option<BTreeMap<String, PathBuf>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    apps: Option<BTreeMap<String, PathBuf>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     checksums: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,6 +225,7 @@ impl CompactPackage {
             contract: Some(Contract {
                 bins: self.bins.clone(),
                 bin_paths: self.bin_paths.clone(),
+                apps: self.apps.clone(),
                 mirror: self.mirror,
                 checks: self.checks.clone(),
             }),
@@ -257,6 +262,7 @@ impl CompactPackage {
                 .bin_paths
                 .clone()
                 .unwrap_or_else(|| self.bin_paths.clone()),
+            apps: entry.apps.clone().unwrap_or_else(|| self.apps.clone()),
             checksums: entry.checksums.clone(),
             mirror: entry.mirror.unwrap_or(self.mirror),
             checks: entry.checks.clone().unwrap_or_else(|| self.checks.clone()),
@@ -378,6 +384,7 @@ impl CompactPackage {
             systems: Some(systems.clone()),
             bins: upstream.bins,
             bin_paths: upstream.bin_paths,
+            apps: upstream.apps,
             mirror: upstream.mirror,
             checks: upstream.checks,
             versions: BTreeMap::new(),
@@ -407,6 +414,7 @@ impl CompactPackage {
                 systems: (recipe.systems != systems).then(|| recipe.systems.clone()),
                 bins: (recipe.bins != self.bins).then(|| recipe.bins.clone()),
                 bin_paths: (recipe.bin_paths != self.bin_paths).then(|| recipe.bin_paths.clone()),
+                apps: (recipe.apps != self.apps).then(|| recipe.apps.clone()),
                 checksums: recipe.checksums.clone(),
                 mirror: (recipe.mirror != self.mirror).then_some(recipe.mirror),
                 checks: (recipe.checks != self.checks).then(|| recipe.checks.clone()),
@@ -505,6 +513,7 @@ impl CompactPackage {
                 }
                 compact.bins = upstream.bins;
                 compact.bin_paths = upstream.bin_paths;
+                compact.apps = upstream.apps;
                 compact.mirror = upstream.mirror;
                 compact.checks = upstream.checks;
             }
@@ -563,6 +572,41 @@ mod tests {
             ["2"] = { systems = { "aarch64-macos" } },
         },
     }"#;
+
+    #[test]
+    fn application_exports_round_trip_defaults_overrides_and_upstream() {
+        let source = r#"return {
+            name = "tool", description = "Tool", homepage = "https://example.com",
+            source = { github = "owner/tool", tag = "v{version}", assets = { ["aarch64-macos"] = "tool-{version}.zip" } },
+            systems = { "aarch64-macos" }, bins = { "tool" },
+            apps = { ["Tool.app"] = "Applications/Tool.app" },
+            checks = { { "tool", "--version" } }, default_version = "2",
+            versions = { ["1"] = { apps = {} }, ["2"] = {} },
+        }"#;
+        let definition = PackageDefinition::from_lua(source).unwrap();
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        for definition in [definition, repeated] {
+            assert!(definition.package.versions["1"].apps.is_empty());
+            assert_eq!(
+                definition.package.versions["2"].apps["Tool.app"],
+                PathBuf::from("Applications/Tool.app")
+            );
+            assert_eq!(
+                definition.github_upstream().unwrap().unwrap().apps,
+                definition.package.versions["2"].apps
+            );
+        }
+        for invalid in [
+            source.replace("aarch64-macos", "aarch64-linux"),
+            source.replace("Applications/Tool.app", "../Tool.app"),
+            source.replace("Applications/Tool.app", "/Applications/Tool.app"),
+            source.replace("Applications/Tool.app", "Applications/tool"),
+            source.replace("[\"Tool.app\"]", "[\"../Tool.app\"]"),
+            source.replace("[\"Tool.app\"]", "[\".app\"]"),
+        ] {
+            assert!(PackageDefinition::from_lua(&invalid).is_err(), "{invalid}");
+        }
+    }
 
     #[test]
     fn discovery_prefix_matches_the_source_tag_template() {
@@ -749,6 +793,7 @@ mod tests {
             systems: Some(recipe.systems.clone()),
             bins: recipe.bins.clone(),
             bin_paths: BTreeMap::new(),
+            apps: BTreeMap::new(),
             mirror: false,
             checks: recipe.checks.clone(),
             versions: BTreeMap::from([(

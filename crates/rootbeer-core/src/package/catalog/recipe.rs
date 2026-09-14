@@ -37,6 +37,8 @@ pub struct CatalogRecipe {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bin_paths: BTreeMap<String, PathBuf>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub apps: BTreeMap<String, PathBuf>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub checksums: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub mirror: bool,
@@ -81,6 +83,15 @@ impl CatalogRecipe {
             }
         }
         validate_systems(&self.systems)?;
+        validate_apps(&self.apps)?;
+        if !self.apps.is_empty()
+            && self
+                .systems
+                .iter()
+                .any(|system| !system.ends_with("-macos"))
+        {
+            return Err("application exports require macOS-only recipe systems".into());
+        }
         if !self.assets.is_empty()
             && (self
                 .source
@@ -178,6 +189,26 @@ pub(in crate::package) fn validate_bin_paths(
     Ok(())
 }
 
+pub(in crate::package) fn validate_apps(apps: &BTreeMap<String, PathBuf>) -> Result<(), String> {
+    let mut names = BTreeSet::new();
+    for (name, path) in apps {
+        if !name.ends_with(".app")
+            || name.len() <= 4
+            || name.contains(['/', '\\'])
+            || name.chars().any(char::is_control)
+            || !names.insert(name.to_lowercase())
+        {
+            return Err("application names must be unique .app filenames".into());
+        }
+        crate::package::realize::validate_relative_path("application bundle", path)
+            .map_err(|error| error.to_string())?;
+        if path.extension().is_none_or(|extension| extension != "app") {
+            return Err("application paths must name relative .app bundles".into());
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +227,7 @@ mod tests {
             systems: vec!["aarch64-macos".into(), "x86_64-linux".into()],
             bins: vec!["tool".into()],
             bin_paths: BTreeMap::new(),
+            apps: BTreeMap::new(),
             checksums: BTreeMap::new(),
             mirror: false,
             checks: vec![vec!["tool".into(), "--help".into()]],

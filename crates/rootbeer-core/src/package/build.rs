@@ -618,7 +618,10 @@ fn compile(
                 format: ArchiveFormat::TarGz,
                 strip_prefix: None,
             },
-            provides: Provides { bins: bins.clone() },
+            provides: Provides {
+                apps: recipe.apps.clone(),
+                bins: bins.clone(),
+            },
             output_sha256: Some(hash_tree(&prefix).map_err(|e| e.to_string())?),
         },
     };

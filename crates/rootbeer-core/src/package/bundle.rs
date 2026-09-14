@@ -52,7 +52,7 @@ pub fn bundle_artifacts(
         staging.path().join("install"),
     );
     let mut index = ArtifactIndex {
-        schema: 2,
+        schema: ArtifactIndex::schema_for(catalog),
         catalog: catalog.clone(),
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),
@@ -204,6 +204,7 @@ fn validate_receipt(catalog: &PackageCatalog, receipt: &BuildArtifact) -> Result
             .as_deref()
             .is_none_or(|sha| !is_sha256(sha))
         || !matches!(&package.source, LockedSource::File { sha256, .. } if is_sha256(sha256))
+        || package.provides.apps != recipe.apps
         || package.provides.bins.len() != recipe.bins.len()
         || recipe
             .bins
@@ -280,6 +281,7 @@ pub(crate) mod tests {
                     strip_prefix: None,
                 },
                 provides: Provides {
+                    apps: Default::default(),
                     bins: recipe
                         .bins
                         .iter()

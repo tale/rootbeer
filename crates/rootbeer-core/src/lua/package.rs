@@ -202,7 +202,13 @@ fn parse_package(cx: &Ctx<'_>, spec: Table) -> LuaResult<LockedPackage> {
     let version: String = required(&spec, "version")?;
     let source = parse_source(cx, required(&spec, "source")?)?;
     let install = parse_install(required(&spec, "install")?)?;
-    let provides = parse_provides(required(&spec, "bins")?)?;
+    let mut provides = parse_provides(required(&spec, "bins")?)?;
+    if let Some(apps) = optional::<Table>(&spec, "apps")? {
+        for pair in apps.pairs::<String, String>() {
+            let (name, path) = pair?;
+            provides.apps.insert(name, PathBuf::from(path));
+        }
+    }
 
     Ok(LockedPackage {
         name,
@@ -288,7 +294,10 @@ fn parse_provides(bins: Table) -> LuaResult<Provides> {
         out.insert(name, PathBuf::from(path));
     }
 
-    Ok(Provides { bins: out })
+    Ok(Provides {
+        apps: Default::default(),
+        bins: out,
+    })
 }
 
 fn required<T>(table: &Table, field: &str) -> LuaResult<T>

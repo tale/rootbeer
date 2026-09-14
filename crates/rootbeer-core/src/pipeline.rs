@@ -325,6 +325,7 @@ mod tests {
             },
             install: LockedInstall::Directory { strip_prefix: None },
             provides: Provides {
+                apps: Default::default(),
                 bins: BTreeMap::new(),
             },
             output_sha256: None,

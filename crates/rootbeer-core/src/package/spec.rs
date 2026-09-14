@@ -90,6 +90,9 @@ pub enum ArchiveFormat {
 pub struct Provides {
     /// Binary name to path inside the installed output tree.
     pub bins: BTreeMap<String, PathBuf>,
+    /// Application name to bundle directory inside the installed output tree.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub apps: BTreeMap<String, PathBuf>,
 }
 
 #[cfg(test)]
@@ -109,6 +112,7 @@ mod tests {
                 strip_prefix: Some(PathBuf::from("demo")),
             },
             provides: Provides {
+                apps: Default::default(),
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
             output_sha256: output_sha256.map(str::to_string),

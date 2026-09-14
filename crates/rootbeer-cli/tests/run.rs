@@ -25,6 +25,7 @@ fn seed(root: &Path, name: &str, bin: &str, contents: &str) {
             path: "payload".into(),
         },
         provides: Provides {
+            apps: Default::default(),
             bins: BTreeMap::from([(bin.into(), "payload".into())]),
         },
         output_sha256: None,
@@ -139,6 +140,21 @@ fn use_adds_packages_without_a_configuration_and_env_exposes_them() {
     assert!(output.status.success());
     assert_eq!(output.stdout, b"first\nsecond\n");
     assert!(!root.path().join("config").exists());
+    let output = rb(root.path()).args(["unuse", "first"]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let profile = root.path().join("rootbeer/profiles/user/current");
+    assert!(!profile.join("bin/first").exists());
+    assert!(profile.join("bin/second").exists());
+    let cached = rb(root.path())
+        .args(["run", "first@1", "--offline"])
+        .output()
+        .unwrap();
+    assert!(cached.status.success());
+    assert_eq!(cached.stdout, b"first\n");
 }
 
 #[test]

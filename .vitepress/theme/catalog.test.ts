@@ -88,11 +88,11 @@ test("loads a signed published snapshot and preserves platform defaults", async 
   });
 });
 
-test("accepts signed schema 2 snapshots and rejects unsupported schemas", async () => {
-  for (const schema of [2, 3]) {
+test("accepts signed schemas 2 and 3 and rejects unsupported schemas", async () => {
+  for (const schema of [2, 3, 4]) {
     const data = fixture(undefined, undefined, schema);
     await withResponses(data, async () => {
-      if (schema === 2) {
+      if (schema < 4) {
         assert.equal((await loadCatalog(data.source)).packages[0].name, pkg.name);
         return;
       }
@@ -254,4 +254,31 @@ test("quotes pinned shell requests and emits a complete Lua declaration", () => 
     packageCommand(pkg, "config", 'release"candidate'),
     'local rb = require("rootbeer")\n\nrb.package("test-tool@release\\"candidate")',
   );
+});
+
+test("validates schema 3 app exports before presenting package metadata", async () => {
+  const entry = structuredClone(pkg);
+  entry.versions["2.0"].apps = { "Tool.app": "Applications/Tool.app" };
+  const valid = fixture([entry], undefined, 3);
+  await withResponses(valid, async () => {
+    assert.deepEqual((await loadCatalog(valid.source)).packages[0].versions["2.0"].apps, {
+      "Tool.app": "Applications/Tool.app",
+    });
+  });
+  for (const [schema, apps, systems] of [
+    [2, { "Tool.app": "Tool.app" }, ["aarch64-macos"]],
+    [3, { "Tool.app": "../Tool.app" }, ["aarch64-macos"]],
+    [3, { "../Tool.app": "Tool.app" }, ["aarch64-macos"]],
+    [3, { "Tool.app": "/Tool.app" }, ["aarch64-macos"]],
+    [3, { "Tool.app": "Tool.app" }, ["aarch64-linux"]],
+    [3, [], ["aarch64-macos"]],
+  ] as const) {
+    const invalid = structuredClone(entry);
+    invalid.versions["2.0"].apps = apps as Record<string, string>;
+    invalid.versions["2.0"].systems = [...systems];
+    const data = fixture([invalid], undefined, schema);
+    await withResponses(data, async () => {
+      await assert.rejects(loadCatalog(data.source), /invalid app exports/);
+    });
+  }
 });

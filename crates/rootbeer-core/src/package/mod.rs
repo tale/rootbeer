@@ -5,6 +5,7 @@
 //! the content-addressed store. Higher-level package backends should lower to
 //! these locked package facts before apply.
 
+pub(crate) mod applications;
 mod aqua;
 mod build;
 mod bundle;

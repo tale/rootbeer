@@ -250,6 +250,7 @@ mod tests {
     impl PackageRealizerBackend for FakeRealizer {
         fn realize_package(&self, package: &LockedPackage) -> io::Result<RealizedPackage> {
             Ok(RealizedPackage {
+                apps: std::collections::BTreeMap::new(),
                 package: package.clone(),
                 store_entry: StoreEntry {
                     path: PathBuf::from("/store/demo"),

@@ -4,6 +4,7 @@ use std::io;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
+use super::applications::Applications;
 use super::lockfile::RootbeerLock;
 use super::{
     resolver_stack_for_inputs, LockedPackage, PackageIntent, PackageLockBuilder, PackageLockInput,
@@ -97,7 +98,14 @@ pub fn prepare(
 
     if is_persistent {
         let profile = super::profile::user_dir();
-        install_profile(&root, &profile, &packages, &realizer).map_err(|e| e.to_string())?;
+        install_profile(
+            &root,
+            &profile,
+            &packages,
+            &realizer,
+            &Applications::default(),
+        )
+        .map_err(|e| e.to_string())?;
         return Ok(Environment {
             packages,
             bin_dir: profile.join("bin"),
@@ -116,6 +124,7 @@ fn install_profile(
     profile: &Path,
     packages: &[RealizedPackage],
     realizer: &PackageRealizer,
+    applications: &Applications,
 ) -> io::Result<()> {
     let current = read_lock(&profile.join("packages.json"))?;
     let mut installed: BTreeMap<String, LockedPackage> = current
@@ -131,7 +140,84 @@ fn install_profile(
         .map(|package| realizer.realize(package))
         .collect::<Result<Vec<_>, _>>()?;
     let generation = write_environment(root, &realized)?;
-    activate(profile, &generation)
+    applications.synchronize_with("user", &app_exports(&realized)?, || {
+        activate(profile, &generation)
+    })
+}
+
+/// Removes packages from the persistent user profile while retaining cached downloads.
+pub fn remove(names: &[String]) -> Result<(), String> {
+    if names.is_empty() {
+        return Err("at least one installed package name is required".into());
+    }
+    let root = crate::state_dir().join("standalone");
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let guard = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(root.join("lock"))
+        .map_err(|error| error.to_string())?;
+    guard.lock().map_err(|error| error.to_string())?;
+    remove_from_profile(
+        &root,
+        &super::profile::user_dir(),
+        names,
+        &PackageRealizer::offline(Store::default()),
+        &Applications::default(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn remove_from_profile(
+    root: &Path,
+    profile: &Path,
+    names: &[String],
+    realizer: &PackageRealizer,
+    applications: &Applications,
+) -> io::Result<()> {
+    let current = read_lock(&profile.join("packages.json"))?
+        .ok_or_else(|| io::Error::other("no packages are installed in the user profile"))?;
+    let mut installed: BTreeMap<_, _> = current
+        .packages
+        .into_values()
+        .map(|package| (package.name.clone(), package))
+        .collect();
+    for name in names {
+        if !installed.contains_key(name) {
+            return Err(io::Error::other(format!(
+                "package '{name}' is not installed in the user profile"
+            )));
+        }
+    }
+    for name in names {
+        installed.remove(name);
+    }
+    let realized = installed
+        .values()
+        .map(|package| realizer.realize(package))
+        .collect::<Result<Vec<_>, _>>()?;
+    let generation = write_environment(root, &realized)?;
+    applications.synchronize_with("user", &app_exports(&realized)?, || {
+        activate(profile, &generation)
+    })
+}
+
+fn app_exports(packages: &[RealizedPackage]) -> io::Result<BTreeMap<String, PathBuf>> {
+    let mut apps = BTreeMap::new();
+    for package in packages {
+        for (name, path) in &package.apps {
+            if apps
+                .insert(name.clone(), path.clone())
+                .is_some_and(|previous| previous != *path)
+            {
+                return Err(io::Error::other(format!(
+                    "packages export conflicting application '{name}'"
+                )));
+            }
+        }
+    }
+    Ok(apps)
 }
 
 fn read_lock(path: &Path) -> io::Result<Option<RootbeerLock>> {

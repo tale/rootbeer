@@ -144,8 +144,16 @@ impl RootbeerLock {
             }
         }
 
+        let schema = if map
+            .values()
+            .any(|package| !package.provides.apps.is_empty())
+        {
+            2
+        } else {
+            1
+        };
         Ok(Self {
-            schema: 1,
+            schema,
             inputs: PackageResolverInputs::default(),
             input_fingerprint: None,
             resolutions,
@@ -267,7 +275,13 @@ impl RootbeerLock {
 
     pub fn read(path: impl AsRef<Path>) -> io::Result<Self> {
         let bytes = fs::read(path)?;
-        serde_json::from_slice(&bytes).map_err(io::Error::other)
+        let lock: Self = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        if !matches!(lock.schema, 1 | 2) {
+            return Err(io::Error::other(
+                "unsupported package lock schema; update Rootbeer",
+            ));
+        }
+        Ok(lock)
     }
 
     pub fn write(&self, path: impl AsRef<Path>) -> io::Result<()> {
@@ -329,6 +343,7 @@ mod tests {
                 strip_prefix: Some(PathBuf::from("demo")),
             },
             provides: Provides {
+                apps: BTreeMap::new(),
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
             output_sha256: None,

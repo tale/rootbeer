@@ -47,6 +47,7 @@ pub fn seed_upstreams(catalog: &PackageCatalog, output: &Path) -> Result<usize, 
         definition.homepage = Some(package.homepage.clone());
         definition.checks = recipe.checks.clone();
         definition.bin_paths = recipe.bin_paths.clone();
+        definition.apps = recipe.apps.clone();
         definition.mirror = recipe.mirror;
         definition.systems = package
             .versions

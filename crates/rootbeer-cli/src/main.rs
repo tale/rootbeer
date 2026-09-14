@@ -52,6 +52,9 @@ enum Commands {
     /// Install packages for your user without a Lua configuration
     Use(run::UseArgs),
 
+    /// Remove packages from your user profile, retaining cached downloads
+    Unuse(run::UnuseArgs),
+
     /// Create or load a rootbeer configuration in the source directory
     Init(init::Args),
 
@@ -88,6 +91,7 @@ fn main() {
         Commands::Package(args) => package::run(args),
         Commands::Run(args) => run::run(args),
         Commands::Use(args) => run::install(args),
+        Commands::Unuse(args) => run::uninstall(args),
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),
         Commands::Apply(args) => apply::run(args, cli.lua_dir.as_ref()),

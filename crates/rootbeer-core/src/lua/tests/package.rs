@@ -38,6 +38,7 @@ fn rb_package_pushes_realize_package_op() {
             archive = "tar.gz",
             strip_prefix = "demo",
           },
+          apps = { ["Demo.app"] = "Demo.app" },
           bins = {
             demo = "bin/demo",
           },
@@ -53,6 +54,10 @@ fn rb_package_pushes_realize_package_op() {
 
     assert_eq!(package.name, "demo");
     assert_eq!(package.version, "1.0.0");
+    assert_eq!(
+        package.provides.apps.get("Demo.app"),
+        Some(&PathBuf::from("Demo.app"))
+    );
     assert!(matches!(
         &package.source,
         LockedSource::File { path, sha256 }

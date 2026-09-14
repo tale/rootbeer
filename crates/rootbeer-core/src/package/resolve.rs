@@ -500,6 +500,7 @@ mod tests {
                 strip_prefix: Some(PathBuf::from(name)),
             },
             provides: Provides {
+                apps: Default::default(),
                 bins: BTreeMap::from([(name.to_string(), PathBuf::from(format!("bin/{name}")))]),
             },
             output_sha256: None,
