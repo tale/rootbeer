@@ -1,97 +1,98 @@
-# Getting Started
+# Getting started
+
+Install Rootbeer, then run your first tool. A Lua configuration is optional.
 
 ## Install Rootbeer
 
-The installer requires `curl` and `unzip`. On Ubuntu, install them with
-`sudo apt install curl unzip`.
+Rootbeer supports macOS and Linux on ARM64 and x86-64. The installer requires
+`curl` and `unzip`; on Ubuntu, install them with `sudo apt install curl unzip`.
 
 ```sh
 sh -c "$(curl -fsSL https://rootbeer.tale.me/rb.sh)"
 export PATH="$HOME/.rootbeer/bin:$PATH"
 ```
 
-This installs `rb` to `~/.rootbeer/bin` and makes it available in your current shell.
+This installs the current nightly `rb` to `~/.rootbeer/bin` and makes it available
+in this shell.
 
-## Create your configuration
-
-```sh
-rb init
-rb edit
-```
-
-Your configuration lives in `~/.config/rootbeer/`. Edit `init.lua` to choose your
-tools and settings. This installs ripgrep:
-
-```lua
-local rb = require("rootbeer")
-
-rb.package("ripgrep")
-```
-
-[Find more packages](/packages/) or use [modules](/modules/) to configure Git,
-SSH, and other tools. You can split your Lua config into files with `require()`
-as it grows.
-
-`rb init` also enables autocomplete and type checking in editors configured
-with Lua Language Server.
-
-## Apply your configuration
-
-Preview the changes, then apply them:
+## Run a package
 
 ```sh
-rb apply --dry-run
-rb apply
+rb run jq -- --version
 ```
 
-Make installed commands available in your current shell:
+Rootbeer downloads and runs `jq`, caching it for later use. Arguments after `--`
+go to the tool. No `rb init` or shell configuration is needed.
+
+[Browse packages](/packages/) to find another tool and check its versions,
+commands, and supported platforms.
+
+## Keep tools installed
 
 ```sh
+rb use jq ripgrep
 eval "$(rb env)"
 rg --version
 ```
 
-Add both lines, in this order, to `~/.bashrc` for Bash or `~/.zshrc` for Zsh:
+`rb use` installs tools for your user. The `ripgrep` package provides the `rg`
+command. Add these lines to `~/.bashrc` for Bash or `~/.zshrc` for Zsh to make
+your tools available in new terminals:
 
 ```sh
 export PATH="$HOME/.rootbeer/bin:$PATH"
 eval "$(rb env)"
 ```
 
-Future terminals will find Rootbeer and your installed commands. If you manage
-Zsh with Rootbeer, follow the [Zsh setup](/guide/packages#configure-zsh).
+See [using packages](/guide/packages) for exact versions, additional commands,
+and [Zsh integration](/guide/packages#set-up-your-shell).
 
-Keep your configuration in Git, including the generated `rootbeer.lock` file.
-It saves package versions so subsequent installs use the same ones. See
-[the package guide](/guide/packages) for version selection and other shells.
+## Create your configuration
+
+When you want to manage dotfiles and settings too, create a Lua configuration:
+
+```sh
+rb init
+rb edit
+```
+
+Edit `~/.config/rootbeer/init.lua`:
+
+```lua
+local rb = require("rootbeer")
+
+rb.package("ripgrep")
+rb.file("~/.inputrc", "set editing-mode vi\n")
+```
+
+This declares ripgrep and configures Readline to use Vi editing keys. Packages
+declared here are managed separately from those installed with `rb use`.
+
+## Apply your configuration
+
+Preview the planned changes, then apply them:
+
+```sh
+rb apply --dry-run
+rb apply
+```
+
+Continue with [your configuration](/guide/configuration) to split files, use
+modules, and keep settings in Git.
 
 ## Use an existing configuration
 
-Pass a GitHub repository, Git URL, or local path to `rb init`:
-
-```sh
-rb init tale/dotfiles
-rb init https://tangled.org/tale.me/dotfiles.git
-rb init /path/to/local/repo
-```
-
-For a private GitHub repository, use `rb init --ssh tale/dotfiles` if your SSH
-keys are already set up. You can also clone over HTTPS and run `rb remote ssh`
-later, after setting up your keys.
-
-Run `rb cd` to open a shell in your configuration directory, or `rb edit` to
-open it in your editor.
+`rb init` can also start from a Git repository or a local directory. See
+[reuse a configuration](/guide/configuration#reuse-a-configuration) for examples.
 
 ## Update
 
+Run `rb update` to update Rootbeer itself. To update tools installed with
+`rb use`, name them explicitly:
+
 ```sh
-rb update          # Update Rootbeer
-rb apply --update  # Update your packages
+rb use --update jq ripgrep
 ```
 
-## Next steps
-
-- [Packages](/guide/packages): install tools and choose versions.
-- [Modules](/modules/): configure your shell, Git, SSH, and more.
-- [Profiles](/guide/profiles): use different settings on different machines.
-- [API reference](/reference/): write files, create symlinks, and run commands.
+Use `rb apply --update` for packages declared in Lua. See
+[updates and offline use](/guide/package-locks) for saved versions and locks.

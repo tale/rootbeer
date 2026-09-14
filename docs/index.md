@@ -2,43 +2,49 @@
 layout: home
 
 hero:
-  name: "ROOTBEER"
-  tagline: Your packages and system configuration. Declared in Lua.
+  name: "Rootbeer"
+  text: Packages and system configuration.
+  tagline: Run tools on macOS and Linux. Manage packages, dotfiles, and settings with Lua.
   actions:
     - theme: brand
-      text: What is Rootbeer?
-      link: /guide/what-is-rootbeer
-    - theme: alt
-      text: Get Started
+      text: Get started
       link: /guide/getting-started
     - theme: alt
-      text: Find Packages
+      text: Browse packages ↗
       link: /packages/
+      target: _blank
+      rel: noopener noreferrer
 
 features:
-  - title: Packages Are Configuration
-    details: Install your tools from the same configuration as your shell and dotfiles.
+  - title: Run and install tools
+    details: Run a package once or install it for your user. No configuration required.
     link: /guide/packages
-    linkText: Manage packages
-  - title: Config Is Lua
-    details: Write your configuration in Lua. Use functions and modules to organize it as it grows.
-    link: /guide/what-is-rootbeer
-    linkText: Learn about Rootbeer
-  - title: Update When You Choose
-    details: Keep package versions the same between installs. Update them when you are ready.
+    linkText: Using packages
+  - title: Configure your system
+    details: Configure your shell, Git, SSH, and more with Lua. Preview changes before applying them.
+    link: /guide/configuration
+    linkText: Writing a configuration
+  - title: Control updates
+    details: Keep resolved package versions between installs. Update selected tools or your configured packages.
     link: /guide/package-locks
-    linkText: Control updates
-  - title: One Config, Many Machines
-    details: Share configuration across macOS and Linux, with profiles for personal, work, server, or any other role.
+    linkText: Updates and offline use
+  - title: Use multiple machines
+    details: Share a configuration across macOS and Linux. Use profiles for settings that differ between machines.
     link: /guide/profiles
-    linkText: Use profiles
+    linkText: Using profiles
 ---
 
 <div class="home-code-preview">
 
-## One place for your environment
+## Run a package
 
-Install ripgrep and set up your shell in `init.lua`:
+```sh
+rb run ripgrep -- --hidden TODO .
+```
+
+## Configure packages and settings
+
+Declare packages and settings in `init.lua`:
 
 ```lua
 local rb = require("rootbeer")
@@ -51,6 +57,8 @@ zsh.config({
 })
 ```
 
+Preview and apply the configuration:
+
 ```sh
 rb apply --dry-run
 rb apply
@@ -58,7 +66,7 @@ eval "$(rb env)"
 ```
 
 You can now use `rg`. Zsh must be installed to use the shell configuration;
-start it with `zsh -l`. [Get started](/guide/getting-started) to create
-your own configuration, or [find more packages](/packages/).
+start it with `zsh -l`. See [your configuration](/guide/configuration) for setup,
+or [browse packages](/packages/).
 
 </div>

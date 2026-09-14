@@ -1,54 +1,48 @@
 # What is Rootbeer?
 
-Rootbeer manages your tools, dotfiles, and shell settings from a Lua configuration.
-Keep it in Git and use it to set up your macOS and Linux machines.
+Rootbeer runs and installs command-line tools on macOS and Linux. It can also
+manage your dotfiles and system settings from Lua.
 
-## Core Concepts
+## Start with a tool
 
-### Config is Code
+Run a package without creating a configuration:
 
-Your Rootbeer config is Lua, that's it. You get the expressiveness of a full
-programming language to build your system configuration. There's no special
-syntax.
-
-```lua
--- An example of one of our high-level modules for managing Zsh configs.
--- When running `rb apply`, this will generate the appropriate files
--- including `.zprofile` and `.zshrc` with the options.
-
-local zsh = require("rootbeer.zsh")
-zsh.config({
-    keybind_mode = "emacs",
-    options = { "CORRECT", "EXTENDED_GLOB" },
-    env = {
-        EDITOR = "nvim",
-        VISUAL = "$EDITOR",
-    },
-    aliases = {
-        g = "git",
-        ls = "lsd -l --group-directories-first",
-    },
-    history = { size = 10000 },
-    evals = { "mise activate zsh" },
-})
+```sh
+rb run ripgrep -- --hidden TODO .
 ```
 
-### Packages Belong in Your Config
+Keep tools installed with `rb use jq ripgrep`. Rootbeer saves resolved versions
+and verified downloads so you choose when to update. Browse the
+[package catalog](/packages/) for commands, versions, and platform support.
 
-Add tools alongside your other settings:
+## Config is code
+
+When you want repeatable machine setup, declare packages and settings in Lua:
 
 ```lua
 local rb = require("rootbeer")
 
 rb.package("ripgrep")
+rb.file("~/.inputrc", "set editing-mode vi\n")
 ```
 
-Rootbeer saves package versions in `rootbeer.lock` so you choose when to update.
-Follow [the package guide](/guide/packages) to make installed commands available
-in your shell.
+[Modules](/modules/) provide configuration APIs for Zsh, Git, SSH, and other
+tools. Use normal Lua functions, tables, and `require()` to organize your files.
+[Profiles](/guide/profiles) select settings for different machines.
 
-### Plan, then Execute
+Keep the configuration in Git, including `rootbeer.lock`, to save the package
+versions used by that configuration. You can adopt this workflow whenever you
+need it; `rb run` and `rb use` work independently.
 
-Preview changes with `rb apply --dry-run`, then make them with `rb apply`.
-Rootbeer compares your configuration with the current files and only changes
-what is needed.
+## Plan, then execute
+
+`rb apply --dry-run` evaluates your Lua configuration and shows its planned
+operations. `rb apply` executes them: installing packages, writing files, creating
+symlinks, and running declared commands.
+
+Rootbeer complements your system package manager. Its catalog supplies prebuilt
+command-line tools; modules can configure software you installed elsewhere, and
+[Homebrew integration](/modules/brew) can manage formulae and desktop applications.
+
+[Get started](/guide/getting-started) with your first package, or go directly to
+[writing a configuration](/guide/configuration).

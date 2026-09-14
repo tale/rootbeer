@@ -1,12 +1,11 @@
 import { defineConfig } from "vitepress";
-import { modulesSection, referenceSection, sidebarFromSection } from "./nav";
+import { docsSidebar } from "./nav";
 
-// https://vitepress.dev/reference/site-config
 export default defineConfig({
   srcDir: "docs",
   cleanUrls: true,
   title: "Rootbeer",
-  description: "Declare your packages and system configuration in Lua.",
+  description: "Run tools, manage packages, and configure your system with Lua.",
   themeConfig: {
     catalog: {
       repositoryUrl: "https://github.com/tale/rootbeer-index",
@@ -17,57 +16,31 @@ export default defineConfig({
     },
     search: { provider: "local" },
     nav: [
-      { text: "Guide", link: "/guide/getting-started" },
-      { text: "Packages", link: "/packages/" },
-      { text: "Modules", link: modulesSection.root },
-      { text: "Reference", link: referenceSection.root },
-    ],
-
-    sidebar: [
+      { text: "Documentation", link: "/guide/getting-started", activeMatch: "^/(guide|modules)/" },
+      { text: "Reference", link: "/reference/", activeMatch: "^/(reference|formats|scripts)/" },
       {
-        text: "Introduction",
-        collapsed: false,
-        items: [
-          { text: "What is Rootbeer?", link: "/guide/what-is-rootbeer" },
-          { text: "Getting Started", link: "/guide/getting-started" },
-          { text: "Profiles", link: "/guide/profiles" },
-        ],
-      },
-      {
-        text: "Packages",
-        collapsed: false,
-        items: [
-          { text: "Find Packages", link: "/packages/" },
-          { text: "Run and Install", link: "/guide/packages" },
-          { text: "Updates and Offline Use", link: "/guide/package-locks" },
-          { text: "Other Package Sources", link: "/guide/package-sources" },
-        ],
-      },
-      {
-        text: "Modules",
-        items: sidebarFromSection(modulesSection),
-      },
-      {
-        text: "Reference",
-        collapsed: true,
-        items: sidebarFromSection(referenceSection),
-      },
-      {
-        text: "Contributing",
-        collapsed: true,
-        items: [
-          { text: "Dev Setup", link: "/contributing/setup" },
-          { text: "Architecture", link: "/contributing/architecture" },
-          { text: "Testing", link: "/contributing/testing" },
-          { text: "Contribute Packages", link: "/contributing/packaging" },
-          { text: "Index Hosting and Trust", link: "/contributing/package-hosting" },
-          { text: "Distributing Rootbeer", link: "/contributing/distribution" },
-        ],
+        text: "Package catalog ↗",
+        link: "/packages/",
+        target: "_blank",
+        rel: "noopener noreferrer",
       },
     ],
+    sidebar: docsSidebar,
+    sidebarMenuLabel: "Documentation",
+    docFooter: { prev: "Previous", next: "Next" },
+    editLink: {
+      pattern: ({ filePath }) => {
+        const source = ["modules/index.md", "reference/index.md"].includes(filePath)
+          ? ".vitepress/nav.ts"
+          : `docs/${filePath}`;
+        return `https://github.com/tale/rootbeer/edit/main/${source}`;
+      },
+      text: "Improve this page",
+    },
 
     outline: {
-      level: "deep",
+      level: [2, 3],
+      label: "On this page",
     },
 
     socialLinks: [

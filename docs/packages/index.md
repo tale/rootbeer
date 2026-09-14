@@ -1,9 +1,11 @@
 ---
 layout: page
+catalog: true
 sidebar: false
 aside: false
 outline: false
-title: Packages
+title: Rootbeer Packages
+titleTemplate: false
 description: Search Rootbeer packages by name or command. Explore versions, supported platforms, and instructions for running or installing each tool.
 ---
 
@@ -13,8 +15,8 @@ import PackageSearch from '../../.vitepress/theme/PackageSearch.vue'
 
 <div class="catalog-page">
   <header class="catalog-header">
-    <h1>Packages</h1>
-    <p>Command-line tools for macOS and Linux. Find a tool, check its versions, and make it yours.</p>
+    <h1>Package catalog</h1>
+    <p>Search tools for macOS and Linux. Compare versions, check commands, and install packages.</p>
   </header>
   <PackageSearch />
 </div>

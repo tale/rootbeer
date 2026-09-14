@@ -1,3 +1,5 @@
+import type { DefaultTheme } from "vitepress";
+
 /**
  * Single source of truth for the Modules and Reference sections —
  * consumed by both `.vitepress/config.ts` (for nav/sidebar generation)
@@ -32,7 +34,7 @@ export interface NavSection {
 export const modulesSection: NavSection = {
   root: "/modules/",
   title: "Modules",
-  lead: `Configure tools such as Git, Zsh, and SSH from your Lua configuration.
+  lead: `Configure tools such as Git, Zsh, and SSH from [your Lua configuration](/guide/configuration).
 
 Pull a module in with \`require("rootbeer.<name>")\`:
 
@@ -191,7 +193,7 @@ function plain(text: string): string {
 
 /** Build a VitePress sidebar item array for a section. */
 export function sidebarFromSection(section: NavSection) {
-  const items: any[] = [{ text: "Overview", link: section.root }];
+  const items: DefaultTheme.SidebarItem[] = [{ text: "Overview", link: section.root }];
   for (const cat of section.categories) {
     items.push({
       text: cat.text,
@@ -208,4 +210,56 @@ export function sidebarFromSection(section: NavSection) {
 /** Resolve an entry's full URL — slugs starting with `/` are absolute. */
 export function linkFor(section: NavSection, entry: NavEntry): string {
   return entry.slug.startsWith("/") ? entry.slug : section.root + entry.slug;
+}
+
+export const docsSidebar: DefaultTheme.SidebarItem[] = [
+  {
+    text: "Getting started",
+    items: [
+      { text: "What is Rootbeer?", link: "/guide/what-is-rootbeer" },
+      { text: "Install and first steps", link: "/guide/getting-started" },
+    ],
+  },
+  {
+    text: "Using packages",
+    items: [
+      { text: "Run and install tools", link: "/guide/packages" },
+      { text: "Updates and offline use", link: "/guide/package-locks" },
+      { text: "Other package sources", link: "/guide/package-sources" },
+    ],
+  },
+  {
+    text: "Managing your system",
+    items: [
+      { text: "Your configuration", link: "/guide/configuration" },
+      { text: "Profiles and machines", link: "/guide/profiles" },
+      { text: "Integration modules", link: modulesSection.root },
+      ...sidebarFromSection(modulesSection).slice(1),
+    ],
+  },
+  {
+    text: "Reference",
+    collapsed: true,
+    items: sidebarFromSection(referenceSection),
+  },
+  {
+    text: "Contributing",
+    collapsed: true,
+    items: [
+      { text: "Development setup", link: "/contributing/setup" },
+      { text: "Architecture", link: "/contributing/architecture" },
+      { text: "Testing", link: "/contributing/testing" },
+      { text: "Package authoring", link: "/contributing/packaging" },
+      { text: "Index hosting and trust", link: "/contributing/package-hosting" },
+      { text: "Distributing Rootbeer", link: "/contributing/distribution" },
+    ],
+  },
+];
+
+export function sectionForPath(path: string): string | undefined {
+  const normalize = (value: string) => value.replace(/\.html$/, "").replace(/\/$/, "");
+  const matches = (item: DefaultTheme.SidebarItem): boolean =>
+    Boolean(item.link && normalize(item.link) === normalize(path)) ||
+    Boolean(item.items?.some(matches));
+  return docsSidebar.find(matches)?.text;
 }
