@@ -2,7 +2,7 @@
 
 [Browse the catalog](/packages/) for packages available by name. For another tool,
 you can request a GitHub release or an Aqua recipe with `rb run`, `rb use`, or
-`rb.package()`.
+`rb.packages()`.
 
 ## Install from GitHub
 
@@ -18,17 +18,37 @@ Or declare the same request in your configuration:
 ```lua
 local rb = require("rootbeer")
 
-rb.package("github:BurntSushi/ripgrep@15.2.0")
+rb.packages({ "github:BurntSushi/ripgrep@15.2.0" })
 ```
 
 The release tag must match exactly, including a leading `v` when the project uses
 one. Rootbeer selects a release asset for your platform. Supported formats include
 tar.gz, tar.xz, ZIP, and standalone executables.
 
-If automatic selection is ambiguous, use Lua's `asset` option to choose a filename
-and `bins` to declare command paths inside it; see the
-[package API](/reference/core#rootbeer-package). The CLI's `--bin` chooses an
-already exported command; it does not select a release asset or an archive path.
+If automatic selection is ambiguous, put the request and its options in one entry.
+Choose an exact release asset and name its exported command paths:
+
+```lua
+rb.packages({
+    "jq",
+    {
+        request = "github:BurntSushi/ripgrep@15.2.0",
+        asset = "ripgrep-15.2.0-aarch64-apple-darwin.tar.gz",
+        bins = { rg = "ripgrep-15.2.0-aarch64-apple-darwin/rg" },
+    },
+})
+```
+
+This asset targets Apple silicon macOS; select platform-specific declarations with
+normal Lua and `rb.host`. Keep versions in the request's `@version` syntax and
+resolvers in its `github:` or `aqua:` prefix. `asset` and `bins` are options for
+explicit GitHub requests. The CLI's `--bin` chooses an already exported command;
+it does not select a release asset or an archive path.
+
+`rb.package(entry)` accepts the same individual entry. Existing
+`rb.package("github:owner/repository@tag", { asset = "...", bins = { ... } })`
+calls remain supported. Exact raw package tables can also appear in the list;
+see the [package API](/reference/core#rootbeer-packages).
 
 ## Install from Aqua
 

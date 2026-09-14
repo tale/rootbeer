@@ -167,10 +167,137 @@ fn github_options_remain_declarative() {
 #[test]
 fn accepts_raw_and_additional_archive_formats() {
     let ops = run(r#"
-        for _, install in ipairs({ { binary = "bin/demo" }, { archive = "zip" }, { archive = "tar.xz" } }) do
+        for _, install in ipairs({ { binary = "bin/demo" }, { archive = "zip", directory = false }, { archive = "tar.xz" } }) do
             rb.package({ name = "demo", version = "1", source = { file = "asset", sha256 = "hash" },
                 install = install, bins = { demo = "bin/demo" } })
         end
     "#);
     assert_eq!(ops.len(), 3);
+}
+
+#[test]
+fn batches_and_structured_requests_match_individual_declarations() {
+    let single = run(r#"
+        rb.package("aqua:owner/first@v1")
+        rb.package("github:owner/second@v2", { asset = "second.zip", bins = { second = "bin/second" } })
+        rb.package({ name = "raw", version = "1", source = { file = "/raw.zip", sha256 = "hash" },
+            install = { archive = "zip" }, bins = { raw = "bin/raw" } })
+    "#);
+    let batch = run(r#"
+        rb.packages({
+            "aqua:owner/first@v1",
+            { request = "github:owner/second@v2", asset = "second.zip", bins = { second = "bin/second" } },
+            { name = "raw", version = "1", source = { file = "/raw.zip", sha256 = "hash" },
+                install = { archive = "zip" }, bins = { raw = "bin/raw" } },
+        })
+    "#);
+    let intents = |ops: Vec<Op>| {
+        ops.into_iter()
+            .map(|op| match op {
+                Op::Package { intent } => intent,
+                _ => panic!("unexpected op"),
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(intents(single), intents(batch));
+    let structured = intents(run(
+        r#"rb.package({ request = "github:owner/second@v2", asset = "second.zip", bins = { second = "bin/second" } })"#,
+    ));
+    assert_eq!(
+        structured,
+        intents(run(
+            r#"rb.package("github:owner/second@v2", { asset = "second.zip", bins = { second = "bin/second" } })"#
+        ))
+    );
+}
+
+#[test]
+fn invalid_batches_leave_operations_and_planned_bins_untouched() {
+    let root = tempfile::tempdir().unwrap();
+    let vm = vm_in(
+        r#"
+        local first = { request = "github:owner/tool@v1", bins = { batch_atomic_test_command = "bin/tool" } }
+        ok, failure = pcall(function() rb.packages({ first, { request = "github:owner/tool@v1", asset = 42 } }) end)
+        failure = tostring(failure)
+        leaked = rb.which("batch_atomic_test_command")
+    "#,
+        root.path(),
+    );
+    assert!(!vm.lua.globals().get::<bool>("ok").unwrap());
+    assert!(vm
+        .lua
+        .globals()
+        .get::<String>("failure")
+        .unwrap()
+        .contains("entry 2"));
+    assert!(vm
+        .lua
+        .globals()
+        .get::<Option<String>>("leaked")
+        .unwrap()
+        .is_none());
+    assert!(super::super::test_support::drain(vm).is_empty());
+}
+
+#[test]
+fn rejects_sparse_mixed_lists_and_ambiguous_or_mistyped_specs() {
+    for invalid in [
+        r#"rb.packages({ [1] = "rg", [3] = "jq" })"#,
+        r#"rb.packages({ "rg", name = "jq" })"#,
+        r#"rb.packages({ [0] = "rg" })"#,
+        r#"rb.package({ request = "rg", version = "1" })"#,
+        r#"rb.package({ request = "rg", name = "ambiguous" })"#,
+        r#"rb.package("github:owner/tool@v1", { assset = "typo" })"#,
+        r#"rb.package("github:owner/tool@v1", { request = "ignored" })"#,
+        r#"rb.package({ request = "rg", bins = {} })"#,
+        r#"rb.package({ name = "raw", version = 1, source = { file = "tool", sha256 = "hash" }, install = { binary = "tool" }, bins = { tool = "tool" } })"#,
+        r#"rb.package({ name = "raw", version = "1", source = { file = "tool", url = "https://example.com/tool", sha256 = "hash" }, install = { binary = "tool" }, bins = { tool = "tool" } })"#,
+        r#"rb.package({ name = "raw", version = "1", source = { path = "tool", file = "tool", sha256 = "hash" }, install = { binary = "tool" }, bins = { tool = "tool" } })"#,
+        r#"rb.package({ name = "raw", version = "1", source = { file = "tool", sha256 = "hash" }, install = { directory = true, archive = "zip" }, bins = { tool = "tool" } })"#,
+        r#"rb.package({ name = "raw", version = "1", source = { file = "tool", sha256 = "hash" }, install = { binary = "tool", archive = "zip" }, bins = { tool = "tool" } })"#,
+        r#"rb.package({ name = "raw", version = "1", source = { file = "tool", sha256 = "hash" }, install = { directory = "true" }, bins = { tool = "tool" } })"#,
+        r#"rb.package({ name = "raw", version = "1", source = { file = "tool", sha256 = "hash" }, install = { binary = "tool" }, bins = { tool = 42 } })"#,
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let vm = vm_in(
+            &format!("ok = pcall(function() {invalid} end)"),
+            root.path(),
+        );
+        assert!(!vm.lua.globals().get::<bool>("ok").unwrap(), "{invalid}");
+        assert!(super::super::test_support::drain(vm).is_empty());
+    }
+}
+
+#[test]
+fn profile_path_helpers_work_before_any_package_is_declared() {
+    let root = tempfile::tempdir().unwrap();
+    let vm = vm_in(
+        r#"
+        directory = rb.bin_dir()
+        path = rb.bin_path("fresh_bootstrap_test_command")
+        installed = rb.which("fresh_bootstrap_test_command")
+        for _, name in ipairs({ "", ".", "..", "/bin/sh", "../sh", "foo/bar", "foo\\bar" }) do
+            assert(not pcall(rb.which, name))
+            assert(not pcall(rb.bin_path, name))
+        end
+        assert(not pcall(rb.which, 42))
+        assert(not pcall(rb.bin_path, 42))
+    "#,
+        root.path(),
+    );
+    assert_eq!(
+        PathBuf::from(vm.lua.globals().get::<String>("directory").unwrap()),
+        crate::package::profile::bin_dir()
+    );
+    assert_eq!(
+        PathBuf::from(vm.lua.globals().get::<String>("path").unwrap()),
+        crate::package::profile::bin_path("fresh_bootstrap_test_command")
+    );
+    assert!(vm
+        .lua
+        .globals()
+        .get::<Option<String>>("installed")
+        .unwrap()
+        .is_none());
+    assert!(super::super::test_support::drain(vm).is_empty());
 }

@@ -25,9 +25,10 @@ for the complete walkthrough. The module exposes:
   `ctx.cli()`, `ctx.hostname()`, and `ctx.user()` for explicit strategy
   composition.
 
-## `rb.package`
+## Package declarations
 
-`rb.package("ripgrep")` installs ripgrep. Add `@version` to choose an exact version.
+`rb.packages({ "ripgrep", "jq" })` declares a package list.
+`rb.package("ripgrep")` accepts one entry. Add `@version` to choose an exact version.
 Rootbeer saves package versions in `rootbeer.lock`.
 
 [Find packages](/packages/) or follow the [package guide](/guide/packages) to get started.

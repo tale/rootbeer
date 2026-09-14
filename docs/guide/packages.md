@@ -96,8 +96,7 @@ Use Lua when you want to keep your package list alongside your shell and dotfile
 ```lua
 local rb = require("rootbeer")
 
-rb.package("jq")
-rb.package("ripgrep")
+rb.packages({ "jq", "ripgrep", "gh" })
 ```
 
 ```sh
@@ -108,6 +107,31 @@ rg --version
 
 Commit `init.lua` and the resulting `rootbeer.lock` to keep the configuration and
 resolved package versions together.
+
+Entries can be request strings, request tables with GitHub options, or exact
+package specifications. The list must be dense: no missing indexes or named keys.
+Rootbeer validates the whole list before adding operations and identifies a bad
+entry by its index. `rb.package(...)` accepts one entry when you only need one.
+
+Keep platform and profile selection in normal Lua, using `rb.host` or
+[`rb.profile.when`](/guide/profiles). See [other sources](/guide/package-sources)
+for request tables and the [API reference](/reference/core#rootbeer-packages)
+for exact specifications.
+
+### Run a declared command during apply
+
+Use its stable configuration-profile path even on the first installation:
+
+```lua
+rb.packages({ "gh" })
+rb.exec(rb.bin_path("gh"), { "--version" })
+```
+
+`rb.bin_path()` constructs the path without checking whether it is installed yet;
+`rb.exec()` runs during apply, after the earlier package declaration.
+`rb.bin_dir()` returns the configuration profile's binary directory.
+`rb.which()` is an optional query for a known or installed managed command and
+returns `nil` when unavailable. It never searches the host PATH.
 
 ## Choose a version
 

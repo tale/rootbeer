@@ -98,6 +98,11 @@ function rootbeer.exec(cmd, args) end
 --- @field asset? string Exact GitHub release asset filename. Required when platform selection is ambiguous.
 --- @field bins? table<string, string> Binary name → relative path in the GitHub asset. Defaults to executable discovery for archives, or the repository name for raw binaries.
 
+--- @class rootbeer.PackageRequestSpec
+--- @field request string Package name, name@version, github:owner/repo@tag, or aqua:owner/repo@version.
+--- @field asset? string Exact release asset filename for an explicit github: request.
+--- @field bins? table<string, string> Exported command name → relative path for an explicit github: request.
+
 --- @class rootbeer.PackageIndex
 --- @field url string HTTPS index URL, or an explicit absolute `file:///` URL.
 --- @field sha256 string Lowercase SHA-256 of the exact index JSON bytes.
@@ -112,9 +117,24 @@ function rootbeer.package_index(spec) end
 --- to choose an exact version. Package versions are saved in `rootbeer.lock`.
 --- You can also use `github:owner/repo@tag`, `aqua:owner/repo@version`,
 --- or a table describing an exact download and installation.
---- @param spec rootbeer.PackageSpec|string Package name, source request, or exact package specification.
+--- @param spec string|rootbeer.PackageRequestSpec|rootbeer.PackageSpec Package name, source request with options, or exact package specification.
 --- @param opts? rootbeer.PackageOptions Options for an explicit `github:` request.
 function rootbeer.package(spec, opts) end
+
+--- Declares a dense package list in order. Accepts the same entries as package().
+--- Validates every entry before adding operations; errors identify the invalid index.
+--- @param specs (string|rootbeer.PackageRequestSpec|rootbeer.PackageSpec)[] Package declarations.
+function rootbeer.packages(specs) end
+
+--- Returns the configuration profile's stable binary directory without checking installation.
+--- @return string path Configuration profile binary directory.
+function rootbeer.bin_dir() end
+
+--- Returns a command's stable path in the configuration profile without checking installation.
+--- Declare the package before using this path in a deferred exec() call.
+--- @param bin string Exported command name.
+--- @return string path Configuration profile command path.
+function rootbeer.bin_path(bin) end
 
 --- Returns the stable Rootbeer profile path for a managed binary, or `nil`
 --- when the binary is not provided by the current plan/profile. This never
