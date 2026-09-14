@@ -106,7 +106,7 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
     throw new Error("The package catalog contents could not be verified.");
   const index = JSON.parse(decoder.decode(snapshot));
   if (
-    index.schema !== 1 ||
+    ![1, 2].includes(index.schema) ||
     index.catalog?.schema !== 1 ||
     !index.catalog.packages ||
     !index.artifacts

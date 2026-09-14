@@ -90,6 +90,9 @@ enum Command {
         site: PathBuf,
         #[arg(long)]
         site_url: String,
+        /// Manifest channel filename, such as latest-v2.json
+        #[arg(long, default_value = "latest.json")]
+        manifest: String,
         #[arg(long)]
         registry: String,
         #[arg(long)]
@@ -316,6 +319,7 @@ fn execute(args: Args) -> Result<(), String> {
             bundle,
             site,
             site_url,
+            manifest,
             registry,
             repository_url,
             sequence,
@@ -326,6 +330,7 @@ fn execute(args: Args) -> Result<(), String> {
                 bundle: &bundle,
                 site: &site,
                 site_url: &site_url,
+                manifest_name: &manifest,
                 registry: &registry,
                 repository_url: &repository_url,
                 sequence,
@@ -394,4 +399,50 @@ fn execute(args: Args) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn publish_manifest_defaults_to_legacy_and_accepts_an_explicit_channel() {
+        let argv = [
+            "rb",
+            "package",
+            "publish",
+            "--bundle",
+            "bundle",
+            "--site",
+            "site",
+            "--site-url",
+            "https://example.org",
+            "--registry",
+            "owner/index",
+            "--repository-url",
+            "https://github.com/owner/index",
+            "--sequence",
+            "1",
+            "--key",
+            "key.der",
+            "--public-key",
+            "public-key",
+        ];
+        for channel in [None, Some("latest-v2.json")] {
+            let mut args = argv.to_vec();
+            if let Some(channel) = channel {
+                args.extend(["--manifest", channel]);
+            }
+            let cli = crate::Cli::try_parse_from(args).unwrap();
+            let crate::Commands::Package(Args {
+                command: Command::Publish { manifest, .. },
+                ..
+            }) = cli.command
+            else {
+                panic!("expected package publish");
+            };
+            assert_eq!(manifest, channel.unwrap_or("latest.json"));
+        }
+    }
 }

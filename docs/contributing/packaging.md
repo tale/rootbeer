@@ -55,16 +55,47 @@ Choose the newest release for each platform. `default_version` stays explicit;
 `default_versions` selects older defaults for discontinued targets. Retain older
 versions and their exceptions. Explicit version requests never fall back.
 
+### Archive commands and moving releases
+
+Use `bin_paths` to map each declared command to its path inside a GitHub archive.
+For example, bobrwm maps `bobrwm` to `Bobrwm.app/Contents/MacOS/bobrwm-cli`.
+Mappings must cover every declared command and stay inside the archive. The full
+archive tree is retained, including resources and app bundles.
+
+A moving tag such as `tip` is not a package version. Give each approved snapshot
+an exact version, select its exact asset name, and pin every platform's verified
+SHA-256 in that version's `checksums` map. Set `mirror = true` to retain the
+qualified package in the index's content-addressed registry. Receipts retain the
+original upstream URL and checksum. Old installations then remain available even
+if upstream replaces or removes the release assets.
+
+Mirrored snapshots require manual checksum qualification; set `source.track = false`
+instead of treating a moving tag as a stable release. Increment the recipe revision
+if another build of the same version changes its bytes. Applications can be opened
+from the verified store with `rb run bobrwm --app Bobrwm.app`.
+
 ### Source builds
 
 Use a shared `build` instead of `source`. It declares the supported `backend`
-(currently `autotools`), archive format, source URL, strip prefix, configure flags,
-and exact build dependencies. URL and strip prefix accept `{version}`. Build
+(`autotools` or `zig`), archive format, source URL, strip prefix, and exact build
+dependencies. Autotools accepts `configure` flags. URL and strip prefix accept `{version}`. Build
 packages must declare `homepage` and `systems` explicitly.
 
 Each version supplies its own verified `sha256`; checksums cannot be shared or
 inferred. A version's `build` can replace the complete build definition for a
 historical exception, including its exact URL and checksum.
+
+Zig recipes must depend on an exact catalog compiler such as `zig@0.16.0`.
+Use `args` for project `-D` options; Rootbeer controls the install prefix and
+isolates build caches. Installed commands belong under `bin/`; runtime resources
+must continue working after the installation is moved. Checks run through profile
+symlinks; offline reconstruction must recover the same commands and output tree.
+
+Use `patches` for reviewed unified diffs applied with `-p1` before compilation.
+Patch contents are part of the recipe and build receipt. Keep changes narrowly
+focused, such as pinning a git-derived version or replacing a fixed installation
+path with executable-relative lookup. Pin unreleased source archives to a full
+commit and use an exact snapshot version, retaining the original source checksum.
 
 ### Expansion and compatibility
 

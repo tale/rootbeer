@@ -22,6 +22,7 @@ use crate::store::{hash_file, hash_tree, Store};
 #[serde(rename_all = "snake_case")]
 pub enum BuildBackend {
     Autotools,
+    Zig,
 }
 
 /// Verified source inputs and exact canonical build dependencies.
@@ -39,6 +40,10 @@ pub struct SourceBuild {
     pub strip_prefix: PathBuf,
     #[serde(default)]
     pub configure: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patches: Vec<String>,
     #[serde(default)]
     pub dependencies: Vec<String>,
 }
@@ -92,6 +97,28 @@ impl SourceBuild {
             .any(|arg| arg.starts_with("--prefix") || !arg.starts_with("--"))
         {
             return Err("configure options must be flags; the builder owns --prefix".into());
+        }
+        match self.backend {
+            BuildBackend::Autotools if !self.args.is_empty() => {
+                return Err("Autotools builds use configure, not args".into());
+            }
+            BuildBackend::Zig if !self.configure.is_empty() => {
+                return Err("Zig builds use args, not configure".into());
+            }
+            BuildBackend::Zig
+                if self
+                    .args
+                    .iter()
+                    .any(|arg| !arg.starts_with("-D") || arg.len() == 2) =>
+            {
+                return Err(
+                    "Zig args must be -D options; the builder owns prefix and caches".into(),
+                );
+            }
+            _ => {}
+        }
+        if self.patches.iter().any(|patch| patch.trim().is_empty()) {
+            return Err("source patches must not be empty".into());
         }
         let mut dependencies = BTreeSet::new();
         for dependency in &self.dependencies {
@@ -392,13 +419,23 @@ fn compile(
     ]);
     environment.insert("CC", "/usr/bin/cc".into());
     let mut toolchain = BTreeMap::new();
-    for (name, args) in [
-        ("/usr/bin/cc", vec!["--version"]),
-        ("make", vec!["--version"]),
-        ("/usr/bin/uname", vec!["-a"]),
-    ] {
+    let zig = tools.join("zig");
+    let compiler_tools = match build.backend {
+        BuildBackend::Autotools => vec![
+            ("/usr/bin/cc", "--version"),
+            ("make", "--version"),
+            ("/usr/bin/uname", "-a"),
+        ],
+        BuildBackend::Zig => {
+            if !zig.is_file() {
+                return Err("Zig builds require an exact catalog dependency providing zig".into());
+            }
+            vec![("zig", "version"), ("/usr/bin/uname", "-a")]
+        }
+    };
+    for (name, argument) in compiler_tools {
         let result = Command::new(name)
-            .args(args)
+            .arg(argument)
             .env_clear()
             .envs(&environment)
             .output()
@@ -412,7 +449,53 @@ fn compile(
         );
     }
     let log = output.join("build.log");
+    for (index, patch) in build.patches.iter().enumerate() {
+        let path = workspace_path.join(format!("patch-{index}.diff"));
+        fs::write(&path, patch).map_err(|e| e.to_string())?;
+        run(
+            &[
+                "/usr/bin/patch".into(),
+                "--batch".into(),
+                "-p1".into(),
+                "-i".into(),
+                path.to_string_lossy().into_owned(),
+            ],
+            &source,
+            &environment,
+            &log,
+            Duration::from_secs(30),
+        )?;
+    }
     match build.backend {
+        BuildBackend::Zig => {
+            fs::create_dir_all(workspace_path.join("zig-global-cache/tmp"))
+                .map_err(|e| e.to_string())?;
+            let mut arguments = vec![
+                zig.to_string_lossy().into_owned(),
+                "build".into(),
+                "--prefix".into(),
+                prefix.to_string_lossy().into_owned(),
+                "--cache-dir".into(),
+                workspace_path
+                    .join("zig-cache")
+                    .to_string_lossy()
+                    .into_owned(),
+                "--global-cache-dir".into(),
+                workspace_path
+                    .join("zig-global-cache")
+                    .to_string_lossy()
+                    .into_owned(),
+                format!("-j{jobs}"),
+            ];
+            arguments.extend(build.args.clone());
+            run(
+                &arguments,
+                &source,
+                &environment,
+                &log,
+                Duration::from_secs(1200),
+            )?;
+        }
         BuildBackend::Autotools => {
             let mut configure = vec!["/bin/sh".into(), "./configure".into(), "--prefix=/".into()];
             configure.extend(build.configure.clone());
@@ -558,10 +641,13 @@ pub(super) fn run(
     }
 }
 
-fn pack(root: &Path, output: &Path) -> io::Result<()> {
+pub(super) fn pack(root: &Path, output: &Path) -> io::Result<()> {
     fn paths(root: &Path, directory: &Path, entries: &mut Vec<PathBuf>) -> io::Result<()> {
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
+            if directory == root && entry.file_name() == ".rootbeer" {
+                continue;
+            }
             entries.push(entry.path().strip_prefix(root).unwrap().to_path_buf());
             if entry.file_type()?.is_dir() {
                 paths(root, &entry.path(), entries)?;
@@ -596,6 +682,27 @@ mod tests {
             schema: 1,
             packages: BTreeMap::from([("xz".into(), catalog.packages["xz"].clone())]),
         }
+    }
+
+    #[test]
+    fn validates_backend_options_and_patch_inputs() {
+        let catalog = source_catalog();
+        let mut build = catalog.packages["xz"].versions["5.8.3"]
+            .build
+            .clone()
+            .unwrap();
+        build.args = vec!["-Doptimize=ReleaseFast".into()];
+        assert!(build.validate().unwrap_err().contains("Autotools"));
+        build.backend = BuildBackend::Zig;
+        build.configure.clear();
+        assert!(build.validate().is_ok());
+        for argument in ["--prefix=/tmp", "--global-cache-dir=/tmp", "build", "-D"] {
+            build.args = vec![argument.into()];
+            assert!(build.validate().is_err());
+        }
+        build.args.clear();
+        build.patches = vec![String::new()];
+        assert!(build.validate().unwrap_err().contains("patches"));
     }
 
     #[test]
@@ -787,6 +894,16 @@ EOF
         build.sha256 = cached.sha256;
         build.strip_prefix = "fixture".into();
         build.configure.clear();
+        build.patches = vec![r#"--- a/configure
++++ b/configure
+@@ -1,4 +1,5 @@
+ #!/bin/sh
+ set -eu
+ fixture-tool
++printf 'source-patch-applied\n'
+ cat > Makefile <<'EOF'
+"#
+        .into()];
         catalog.packages.insert("fixture".into(), package);
         catalog.validate().unwrap();
         let tools = directory.path().join("tools");
@@ -822,5 +939,9 @@ EOF
             .success());
         assert!(output.join("install.lua").is_file());
         assert!(artifact.toolchain.contains_key("/usr/bin/cc"));
+        assert_eq!(artifact.build.patches.len(), 1);
+        assert!(fs::read_to_string(output.join("build.log"))
+            .unwrap()
+            .contains("source-patch-applied\n"));
     }
 }

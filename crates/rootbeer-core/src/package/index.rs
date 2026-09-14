@@ -92,8 +92,24 @@ impl ArtifactIndex {
 
     pub(super) fn validate_fragment(&self) -> Result<(), String> {
         self.catalog.validate()?;
-        if self.schema != 1 || self.catalog_sha256 != self.catalog.sha256() {
+        if !matches!(self.schema, 1 | 2) || self.catalog_sha256 != self.catalog.sha256() {
             return Err("invalid artifact index schema or catalog digest".into());
+        }
+        if self.schema == 1
+            && self.catalog.packages.values().any(|package| {
+                package.versions.values().any(|recipe| {
+                    !recipe.bin_paths.is_empty()
+                        || !recipe.checksums.is_empty()
+                        || recipe.mirror
+                        || recipe.build.as_ref().is_some_and(|build| {
+                            matches!(build.backend, super::BuildBackend::Zig)
+                                || !build.args.is_empty()
+                                || !build.patches.is_empty()
+                        })
+                })
+            })
+        {
+            return Err("extended package recipes require artifact index schema 2".into());
         }
         for (key, systems) in &self.artifacts {
             let request = PackageRequest::parse(key);
@@ -146,6 +162,11 @@ impl super::PublishedArtifact {
         {
             return Err(format!("{key}: invalid platform artifact contract"));
         }
+        if !recipe.bin_paths.is_empty() && package.provides.bins != recipe.bin_paths {
+            return Err(format!(
+                "{key}: artifact command paths differ from the recipe"
+            ));
+        }
         for path in package.provides.bins.values() {
             super::realize::validate_relative_path("index command", path)
                 .map_err(|e| e.to_string())?;
@@ -180,6 +201,17 @@ impl super::PublishedArtifact {
         }
         if !is_sha256(sha256) {
             return Err(format!("{key}: invalid archive SHA-256"));
+        }
+        if recipe.mirror && !url.starts_with("ghcr://") {
+            return Err(format!("{key}: mirrored artifacts must use GHCR"));
+        }
+        if !recipe.mirror
+            && recipe
+                .checksums
+                .get(system)
+                .is_some_and(|expected| expected != sha256)
+        {
+            return Err(format!("{key}: artifact checksum differs from the recipe"));
         }
         Ok(())
     }
@@ -442,6 +474,140 @@ mod tests {
             }
             let index: ArtifactIndex = serde_json::from_value(value).unwrap();
             assert!(index.validate().is_err(), "{field}");
+        }
+    }
+
+    #[test]
+    fn artifact_validation_enforces_declared_command_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let (index, _) = fixture(root.path());
+        let (key, platforms) = index.artifacts.iter().next().unwrap();
+        let mut artifact = platforms["aarch64-linux"].clone();
+        let package = &index.catalog.packages["new-tool"];
+        let mut recipe = package.versions[&package.default_version].clone();
+        recipe.build = None;
+        recipe.source = Some("github:owner/tool@v1".into());
+        recipe.bin_paths = artifact.package.provides.bins.clone();
+        recipe.validate().unwrap();
+        artifact.validate(key, "aarch64-linux", &recipe).unwrap();
+
+        *artifact.package.provides.bins.values_mut().next().unwrap() = "bin/other".into();
+        assert!(artifact
+            .validate(key, "aarch64-linux", &recipe)
+            .unwrap_err()
+            .contains("command paths differ"));
+
+        recipe.bin_paths.clear();
+        artifact.validate(key, "aarch64-linux", &recipe).unwrap();
+    }
+
+    #[test]
+    fn artifact_validation_checks_platform_pins_without_comparing_mirror_archive_to_upstream() {
+        let root = tempfile::tempdir().unwrap();
+        let (index, _) = fixture(root.path());
+        let (key, platforms) = index.artifacts.iter().next().unwrap();
+        let mut artifact = platforms["aarch64-linux"].clone();
+        let package = &index.catalog.packages["new-tool"];
+        let mut recipe = package.versions[&package.default_version].clone();
+        recipe.build = None;
+        recipe.source = Some("github:owner/tool@v1".into());
+        let LockedSource::Url { sha256, .. } = &artifact.package.source else {
+            panic!("expected URL source");
+        };
+        recipe.checksums = recipe
+            .systems
+            .iter()
+            .map(|system| (system.clone(), "b".repeat(64)))
+            .collect();
+        recipe
+            .checksums
+            .insert("aarch64-linux".into(), sha256.clone());
+        recipe.validate().unwrap();
+        artifact.validate(key, "aarch64-linux", &recipe).unwrap();
+        assert!(artifact
+            .validate(key, "x86_64-linux", &recipe)
+            .unwrap_err()
+            .contains("checksum differs"));
+
+        recipe.mirror = true;
+        assert!(artifact
+            .validate(key, "aarch64-linux", &recipe)
+            .unwrap_err()
+            .contains("mirrored artifacts must use GHCR"));
+        artifact.package.source = LockedSource::Url {
+            url: format!("ghcr://owner/tool@sha256:{}", "c".repeat(64)),
+            sha256: "c".repeat(64),
+        };
+        artifact.validate(key, "aarch64-linux", &recipe).unwrap();
+        recipe.mirror = false;
+        assert!(artifact
+            .validate(key, "aarch64-linux", &recipe)
+            .unwrap_err()
+            .contains("checksum differs"));
+    }
+
+    #[test]
+    fn reads_legacy_indexes_but_rejects_extended_recipes_under_schema_one() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut index, _) = fixture(root.path());
+        assert_eq!(index.schema, 2);
+        index.schema = 1;
+        index.validate().unwrap();
+        let original = serde_json::to_value(&index).unwrap();
+
+        for feature in ["bin_paths", "checksums", "mirror", "zig", "args", "patches"] {
+            let mut index: ArtifactIndex = serde_json::from_value(original.clone()).unwrap();
+            let package = index.catalog.packages.get_mut("new-tool").unwrap();
+            let recipe = package.versions.get_mut(&package.default_version).unwrap();
+            if matches!(feature, "bin_paths" | "checksums" | "mirror") {
+                recipe.build = None;
+                recipe.source = Some("github:owner/tool@v1".into());
+            }
+            match feature {
+                "bin_paths" => {
+                    recipe.bin_paths = recipe
+                        .bins
+                        .iter()
+                        .map(|bin| (bin.clone(), "bin/tool".into()))
+                        .collect()
+                }
+                "checksums" | "mirror" => {
+                    recipe.checksums = recipe
+                        .systems
+                        .iter()
+                        .map(|system| (system.clone(), "a".repeat(64)))
+                        .collect();
+                    recipe.mirror = feature == "mirror";
+                }
+                "zig" | "args" => {
+                    let build = recipe.build.as_mut().unwrap();
+                    build.backend = super::super::BuildBackend::Zig;
+                    build.configure.clear();
+                    if feature == "args" {
+                        build.args.push("-Doptimize=ReleaseFast".into());
+                    }
+                }
+                "patches" => recipe
+                    .build
+                    .as_mut()
+                    .unwrap()
+                    .patches
+                    .push("patch contents".into()),
+                _ => unreachable!(),
+            }
+            index.catalog_sha256 = index.catalog.sha256();
+            index.artifacts.clear();
+            assert!(
+                index.validate_fragment().unwrap_err().contains("schema 2"),
+                "{feature}"
+            );
+            index.schema = 2;
+            index.validate_fragment().unwrap();
+        }
+
+        for schema in [0, 3] {
+            index.schema = schema;
+            assert!(index.validate().unwrap_err().contains("schema"));
         }
     }
 }

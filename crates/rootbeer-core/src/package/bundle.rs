@@ -52,7 +52,7 @@ pub fn bundle_artifacts(
         staging.path().join("install"),
     );
     let mut index = ArtifactIndex {
-        schema: 1,
+        schema: 2,
         catalog: catalog.clone(),
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),

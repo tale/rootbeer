@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use rootbeer_core::package::{standalone, PackageRequest, RealizedPackage};
@@ -13,6 +13,10 @@ pub struct RunArgs {
     /// Exported command to execute for packages with multiple commands
     #[arg(long)]
     bin: Option<String>,
+
+    /// Open a macOS .app bundle inside the package instead of a command
+    #[arg(long, conflicts_with = "bin")]
+    app: Option<PathBuf>,
 
     /// Add another package's commands to this process's PATH
     #[arg(short = 'p', long = "package")]
@@ -54,6 +58,9 @@ pub fn run(args: RunArgs) {
 }
 
 fn execute(args: RunArgs) -> Result<(), String> {
+    if args.app.is_some() && !cfg!(target_os = "macos") {
+        return Err("--app is supported only on macOS".into());
+    }
     let request = PackageRequest::parse(&args.package);
     let mut requests = vec![request.clone()];
     requests.extend(
@@ -63,10 +70,15 @@ fn execute(args: RunArgs) -> Result<(), String> {
     );
     let environment = standalone::prepare(&requests, false, args.offline, args.update)?;
     let package = &environment.packages[0];
+    let path = command_path(&environment.bin_dir)?;
+    if let Some(app) = args.app {
+        let app = select_app(&package.store_entry.path, &app)?;
+        let error = app_command(&app, &args.args).env("PATH", path).exec();
+        return Err(format!("cannot open {}: {error}", app.display()));
+    }
     let bin = environment
         .bin_dir
         .join(select_bin(package, &request, args.bin.as_deref())?);
-    let path = command_path(&environment.bin_dir)?;
     let error = Command::new(&bin).args(args.args).env("PATH", path).exec();
     Err(format!("cannot run {}: {error}", bin.display()))
 }
@@ -92,6 +104,40 @@ pub fn install(args: UseArgs) {
             std::process::exit(1);
         }
     }
+}
+
+fn select_app(store_entry: &Path, app: &Path) -> Result<PathBuf, String> {
+    if app.as_os_str().is_empty()
+        || app
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        || app.extension().is_none_or(|extension| extension != "app")
+    {
+        return Err("--app must name a relative .app directory without '.' or '..'".into());
+    }
+    let root = store_entry
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let path = root
+        .join(app)
+        .canonicalize()
+        .map_err(|error| format!("cannot find app {}: {error}", app.display()))?;
+    if !path.starts_with(&root) {
+        return Err("--app must remain inside the package store entry".into());
+    }
+    if !path.is_dir() || path.extension().is_none_or(|extension| extension != "app") {
+        return Err("--app must name an existing .app directory".into());
+    }
+    Ok(path)
+}
+
+fn app_command(app: &Path, args: &[OsString]) -> Command {
+    let mut command = Command::new("/usr/bin/open");
+    command.arg(app);
+    if !args.is_empty() {
+        command.arg("--args").args(args);
+    }
+    command
 }
 
 fn command_path(bin_dir: &Path) -> Result<OsString, String> {
@@ -303,6 +349,119 @@ mod tests {
         assert_eq!(
             select_bin(&package, &request, Some("second")).unwrap(),
             Path::new("second")
+        );
+    }
+
+    #[test]
+    fn app_arguments_parse_and_conflict_with_binary_selection() {
+        let cli = Cli::try_parse_from([
+            "rb",
+            "run",
+            "bobrwm",
+            "--app",
+            "Bobrwm.app",
+            "--",
+            "--config",
+            "config with spaces.zon",
+        ])
+        .unwrap();
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command")
+        };
+        assert_eq!(args.app, Some(PathBuf::from("Bobrwm.app")));
+        assert_eq!(
+            args.args,
+            [
+                OsString::from("--config"),
+                OsString::from("config with spaces.zon")
+            ]
+        );
+        let error = Cli::try_parse_from([
+            "rb",
+            "run",
+            "bobrwm",
+            "--app",
+            "Bobrwm.app",
+            "--bin",
+            "bobrwm",
+        ])
+        .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn app_selection_requires_a_contained_relative_bundle_directory() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let store = temporary.path().join("store");
+        let bundle = store.join("nested/Bobrwm.app");
+        std::fs::create_dir_all(&bundle).unwrap();
+        assert_eq!(
+            select_app(&store, Path::new("nested/Bobrwm.app")).unwrap(),
+            bundle.canonicalize().unwrap()
+        );
+        for path in [
+            "",
+            ".",
+            "../Bobrwm.app",
+            "nested/../Bobrwm.app",
+            "/Applications/Bobrwm.app",
+            "nested",
+            "Missing.app",
+        ] {
+            assert!(select_app(&store, Path::new(path)).is_err(), "{path}");
+        }
+        std::fs::write(store.join("File.app"), "not a directory").unwrap();
+        assert!(select_app(&store, Path::new("File.app")).is_err());
+        symlink(&bundle, store.join("Alias.app")).unwrap();
+        assert_eq!(
+            select_app(&store, Path::new("Alias.app")).unwrap(),
+            bundle.canonicalize().unwrap()
+        );
+        let outside = temporary.path().join("Outside.app");
+        std::fs::create_dir(&outside).unwrap();
+        symlink(outside, store.join("Escape.app")).unwrap();
+        assert!(select_app(&store, Path::new("Escape.app"))
+            .unwrap_err()
+            .contains("inside the package"));
+    }
+
+    #[test]
+    fn app_launch_uses_the_exact_bundle_and_forwards_arguments_only_when_present() {
+        let bundle = Path::new("/store/package/My App.app");
+        let no_args = app_command(bundle, &[]);
+        assert_eq!(no_args.get_program(), "/usr/bin/open");
+        assert_eq!(no_args.get_args().collect::<Vec<_>>(), [bundle.as_os_str()]);
+        let args = [
+            OsString::from("--config"),
+            OsString::from("a path.zon"),
+            OsString::new(),
+        ];
+        let command = app_command(bundle, &args);
+        assert_eq!(
+            command.get_args().map(OsString::from).collect::<Vec<_>>(),
+            [
+                bundle.as_os_str().to_owned(),
+                "--args".into(),
+                "--config".into(),
+                "a path.zon".into(),
+                "".into(),
+            ]
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn apps_are_rejected_before_package_resolution_on_other_platforms() {
+        let cli =
+            Cli::try_parse_from(["rb", "run", "missing-package", "--app", "Missing.app"]).unwrap();
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command")
+        };
+        assert_eq!(
+            execute(args).unwrap_err(),
+            "--app is supported only on macOS"
         );
     }
 }

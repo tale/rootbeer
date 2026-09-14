@@ -59,6 +59,12 @@ pub(super) fn package(
     releases: &[Release],
     existing: Option<&CatalogPackage>,
 ) -> Result<CatalogPackage, String> {
+    if upstream.mirror {
+        return Err(format!(
+            "{}: mirrored updates require manual checksum qualification",
+            upstream.name
+        ));
+    }
     if let Some(existing) = existing {
         for system in &upstream.systems {
             let version = existing.default_version_for(system);
@@ -195,6 +201,9 @@ pub(super) fn package(
                 assets: BTreeMap::new(),
                 systems: Vec::new(),
                 bins: upstream.bins.clone(),
+                bin_paths: upstream.bin_paths.clone(),
+                checksums: BTreeMap::new(),
+                mirror: upstream.mirror,
                 checks: upstream.checks.clone(),
             });
         recipe.systems.push(system.clone());
@@ -475,5 +484,39 @@ mod tests {
         assert!(package(&mut upstream, &repository(), &releases, None)
             .unwrap_err()
             .contains("no supported release for x86_64-macos"));
+    }
+
+    #[test]
+    fn discovery_keeps_command_paths_and_requires_manual_mirrored_updates() {
+        let mut upstream = upstream();
+        upstream
+            .bin_paths
+            .insert("tool".into(), "Tool.app/Contents/MacOS/client".into());
+        let releases = vec![release(
+            "v1.0.0",
+            &["tool-darwin-arm64.tar.gz", "tool-darwin-amd64.tar.gz"],
+        )];
+        let generated = package(&mut upstream, &repository(), &releases, None).unwrap();
+        assert_eq!(generated.versions["1.0.0"].bin_paths, upstream.bin_paths);
+        let saved =
+            crate::package::PackageDefinition::with_github_upstream(generated.clone(), &upstream)
+                .unwrap();
+        let repeated =
+            crate::package::PackageDefinition::from_lua(&saved.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            repeated.github_upstream().unwrap().unwrap().bin_paths,
+            upstream.bin_paths
+        );
+        assert_eq!(
+            repeated.package.versions["1.0.0"].bin_paths,
+            upstream.bin_paths
+        );
+
+        upstream.mirror = true;
+        assert!(
+            package(&mut upstream, &repository(), &releases, Some(&generated))
+                .unwrap_err()
+                .contains("manual checksum qualification")
+        );
     }
 }

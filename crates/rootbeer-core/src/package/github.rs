@@ -473,6 +473,26 @@ mod tests {
         asset_name: &str,
         commands: &[&str],
     ) -> super::super::catalog::CatalogResolver {
+        catalog_resolver_with_contract(
+            resolver,
+            name,
+            repository,
+            asset_name,
+            commands,
+            BTreeMap::new(),
+            BTreeMap::new(),
+        )
+    }
+
+    fn catalog_resolver_with_contract(
+        resolver: GitHubResolver,
+        name: &str,
+        repository: &str,
+        asset_name: &str,
+        commands: &[&str],
+        bin_paths: BTreeMap<String, PathBuf>,
+        checksums: BTreeMap<String, String>,
+    ) -> super::super::catalog::CatalogResolver {
         let catalog: crate::package::PackageCatalog = serde_json::from_value(serde_json::json!({
             "schema": 1,
             "packages": { name: {
@@ -486,6 +506,8 @@ mod tests {
                     "assets": { "aarch64-macos": asset_name },
                     "systems": ["aarch64-macos"],
                     "bins": commands,
+                    "bin_paths": bin_paths,
+                    "checksums": checksums,
                     "checks": [[commands[0], "--version"]]
                 }}
             }}
@@ -649,5 +671,103 @@ mod tests {
         request.bins.remove("second");
         request.bins.insert("shfmt".into(), "../escape".into());
         assert!(resolver.resolve(&request, &context).is_err());
+    }
+
+    #[test]
+    fn catalog_maps_nested_archive_commands_and_rejects_changed_pinned_assets() {
+        let root = tempfile::tempdir().unwrap();
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        let contents = b"#!/bin/sh\nprintf tool\n";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "Tool.app/Contents/MacOS/client", &contents[..])
+            .unwrap();
+        let bytes = archive.into_inner().unwrap().finish().unwrap();
+        let resolver = release_fixture(
+            root.path(),
+            "owner/tool",
+            "tool-darwin-arm64.tar.gz",
+            &bytes,
+        );
+        let paths = BTreeMap::from([(
+            "tool".into(),
+            PathBuf::from("Tool.app/Contents/MacOS/client"),
+        )]);
+        let checksums = BTreeMap::from([("aarch64-macos".into(), hash_bytes(&bytes))]);
+        let catalog = catalog_resolver_with_contract(
+            resolver.clone(),
+            "tool",
+            "owner/tool",
+            "tool-darwin-arm64.tar.gz",
+            &["tool"],
+            paths.clone(),
+            checksums,
+        );
+        let context = ResolveContext::new("aarch64-macos");
+        let resolution = catalog
+            .resolve(&PackageRequest::new("tool"), &context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolution.package.provides.bins, paths);
+        let ResolutionProof::Catalog(proof) = resolution.proof else {
+            panic!("expected catalog proof")
+        };
+        assert_eq!(proof.source.bins, paths);
+        let realized = crate::package::PackageRealizer::with_dirs(
+            crate::store::Store::new(root.path().join("store")),
+            root.path().join("downloads"),
+            root.path().join("temp"),
+        )
+        .realize(&resolution.package)
+        .unwrap();
+        assert_eq!(fs::read(&realized.bins["tool"]).unwrap(), contents);
+
+        let invalid = catalog_resolver_with_contract(
+            resolver,
+            "tool",
+            "owner/tool",
+            "tool-darwin-arm64.tar.gz",
+            &["tool"],
+            paths,
+            BTreeMap::from([("aarch64-macos".into(), "0".repeat(64))]),
+        );
+        assert!(invalid
+            .resolve(&PackageRequest::new("tool"), &context)
+            .unwrap_err()
+            .contains("checksum differs"));
+    }
+
+    #[test]
+    fn catalog_preserves_explicit_raw_install_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let resolver = release_fixture(root.path(), "mvdan/sh", "shfmt-darwin-arm64", b"binary");
+        let paths = BTreeMap::from([("shfmt".into(), PathBuf::from("bin/shfmt"))]);
+        let catalog = catalog_resolver_with_contract(
+            resolver,
+            "shfmt",
+            "mvdan/sh",
+            "shfmt-darwin-arm64",
+            &["shfmt"],
+            paths.clone(),
+            BTreeMap::new(),
+        );
+        let resolution = catalog
+            .resolve(
+                &PackageRequest::new("shfmt"),
+                &ResolveContext::new("aarch64-macos"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            resolution.package.install,
+            LockedInstall::Binary {
+                path: "bin/shfmt".into()
+            }
+        );
+        assert_eq!(resolution.package.provides.bins, paths);
     }
 }

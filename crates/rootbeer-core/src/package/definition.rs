@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use mlua::LuaSerdeExt;
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,8 @@ pub struct PackageDefinition {
 #[derive(Debug, Clone)]
 struct Contract {
     bins: Vec<String>,
+    bin_paths: BTreeMap<String, PathBuf>,
+    mirror: bool,
     checks: Vec<Vec<String>>,
 }
 
@@ -145,6 +147,8 @@ impl PackageDefinition {
             authoring: None,
             contract: Some(Contract {
                 bins: upstream.bins.clone(),
+                bin_paths: upstream.bin_paths.clone(),
+                mirror: upstream.mirror,
                 checks: upstream.checks.clone(),
             }),
             upstream: Some(PackageUpstream::Github {
@@ -198,8 +202,12 @@ impl PackageDefinition {
         upstream.description = Some(package.description.clone());
         upstream.homepage = Some(package.homepage.clone());
         upstream.checks = recipe.checks.clone();
+        upstream.bin_paths = recipe.bin_paths.clone();
+        upstream.mirror = recipe.mirror;
         if let Some(contract) = &self.contract {
             upstream.bins = contract.bins.clone();
+            upstream.bin_paths = contract.bin_paths.clone();
+            upstream.mirror = contract.mirror;
             upstream.checks = contract.checks.clone();
         }
         upstream.repository_id = *repository_id;
@@ -229,7 +237,8 @@ impl PackageDefinition {
             != serde_json::to_value(self.github_upstream()?).map_err(|e| e.to_string())?
         {
             return Err(
-                "expanded definition cannot preserve shared discovery bins or checks".into(),
+                "expanded definition cannot preserve shared discovery command or mirror contract"
+                    .into(),
             );
         }
         let mut value = serde_json::to_value(&self.package).map_err(|e| e.to_string())?;

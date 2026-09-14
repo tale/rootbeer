@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +25,10 @@ pub(super) struct CompactPackage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     systems: Option<Vec<String>>,
     bins: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    bin_paths: BTreeMap<String, PathBuf>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    mirror: bool,
     checks: Vec<Vec<String>>,
     versions: BTreeMap<String, Version>,
 }
@@ -44,6 +49,10 @@ struct GitHubSource {
     #[serde(default = "yes", skip_serializing_if = "is_true", rename = "track")]
     should_track: bool,
     assets: BTreeMap<String, String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 fn yes() -> bool {
@@ -69,6 +78,10 @@ struct BuildTemplate {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     configure: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    patches: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     dependencies: Vec<String>,
 }
 
@@ -91,6 +104,12 @@ struct Version {
     systems: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bins: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bin_paths: Option<BTreeMap<String, PathBuf>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    checksums: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mirror: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     checks: Option<Vec<Vec<String>>>,
 }
@@ -201,6 +220,8 @@ impl CompactPackage {
             authoring: Some(self.clone()),
             contract: Some(Contract {
                 bins: self.bins.clone(),
+                bin_paths: self.bin_paths.clone(),
+                mirror: self.mirror,
                 checks: self.checks.clone(),
             }),
             package: CatalogPackage {
@@ -232,6 +253,12 @@ impl CompactPackage {
             assets: BTreeMap::new(),
             systems,
             bins: entry.bins.clone().unwrap_or_else(|| self.bins.clone()),
+            bin_paths: entry
+                .bin_paths
+                .clone()
+                .unwrap_or_else(|| self.bin_paths.clone()),
+            checksums: entry.checksums.clone(),
+            mirror: entry.mirror.unwrap_or(self.mirror),
             checks: entry.checks.clone().unwrap_or_else(|| self.checks.clone()),
         };
         if let Some(source) = &self.source {
@@ -350,6 +377,8 @@ impl CompactPackage {
             build: None,
             systems: Some(systems.clone()),
             bins: upstream.bins,
+            bin_paths: upstream.bin_paths,
+            mirror: upstream.mirror,
             checks: upstream.checks,
             versions: BTreeMap::new(),
         };
@@ -377,6 +406,9 @@ impl CompactPackage {
                 revision: recipe.revision,
                 systems: (recipe.systems != systems).then(|| recipe.systems.clone()),
                 bins: (recipe.bins != self.bins).then(|| recipe.bins.clone()),
+                bin_paths: (recipe.bin_paths != self.bin_paths).then(|| recipe.bin_paths.clone()),
+                checksums: recipe.checksums.clone(),
+                mirror: (recipe.mirror != self.mirror).then_some(recipe.mirror),
                 checks: (recipe.checks != self.checks).then(|| recipe.checks.clone()),
                 ..Version::default()
             };
@@ -472,6 +504,8 @@ impl CompactPackage {
                     source.assets.extend(upstream.assets);
                 }
                 compact.bins = upstream.bins;
+                compact.bin_paths = upstream.bin_paths;
+                compact.mirror = upstream.mirror;
                 compact.checks = upstream.checks;
             }
         }
@@ -708,10 +742,14 @@ mod tests {
                 archive: "tar.gz".into(),
                 strip_prefix: "xz-{version}".into(),
                 configure: build.configure.clone(),
+                args: build.args.clone(),
+                patches: build.patches.clone(),
                 dependencies: build.dependencies.clone(),
             }),
             systems: Some(recipe.systems.clone()),
             bins: recipe.bins.clone(),
+            bin_paths: BTreeMap::new(),
+            mirror: false,
             checks: recipe.checks.clone(),
             versions: BTreeMap::from([(
                 version.clone(),
@@ -800,5 +838,141 @@ mod tests {
         ] {
             assert!(PackageDefinition::from_lua(&invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn command_paths_round_trip_shared_defaults_empty_overrides_and_retained_versions() {
+        let source = BINARY.replace(
+            "bins = { \"tool\" },",
+            "bins = { \"tool\" }, bin_paths = { tool = \"Tool.app/Contents/MacOS/client\" },",
+        );
+        let source = source.replace("revision = 2,", "revision = 2, bin_paths = {},");
+        let mut definition = PackageDefinition::from_lua(&source).unwrap();
+        assert!(definition.package.versions["1"].bin_paths.is_empty());
+        assert_eq!(
+            definition.package.versions["2"].bin_paths["tool"],
+            PathBuf::from("Tool.app/Contents/MacOS/client")
+        );
+        assert_eq!(
+            definition.github_upstream().unwrap().unwrap().bin_paths,
+            definition.package.versions["2"].bin_paths
+        );
+        let original = serde_json::to_value(&definition.package).unwrap();
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(serde_json::to_value(repeated.package).unwrap(), original);
+
+        definition
+            .package
+            .versions
+            .get_mut("2")
+            .unwrap()
+            .bin_paths
+            .insert("tool".into(), "new/client".into());
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&repeated.package).unwrap(),
+            serde_json::to_value(&definition.package).unwrap()
+        );
+        assert_eq!(
+            repeated.github_upstream().unwrap().unwrap().bin_paths["tool"],
+            PathBuf::from("Tool.app/Contents/MacOS/client")
+        );
+    }
+
+    #[test]
+    fn mirror_defaults_require_per_version_checksums_and_preserve_overrides() {
+        let source = BINARY.replace("bins =", "mirror = true, bins =");
+        let source = source.replace("revision = 2,", "revision = 2, mirror = false,");
+        let source = source.replace(
+            "[\"2\"] = { systems",
+            &format!(
+                "[\"2\"] = {{ checksums = {{ [\"aarch64-macos\"] = \"{}\" }}, systems",
+                "a".repeat(64)
+            ),
+        );
+        let mut definition = PackageDefinition::from_lua(&source).unwrap();
+        assert!(!definition.package.versions["1"].mirror);
+        assert!(definition.package.versions["1"].checksums.is_empty());
+        assert!(definition.package.versions["2"].mirror);
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&repeated.package).unwrap(),
+            serde_json::to_value(&definition.package).unwrap()
+        );
+        assert!(repeated.github_upstream().unwrap().unwrap().mirror);
+        definition
+            .package
+            .versions
+            .get_mut("2")
+            .unwrap()
+            .checksums
+            .insert("aarch64-macos".into(), "b".repeat(64));
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            repeated.package.versions["2"].checksums["aarch64-macos"],
+            "b".repeat(64)
+        );
+        assert!(PackageDefinition::from_lua(
+            &source.replace("[\"2\"] = { checksums", "[\"2\"] = { unknown_checksums")
+        )
+        .is_err());
+        assert!(
+            PackageDefinition::from_lua(&BINARY.replace("bins =", "mirror = true, bins ="))
+                .unwrap_err()
+                .contains("complete platform checksums")
+        );
+    }
+
+    #[test]
+    fn old_recipes_omit_optional_binary_contract_fields() {
+        let definition = PackageDefinition::from_lua(BINARY).unwrap();
+        let expanded = serde_json::to_string(&definition.package).unwrap();
+        let authored = definition.to_lua().unwrap();
+        for name in ["bin_paths", "checksums", "mirror"] {
+            assert!(!expanded.contains(name));
+            assert!(!authored.contains(name));
+        }
+    }
+
+    #[test]
+    fn zig_templates_preserve_build_arguments_and_inline_patches() {
+        let source = format!(
+            r#"return {{
+            name = "tool", description = "Tool", homepage = "https://example.com",
+            default_version = "1", systems = {{ "aarch64-macos" }},
+            build = {{
+                backend = "zig", url = "https://example.com/tool-{{version}}.tar.gz",
+                archive = "tar.gz", strip_prefix = "tool-{{version}}",
+                args = {{ "-Doptimize=ReleaseFast" }},
+                patches = {{ "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new\n" }},
+            }},
+            bins = {{ "tool" }}, checks = {{ {{ "tool", "--help" }} }},
+            versions = {{ ["1"] = {{ sha256 = "{}" }} }},
+        }}"#,
+            "a".repeat(64)
+        );
+        let mut definition = PackageDefinition::from_lua(&source).unwrap();
+        let build = definition.package.versions["1"].build.as_ref().unwrap();
+        assert_eq!(build.args, ["-Doptimize=ReleaseFast"]);
+        assert!(build.patches[0].contains("\n-old\n+new\n"));
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&repeated.package).unwrap(),
+            serde_json::to_value(&definition.package).unwrap()
+        );
+        definition
+            .package
+            .versions
+            .get_mut("1")
+            .unwrap()
+            .build
+            .as_mut()
+            .unwrap()
+            .args = vec!["-Doptimize=ReleaseSafe".into()];
+        let repeated = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            repeated.package.versions["1"].build.as_ref().unwrap().args,
+            ["-Doptimize=ReleaseSafe"]
+        );
     }
 }

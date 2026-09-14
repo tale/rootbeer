@@ -33,10 +33,11 @@ function fixture(
     "test-tool@2.0": { "aarch64-macos": {} },
     "test-tool@1.0": { "x86_64-macos": {} },
   },
+  schema = 1,
 ) {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const snapshot = JSON.stringify({
-    schema: 1,
+    schema,
     catalog: {
       schema: 1,
       packages: Object.fromEntries(packages.map((entry) => [entry.name, entry])),
@@ -85,6 +86,19 @@ test("loads a signed published snapshot and preserves platform defaults", async 
     assert.equal(defaultVersion(result.packages[0], "x86_64-macos"), "1.0");
     assert.equal(defaultVersion(result.packages[0], "aarch64-macos"), "2.0");
   });
+});
+
+test("accepts signed schema 2 snapshots and rejects unsupported schemas", async () => {
+  for (const schema of [2, 3]) {
+    const data = fixture(undefined, undefined, schema);
+    await withResponses(data, async () => {
+      if (schema === 2) {
+        assert.equal((await loadCatalog(data.source)).packages[0].name, pkg.name);
+        return;
+      }
+      await assert.rejects(loadCatalog(data.source), /unavailable/);
+    });
+  }
 });
 
 test("rejects a changed manifest signature", async () => {

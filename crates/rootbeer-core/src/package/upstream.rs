@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -43,7 +43,15 @@ pub struct GitHubUpstream {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub assets: BTreeMap<String, String>,
     pub bins: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub bin_paths: BTreeMap<String, PathBuf>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mirror: bool,
     pub checks: Vec<Vec<String>>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 fn all_systems() -> Vec<String> {
@@ -76,6 +84,8 @@ impl GitHubUpstream {
             systems: all_systems(),
             assets: BTreeMap::new(),
             bins,
+            bin_paths: BTreeMap::new(),
+            mirror: false,
             checks,
         }
     }
@@ -121,6 +131,7 @@ impl GitHubUpstream {
         }
         super::catalog::validate_systems(&self.systems)?;
         super::catalog::validate_commands(&self.bins, &self.checks)?;
+        super::catalog::validate_bin_paths(&self.bins, &self.bin_paths)?;
         for (system, pattern) in &self.assets {
             if !self.systems.contains(system) || pattern.trim().is_empty() {
                 return Err(

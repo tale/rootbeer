@@ -12,7 +12,7 @@ use crate::store::hash_bytes;
 
 mod recipe;
 
-pub(super) use recipe::{validate_commands, validate_systems};
+pub(super) use recipe::{validate_bin_paths, validate_commands, validate_systems};
 pub use recipe::{CatalogPackage, CatalogRecipe};
 
 include!(concat!(env!("OUT_DIR"), "/package_catalog.rs"));
@@ -240,14 +240,17 @@ impl PackageResolver for CatalogResolver {
         ))?;
         let mut source = PackageRequest::parse(source);
         source.asset = recipe.assets.get(&context.system).cloned();
+        source.bins = recipe.bin_paths.clone();
         let resolution = self
             .backends
             .resolve_package(&source, context)
             .map_err(|e| e.to_string())?;
         let mut locked = resolution.package;
-        if let (Some("github"), super::LockedInstall::Binary { path }) =
-            (source.resolver.as_deref(), &mut locked.install)
-        {
+        if let (Some("github"), super::LockedInstall::Binary { path }, true) = (
+            source.resolver.as_deref(),
+            &mut locked.install,
+            recipe.bin_paths.is_empty(),
+        ) {
             let [command] = recipe.bins.as_slice() else {
                 return Err(format!(
                     "{}: raw GitHub assets must declare exactly one command",
@@ -257,6 +260,15 @@ impl PackageResolver for CatalogResolver {
             // Raw assets have no internal filename; the recipe owns their installed command.
             *path = command.into();
             locked.provides.bins = BTreeMap::from([(command.clone(), path.clone())]);
+        }
+        if let Some(expected) = recipe.checksums.get(&context.system) {
+            if !matches!(&locked.source, super::LockedSource::Url { sha256, .. } if sha256 == expected)
+            {
+                return Err(format!(
+                    "{}@{version}: GitHub asset checksum differs from the recipe",
+                    package.name
+                ));
+            }
         }
         for bin in &recipe.bins {
             if !locked.provides.bins.contains_key(bin) {

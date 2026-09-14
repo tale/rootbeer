@@ -6,7 +6,7 @@
 | ------------------------------- | ------------------- | --------------------------------------------------------------- |
 | `rootbeer.tale.me`              | Rootbeer repository | Documentation, package search, installer, and nightly binaries. |
 | `tale.github.io/rootbeer-index` | Index repository    | Signed latest manifest, immutable snapshots, and receipts.      |
-| GHCR                            | Index publisher     | Source-built package archives addressed by digest.              |
+| GHCR                            | Index publisher     | Source-built and mirrored package archives addressed by digest. |
 
 Package search fetches the live signed index in the browser. Publishing new
 packages therefore updates search without rebuilding the documentation site.
@@ -37,6 +37,21 @@ Publish immutable snapshot bytes before advancing the signed manifest. Retain ol
 snapshots, receipts, and GHCR manifests for existing locks. The CLI rejects rollback
 relative to its local verified history; a fresh installation has no earlier
 sequence to compare. The manifest currently has no expiry policy.
+
+## Snapshot format versions
+
+Schema 2 snapshots support command-path mappings, pinned mirrors, Zig builds, and
+source patches. New clients and package search read schemas 1 and 2. Older clients
+cannot parse these additions, even when selecting an unrelated package.
+
+Publish schema 2 through `--manifest latest-v2.json` and configure new CLI/site
+builds to use that endpoint. Keep `latest.json` and its schema 1 snapshot available
+for older clients; do not advance it to an incompatible snapshot. Those clients
+retain their last catalog and need an updated Rootbeer build for newer packages.
+Manifest signatures keep the same format; rollback sequences are checked per
+endpoint. Both channels share retained, immutable snapshots and receipts.
+
+Publish and verify the new channel before switching the public CLI and website.
 
 ## Changing the endpoint
 

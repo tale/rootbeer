@@ -39,6 +39,21 @@ Add `-p` for each additional package the command needs. For example, benchmark
 rb run hyperfine -p jq -- 'jq --version'
 ```
 
+### macOS app bundles
+
+Open an app preserved inside a package by naming its bundle:
+
+```sh
+rb run bobrwm --app Bobrwm.app
+rb run bobrwm --app Bobrwm.app -- --config "$HOME/.config/bobrwm/config.zon"
+```
+
+`--app` opens that exact bundle from the verified package store. It does not copy
+it into Applications or configure login items. Arguments after `--` go to the app;
+macOS may reuse an already running instance. Use `--bin` separately for command-line
+tools. App permissions, such as Bobrwm's Accessibility access, remain managed by
+macOS.
+
 ## Keep tools installed
 
 ```sh

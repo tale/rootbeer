@@ -7,7 +7,7 @@ use std::time::Duration;
 use super::download::DownloadCache;
 use super::lockfile::{PackageLockEntry, RootbeerLock};
 use super::*;
-use crate::store::{hash_bytes, Store};
+use crate::store::{hash_bytes, hash_file, Store};
 
 mod cache;
 
@@ -80,7 +80,7 @@ pub fn export_catalog_shard(
     let context = ResolveContext::current();
     let cache = cache_options.map(cache::Cache::new).transpose()?;
     let mut index = ArtifactIndex {
-        schema: 1,
+        schema: 2,
         catalog: catalog.clone(),
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),
@@ -175,7 +175,22 @@ pub fn export_catalog_shard(
                 let mut locked = resolution.package;
                 let realized = realizer.realize(&locked).map_err(|e| e.to_string())?;
                 locked.output_sha256 = Some(realized.store_entry.output_sha256);
-                let receipt = serde_json::to_vec(&serde_json::json!({"schema": 1, "catalog_sha256": catalog.sha256(), "revision": recipe.revision, "system": context.system, "package": locked, "proof": resolution.proof, "resolver_inputs": inputs})).map_err(|e| e.to_string())?;
+                let upstream = recipe.mirror.then(|| locked.clone());
+                if recipe.mirror {
+                    mirror_package(
+                        &mut locked,
+                        &realized.store_entry.path,
+                        registry,
+                        &destination,
+                        &downloads,
+                    )?;
+                }
+                let mut receipt = serde_json::json!({"schema": 1, "catalog_sha256": catalog.sha256(), "revision": recipe.revision, "system": context.system, "package": locked, "proof": resolution.proof, "resolver_inputs": inputs});
+                if let Some(upstream) = upstream {
+                    receipt["upstream_package"] =
+                        serde_json::to_value(upstream).map_err(|e| e.to_string())?;
+                }
+                let receipt = serde_json::to_vec(&receipt).map_err(|e| e.to_string())?;
                 let artifact = PublishedArtifact {
                     revision: recipe.revision,
                     receipt_sha256: hash_bytes(&receipt),
@@ -283,9 +298,124 @@ pub fn export_catalog_shard(
     fs::rename(destination, output).map_err(|e| e.to_string())
 }
 
+fn mirror_package(
+    package: &mut LockedPackage,
+    installed: &Path,
+    registry: &str,
+    destination: &Path,
+    downloads: &Path,
+) -> Result<(), String> {
+    let archive = tempfile::NamedTempFile::new_in(destination).map_err(|e| e.to_string())?;
+    super::build::pack(installed, archive.path()).map_err(|e| e.to_string())?;
+    let sha256 = hash_file(archive.path()).map_err(|e| e.to_string())?;
+    let path = destination
+        .join("artifacts")
+        .join(format!("{sha256}.tar.gz"));
+    fs::copy(archive.path(), &path).map_err(|e| e.to_string())?;
+    DownloadCache::new(downloads)
+        .materialize(&format!("file://{}", path.display()), Some(&sha256))
+        .map_err(|e| e.to_string())?;
+    package.source = LockedSource::Url {
+        url: format!("ghcr://{registry}/{}@sha256:{sha256}", package.name),
+        sha256,
+    };
+    package.install = LockedInstall::Archive {
+        format: ArchiveFormat::TarGz,
+        strip_prefix: None,
+    };
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mirrored_archives_replay_without_upstream_and_preserve_resources() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir_all(source.join("App.app/Contents/MacOS")).unwrap();
+        fs::create_dir_all(source.join("App.app/Contents/Resources")).unwrap();
+        let command = "App.app/Contents/MacOS/client";
+        fs::write(source.join(command), "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(source.join(command), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(
+            source.join("App.app/Contents/Resources/data"),
+            "runtime data",
+        )
+        .unwrap();
+        symlink("Resources", source.join("App.app/Contents/current")).unwrap();
+        let mut package = LockedPackage {
+            name: "app".into(),
+            version: "0.1.0-main+abcdef1".into(),
+            source: LockedSource::Path {
+                path: source.clone(),
+                sha256: crate::store::hash_tree(&source).unwrap(),
+            },
+            install: LockedInstall::Directory { strip_prefix: None },
+            provides: Provides {
+                bins: BTreeMap::from([("app".into(), command.into())]),
+            },
+            output_sha256: None,
+        };
+        let downloads = root.path().join("downloads");
+        let store = root.path().join("store");
+        let realizer =
+            PackageRealizer::with_dirs(Store::new(&store), &downloads, root.path().join("install"));
+        let original = realizer.realize(&package).unwrap();
+        package.output_sha256 = Some(original.store_entry.output_sha256.clone());
+        let bundle = root.path().join("bundle");
+        super::super::publication::create_bundle(&bundle).unwrap();
+        mirror_package(
+            &mut package,
+            &original.store_entry.path,
+            "owner/index",
+            &bundle,
+            &downloads,
+        )
+        .unwrap();
+        let LockedSource::Url { url, sha256 } = &package.source else {
+            panic!("expected mirror")
+        };
+        assert_eq!(url, &format!("ghcr://owner/index/app@sha256:{sha256}"));
+        assert_eq!(
+            hash_file(bundle.join("artifacts").join(format!("{sha256}.tar.gz"))).unwrap(),
+            *sha256
+        );
+        fs::remove_dir_all(source).unwrap();
+        fs::remove_dir_all(&store).unwrap();
+        let restored = PackageRealizer::with_dirs_and_offline(
+            Store::new(&store),
+            &downloads,
+            root.path().join("offline"),
+            true,
+        )
+        .realize(&package)
+        .unwrap();
+        assert_eq!(
+            restored.store_entry.output_sha256,
+            original.store_entry.output_sha256
+        );
+        assert_eq!(
+            fs::read_to_string(
+                restored
+                    .store_entry
+                    .path
+                    .join("App.app/Contents/Resources/data")
+            )
+            .unwrap(),
+            "runtime data"
+        );
+        assert_eq!(
+            fs::read_link(restored.store_entry.path.join("App.app/Contents/current")).unwrap(),
+            Path::new("Resources")
+        );
+        assert!(std::process::Command::new(&restored.bins["app"])
+            .status()
+            .unwrap()
+            .success());
+    }
 
     #[test]
     fn shards_cover_each_recipe_exactly_once() {
