@@ -84,12 +84,16 @@ impl ArtifactIndex {
 
     /// Validates the catalog and every advertised artifact without executing recipes.
     pub fn validate(&self) -> Result<(), String> {
+        if self.artifacts.is_empty() {
+            return Err("empty artifact index".into());
+        }
+        self.validate_fragment()
+    }
+
+    pub(super) fn validate_fragment(&self) -> Result<(), String> {
         self.catalog.validate()?;
-        if self.schema != 1
-            || self.catalog_sha256 != self.catalog.sha256()
-            || self.artifacts.is_empty()
-        {
-            return Err("invalid artifact index schema, catalog digest, or empty artifacts".into());
+        if self.schema != 1 || self.catalog_sha256 != self.catalog.sha256() {
+            return Err("invalid artifact index schema or catalog digest".into());
         }
         for (key, systems) in &self.artifacts {
             let request = PackageRequest::parse(key);

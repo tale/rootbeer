@@ -13,6 +13,28 @@ mod cache;
 
 pub use cache::ExportCache;
 
+/// A zero-based partition of package versions, stable when unrelated recipes change.
+#[derive(Clone, Copy, Debug)]
+pub struct ExportShard {
+    pub index: usize,
+    pub count: usize,
+}
+
+impl ExportShard {
+    fn validate(self) -> Result<(), String> {
+        if self.count == 0 || self.index >= self.count {
+            return Err("shards must be positive and shard must be less than shards".into());
+        }
+        Ok(())
+    }
+
+    fn contains(self, key: &str) -> bool {
+        let digest = hash_bytes(key.as_bytes());
+        let value = u64::from_str_radix(&digest[..16], 16).unwrap();
+        value % self.count as u64 == self.index as u64
+    }
+}
+
 /// Builds or imports the current platform's recipes and tests their locked offline outputs.
 /// Exports a platform bundle only after every applicable package passes.
 pub fn export_catalog(
@@ -32,10 +54,25 @@ pub fn export_catalog_with_cache(
     jobs: usize,
     cache_options: Option<&ExportCache>,
 ) -> Result<(), String> {
+    export_catalog_shard(catalog, registry, output, jobs, cache_options, None)
+}
+
+/// Exports selected package versions while retaining the full catalog for assembly validation.
+pub fn export_catalog_shard(
+    catalog: &PackageCatalog,
+    registry: &str,
+    output: &Path,
+    jobs: usize,
+    cache_options: Option<&ExportCache>,
+    shard: Option<ExportShard>,
+) -> Result<(), String> {
     catalog.validate()?;
     super::ghcr::validate_repository(registry)?;
-    if jobs == 0 {
-        return Err("jobs must be positive".into());
+    if jobs == 0 || jobs > 64 {
+        return Err("jobs must be between 1 and 64".into());
+    }
+    if let Some(shard) = shard {
+        shard.validate()?;
     }
     let staging = publication::staging(output)?;
     let destination = staging.path().join("bundle");
@@ -55,6 +92,9 @@ pub fn export_catalog_with_cache(
                 continue;
             }
             let key = format!("{}@{version}", package.name);
+            if shard.is_some_and(|shard| !shard.contains(&key)) {
+                continue;
+            }
             let fingerprint = cache
                 .as_ref()
                 .map(|cache| cache.fingerprint(catalog, &key, &context.system, registry))
@@ -234,7 +274,52 @@ pub fn export_catalog_with_cache(
             eprintln!("PASS {key} on {}", context.system);
         }
     }
-    index.validate()?;
+    if shard.is_some() {
+        index.validate_fragment()?;
+    } else {
+        index.validate()?;
+    }
     publication::write_json(&destination.join("index.json"), &index)?;
     fs::rename(destination, output).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shards_cover_each_recipe_exactly_once() {
+        let catalog = PackageCatalog::embedded().unwrap();
+        for count in [1, 2, 8, 256] {
+            for package in catalog.packages.values() {
+                for version in package.versions.keys() {
+                    let key = format!("{}@{version}", package.name);
+                    let owners = (0..count)
+                        .filter(|&index| ExportShard { index, count }.contains(&key))
+                        .count();
+                    assert_eq!(owners, 1, "{key} across {count} shards");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_shards_before_creating_output() {
+        let catalog = PackageCatalog::embedded().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("output");
+        for (index, count) in [(0, 0), (1, 1), (8, 8)] {
+            let error = export_catalog_shard(
+                catalog,
+                "owner/index",
+                &output,
+                2,
+                None,
+                Some(ExportShard { index, count }),
+            )
+            .unwrap_err();
+            assert!(error.contains("shard"));
+            assert!(!output.exists());
+        }
+    }
 }

@@ -9,6 +9,7 @@ const query = ref("");
 const system = ref("");
 const loading = ref(true);
 const error = ref("");
+const mode = ref("run");
 const copied = ref("");
 const copyError = ref("");
 const platforms = [
@@ -34,15 +35,25 @@ async function refresh() {
   }
 }
 
+function command(pkg: CatalogPackage): string {
+  if (mode.value === "config") return `rb.package(${JSON.stringify(pkg.name)})`;
+  return `rb ${mode.value} ${pkg.name}`;
+}
+
 async function copy(pkg: CatalogPackage) {
   copyError.value = "";
   try {
-    await navigator.clipboard.writeText(`rb.package(${JSON.stringify(pkg.name)})`);
+    await navigator.clipboard.writeText(command(pkg));
     copied.value = pkg.name;
   } catch {
-    copyError.value = "Could not copy. Select and copy the install line.";
+    copyError.value = "Could not copy. Select and copy the command.";
   }
 }
+
+watch(mode, () => {
+  copied.value = "";
+  copyError.value = "";
+});
 
 onMounted(() => {
   const url = new URL(window.location.href);
@@ -72,7 +83,7 @@ onMounted(() => {
         <input
           v-model="query"
           type="search"
-          placeholder="Search packages"
+          placeholder="Search by name, alias, or description"
           autocomplete="off"
         />
       </label>
@@ -84,7 +95,29 @@ onMounted(() => {
         </select>
       </label>
     </div>
-    <p v-if="loading" role="status">Loading packages…</p>
+    <div class="usage-controls">
+      <fieldset>
+        <legend>Use a package</legend>
+        <label
+          v-for="[id, label] in [
+            ['run', 'Run once'],
+            ['use', 'Install for your user'],
+            ['config', 'Add to config'],
+          ]"
+          :key="id"
+          :class="{ selected: mode === id }"
+        >
+          <input v-model="mode" type="radio" name="package-usage" :value="id" />
+          {{ label }}
+        </label>
+      </fieldset>
+      <p v-if="mode === 'run'">Run a tool immediately. Pass arguments after <code>--</code>.</p>
+      <p v-else-if="mode === 'use'">
+        Install the package for your user. <a href="/guide/packages">Set up your PATH</a> to use it.
+      </p>
+      <p v-else>Add the declaration to <code>init.lua</code>, then run <code>rb apply</code>.</p>
+    </div>
+    <p v-if="loading" class="catalog-status" role="status">Loading packages…</p>
     <div v-else-if="error" class="catalog-error" role="alert">
       <p>{{ error }}</p>
       <button type="button" @click="refresh">Try again</button>
@@ -92,54 +125,71 @@ onMounted(() => {
     <template v-else>
       <div class="result-summary">
         <p role="status">
-          {{ results.length }} {{ results.length === 1 ? "package" : "packages" }}
+          {{ results.length }} {{ results.length === 1 ? "package" : "packages"
+          }}<span v-if="query || system"> of {{ packages.length }}</span>
         </p>
+        <button
+          v-if="query || system"
+          type="button"
+          @click="
+            query = '';
+            system = '';
+          "
+        >
+          Clear filters
+        </button>
       </div>
-      <p v-if="!results.length">No matching packages. Try another name or platform.</p>
+      <p v-if="!results.length" class="catalog-status">
+        No matching packages. Try another name or platform.
+      </p>
       <p v-if="copyError" role="status">{{ copyError }}</p>
-      <article v-for="pkg in results" :key="pkg.name" class="package-result">
-        <div class="result-heading">
-          <h2>{{ pkg.name }}</h2>
-          <a :href="pkg.homepage" target="_blank" rel="noopener noreferrer">Website ↗</a>
-        </div>
-        <p>{{ pkg.description }}</p>
-        <p v-if="pkg.aliases.length" class="aliases">Also known as {{ pkg.aliases.join(", ") }}</p>
-        <div class="declaration">
-          <code>rb.package("{{ pkg.name }}")</code>
-          <button type="button" :aria-label="`Copy install line for ${pkg.name}`" @click="copy(pkg)">
-            {{ copied === pkg.name ? "Copied" : "Copy" }}
-          </button>
-        </div>
-        <ul class="platform-list">
-          <template v-for="[id, label] in platforms" :key="id">
-            <li
-              v-if="
-                (!system || system === id) &&
-                pkg.versions[defaultVersion(pkg, id)]?.systems.includes(id)
-              "
-            >
-              {{ label }} <strong>{{ defaultVersion(pkg, id) }}</strong>
-            </li>
-          </template>
-        </ul>
-        <details>
-          <summary>Available versions</summary>
-          <ul>
-            <li v-for="(recipe, version) in pkg.versions" :key="version">
-              <code>{{ version }}</code> ·
-              {{
-                recipe.systems
-                  .map((id) => platforms.find(([key]) => key === id)?.[1] ?? id)
-                  .join(", ") || "Not published"
-              }}
-            </li>
+      <div class="package-grid">
+        <article v-for="pkg in results" :key="pkg.name" class="package-result">
+          <div class="result-heading">
+            <h2>{{ pkg.name }}</h2>
+            <a :href="pkg.homepage" target="_blank" rel="noopener noreferrer">Website ↗</a>
+          </div>
+          <p>{{ pkg.description }}</p>
+          <p v-if="pkg.aliases.length" class="aliases">
+            Also known as {{ pkg.aliases.join(", ") }}
+          </p>
+          <div class="declaration">
+            <code>{{ command(pkg) }}</code>
+            <button type="button" :aria-label="`Copy command for ${pkg.name}`" @click="copy(pkg)">
+              {{ copied === pkg.name ? "Copied" : "Copy" }}
+            </button>
+          </div>
+          <ul class="platform-list">
+            <template v-for="[id, label] in platforms" :key="id">
+              <li
+                v-if="
+                  (!system || system === id) &&
+                  pkg.versions[defaultVersion(pkg, id)]?.systems.includes(id)
+                "
+              >
+                {{ label }} <strong>{{ defaultVersion(pkg, id) }}</strong>
+              </li>
+            </template>
           </ul>
-        </details>
-      </article>
+          <details>
+            <summary>Available versions</summary>
+            <ul>
+              <li v-for="(recipe, version) in pkg.versions" :key="version">
+                <code>{{ version }}</code> ·
+                {{
+                  recipe.systems
+                    .map((id) => platforms.find(([key]) => key === id)?.[1] ?? id)
+                    .join(", ") || "Not published"
+                }}
+              </li>
+            </ul>
+          </details>
+        </article>
+      </div>
     </template>
     <noscript
-      >Enable JavaScript to search packages, or read the <a href="/guide/packages">package guide</a>
-      to get started.</noscript
+      >Enable JavaScript to search packages, or read the
+      <a href="/guide/packages">package guide</a> to get started.</noscript
     >
   </div>
 </template>
@@ -149,7 +199,7 @@ onMounted(() => {
   display: flex;
   gap: 1rem;
   flex-wrap: wrap;
-  margin: 2rem 0 1rem;
+  margin: 0 0 1rem;
 }
 .search-controls label {
   display: flex;
@@ -203,7 +253,8 @@ button:hover {
 .package-result {
   border: 1px solid var(--vp-c-border);
   padding: 1.25rem;
-  margin: 1rem 0;
+  min-width: 0;
+  background: var(--vp-c-bg);
 }
 .result-heading h2 {
   border: 0;
@@ -252,5 +303,70 @@ details ul {
 .catalog-error {
   border-left: 3px solid var(--vp-c-brand-1);
   padding: 0.5rem 1rem;
+}
+
+.package-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+.usage-controls {
+  border-bottom: 1px solid var(--vp-c-border);
+  padding-bottom: 1rem;
+}
+.usage-controls fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.usage-controls legend {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+.usage-controls label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--vp-c-border);
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+.usage-controls label.selected {
+  background: var(--vp-c-brand-soft);
+  border-color: var(--vp-c-brand-1);
+}
+.usage-controls input {
+  width: auto;
+  accent-color: var(--vp-c-brand-1);
+}
+.usage-controls p {
+  margin: 0.6rem 0 0;
+  color: var(--vp-c-text-2);
+  font-size: 0.875rem;
+}
+.catalog-status {
+  padding: 2rem 0;
+}
+.result-summary {
+  min-height: 4rem;
+}
+.result-heading a {
+  flex-shrink: 0;
+}
+@media (max-width: 1100px) {
+  .package-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .search-controls > label {
+    width: 100%;
+  }
 }
 </style>

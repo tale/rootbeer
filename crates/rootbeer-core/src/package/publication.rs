@@ -116,7 +116,7 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
     let mut combined: Option<ArtifactIndex> = None;
     for path in paths {
         let mut fragment: ArtifactIndex = read_json(&path)?;
-        fragment.validate()?;
+        fragment.validate_fragment()?;
         check_files(&fragment, path.parent().unwrap())?;
         for (folder, suffix) in [("artifacts", ".tar.gz"), ("receipts", ".json")] {
             for file in
@@ -368,6 +368,34 @@ mod tests {
             .unwrap_err()
             .contains("already exists"));
         assert_eq!(bytes, fs::read(bundle.join("index.json")).unwrap());
+    }
+
+    #[test]
+    fn accepts_empty_shards_without_allowing_empty_publication() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = complete(root.path());
+        let mut empty: ArtifactIndex = read_json(&bundle.join("index.json")).unwrap();
+        empty.artifacts.clear();
+        assert!(empty.validate().is_err());
+        assert!(empty.validate_complete().is_err());
+
+        let directory = root.path().join("inputs/empty");
+        create_bundle(&directory).unwrap();
+        write_json(&directory.join("index.json"), &empty).unwrap();
+        assemble_indexes(
+            &root.path().join("inputs"),
+            &root.path().join("with-empty-shard"),
+        )
+        .unwrap();
+
+        empty.catalog_sha256 = "0".repeat(64);
+        write_json(&directory.join("index.json"), &empty).unwrap();
+        assert!(assemble_indexes(
+            &root.path().join("inputs"),
+            &root.path().join("invalid-empty-shard"),
+        )
+        .is_err());
+        assert!(!root.path().join("invalid-empty-shard").exists());
     }
 
     #[test]

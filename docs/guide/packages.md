@@ -1,6 +1,40 @@
 # Packages
 
-Install command-line tools from the same configuration as your shell and dotfiles.
+Run a tool immediately, install it for your user, or manage it alongside your dotfiles.
+
+## Run a tool
+
+No configuration or shell setup is required:
+
+```sh
+rb run jq -- --version
+rb run ripgrep -- --hidden TODO .
+rb run jq@1.8.2 -- '.name' package.json
+```
+
+Arguments after `--` go directly to the tool. Rootbeer uses the command matching
+the package name, or its only exported command (`ripgrep` runs `rg`). Use
+`--bin <command>` to choose from a package's other commands. Add `-p <package>`
+to put another tool on the process's PATH.
+
+## Install without a configuration
+
+```sh
+rb use jq ripgrep
+eval "$(rb env)"
+jq --version
+```
+
+`rb use` adds packages to your user profile and replaces previously installed
+versions of the same tool. Other installed tools remain available. This profile
+is independent of `init.lua` and `rb apply`; its commands take precedence when
+both profiles provide the same name. See [shell setup](#set-up-your-shell) to
+make them available in new terminals.
+
+Both commands cache resolved versions and verified downloads. Repeat a request
+with `--offline` to use only cached data, or `--update` to refresh its version.
+Exact `@version` requests stay exact. These commands keep their own locks in
+Rootbeer's state directory and do not modify your configuration's `rootbeer.lock`.
 
 ## Install your tools
 

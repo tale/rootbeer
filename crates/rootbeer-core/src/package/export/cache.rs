@@ -348,6 +348,30 @@ mod tests {
             exported.artifacts[key][&system].receipt_sha256,
             artifact.receipt_sha256
         );
+        let mut shard_artifacts = BTreeMap::new();
+        for index in 0..8 {
+            let shard_output = root.path().join(format!("shard-{index}"));
+            crate::package::export_catalog_shard(
+                &current,
+                "owner/index",
+                &shard_output,
+                2,
+                Some(&options),
+                Some(crate::package::ExportShard { index, count: 8 }),
+            )
+            .unwrap();
+            let fragment: ArtifactIndex =
+                publication::read_json(&shard_output.join("index.json")).unwrap();
+            assert_eq!(fragment.catalog_sha256, exported.catalog_sha256);
+            assert_eq!(fragment.catalog.sha256(), current.sha256());
+            for (key, artifact) in fragment.artifacts {
+                assert!(shard_artifacts.insert(key, artifact).is_none());
+            }
+        }
+        assert_eq!(
+            serde_json::to_value(shard_artifacts).unwrap(),
+            serde_json::to_value(&exported.artifacts).unwrap()
+        );
         let receipt = format!("{}.json", artifact.receipt_sha256);
         assert_eq!(
             fs::read(output.join("receipts").join(&receipt)).unwrap(),

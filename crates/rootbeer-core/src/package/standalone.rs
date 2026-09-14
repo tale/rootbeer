@@ -1,0 +1,215 @@
+use std::collections::BTreeMap;
+use std::fs;
+use std::io;
+use std::os::unix::fs::symlink;
+use std::path::{Path, PathBuf};
+
+use super::lockfile::RootbeerLock;
+use super::{
+    resolver_stack_for_inputs, LockedPackage, PackageIntent, PackageLockBuilder, PackageLockInput,
+    PackageRealizer, PackageRequest, PackageResolverInputs, RealizedPackage, ResolveContext,
+};
+use crate::store::{hash_bytes, Store};
+
+/// Packages realized independently of a Lua configuration.
+pub struct Environment {
+    pub packages: Vec<RealizedPackage>,
+    pub bin_dir: PathBuf,
+}
+
+/// Resolves and caches an isolated command environment, or adds packages to the user profile.
+pub fn prepare(
+    requests: &[PackageRequest],
+    is_persistent: bool,
+    is_offline: bool,
+    should_update: bool,
+) -> Result<Environment, String> {
+    if requests.is_empty() {
+        return Err("at least one package is required".into());
+    }
+    if is_offline && should_update {
+        return Err("--offline cannot be combined with --update".into());
+    }
+
+    let state = crate::state_dir();
+    let root = state.join("standalone");
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let guard = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(root.join("lock"))
+        .map_err(|e| e.to_string())?;
+    guard.lock().map_err(|e| e.to_string())?;
+
+    let realizer = if is_offline {
+        PackageRealizer::offline(Store::default())
+    } else {
+        PackageRealizer::default()
+    };
+    let mut packages = Vec::new();
+    for request in requests {
+        let identity =
+            serde_json::to_vec(&(ResolveContext::current(), request)).map_err(|e| e.to_string())?;
+        let lock_path = root.join("requests").join(hash_bytes(&identity));
+        let cached = read_lock(&lock_path).map_err(|e| e.to_string())?;
+        let lock = match cached {
+            Some(lock) if !should_update => lock,
+            _ if is_offline => {
+                return Err(format!(
+                    "{request} is not cached; run without --offline first"
+                ))
+            }
+            _ => {
+                let mut inputs = PackageResolverInputs::default();
+                if request
+                    .resolver
+                    .as_deref()
+                    .is_none_or(|name| name == "rootbeer")
+                {
+                    let selection = super::official::select_default(should_update)?;
+                    if let Some(notice) = selection.notice {
+                        eprintln!("{notice}");
+                    }
+                    inputs.resolvers.insert("rootbeer".into(), selection.input);
+                }
+                let builder = PackageLockBuilder::new_with_inputs(
+                    resolver_stack_for_inputs(&inputs),
+                    realizer.clone(),
+                    ResolveContext::current(),
+                    inputs.clone(),
+                );
+                let input = PackageLockInput::with_resolver_inputs(
+                    ResolveContext::current(),
+                    inputs,
+                    vec![PackageIntent::request(request.clone())],
+                );
+                let lock = builder.build(&input).map_err(|e| e.to_string())?;
+                write_lock(&lock, &lock_path).map_err(|e| e.to_string())?;
+                lock
+            }
+        };
+        let package = lock
+            .package_for_request(request, &ResolveContext::current())
+            .map_err(|e| e.to_string())?;
+        packages.push(realizer.realize(package).map_err(|e| e.to_string())?);
+    }
+
+    if is_persistent {
+        let profile = super::profile::user_dir();
+        install_profile(&root, &profile, &packages, &realizer).map_err(|e| e.to_string())?;
+        return Ok(Environment {
+            packages,
+            bin_dir: profile.join("bin"),
+        });
+    }
+
+    let generation = write_environment(&root, &packages).map_err(|e| e.to_string())?;
+    Ok(Environment {
+        packages,
+        bin_dir: generation.join("bin"),
+    })
+}
+
+fn install_profile(
+    root: &Path,
+    profile: &Path,
+    packages: &[RealizedPackage],
+    realizer: &PackageRealizer,
+) -> io::Result<()> {
+    let current = read_lock(&profile.join("packages.json"))?;
+    let mut installed: BTreeMap<String, LockedPackage> = current
+        .into_iter()
+        .flat_map(|lock| lock.packages.into_values())
+        .map(|package| (package.name.clone(), package))
+        .collect();
+    for package in packages {
+        installed.insert(package.package.name.clone(), package.package.clone());
+    }
+    let realized = installed
+        .values()
+        .map(|package| realizer.realize(package))
+        .collect::<Result<Vec<_>, _>>()?;
+    let generation = write_environment(root, &realized)?;
+    activate(profile, &generation)
+}
+
+fn read_lock(path: &Path) -> io::Result<Option<RootbeerLock>> {
+    match RootbeerLock::read(path) {
+        Ok(lock) => Ok(Some(lock)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn write_lock(lock: &RootbeerLock, path: &Path) -> io::Result<()> {
+    let parent = path.parent().unwrap();
+    fs::create_dir_all(parent)?;
+    let temporary = tempfile::NamedTempFile::new_in(parent)?;
+    lock.write(temporary.path())?;
+    temporary.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
+
+fn write_environment(root: &Path, packages: &[RealizedPackage]) -> io::Result<PathBuf> {
+    let mut bins = BTreeMap::new();
+    for package in packages {
+        for (name, path) in &package.bins {
+            if let Some(previous) = bins.insert(name.clone(), path.clone()) {
+                if previous != *path {
+                    return Err(io::Error::other(format!(
+                        "packages export conflicting command '{name}'"
+                    )));
+                }
+            }
+        }
+    }
+    let lock = RootbeerLock::from_packages(packages.iter().map(|package| package.package.clone()))
+        .map_err(io::Error::other)?;
+    let identity = hash_bytes(&serde_json::to_vec(&lock).map_err(io::Error::other)?);
+    let generations = root.join("environments");
+    fs::create_dir_all(&generations)?;
+    let destination = generations.join(identity);
+    if destination.is_dir() {
+        if RootbeerLock::read(destination.join("packages.json"))? != lock {
+            return Err(io::Error::other(
+                "cached package environment lock has changed",
+            ));
+        }
+        for (name, path) in &bins {
+            if fs::read_link(destination.join("bin").join(name))? != *path {
+                return Err(io::Error::other(format!(
+                    "cached command '{name}' has changed"
+                )));
+            }
+        }
+        if fs::read_dir(destination.join("bin"))?.count() != bins.len() {
+            return Err(io::Error::other(
+                "cached package environment has unexpected commands",
+            ));
+        }
+        return Ok(destination);
+    }
+
+    let temporary = tempfile::tempdir_in(&generations)?;
+    let bin_dir = temporary.path().join("bin");
+    fs::create_dir(&bin_dir)?;
+    for (name, path) in bins {
+        symlink(path, bin_dir.join(name))?;
+    }
+    lock.write(temporary.path().join("packages.json"))?;
+    fs::rename(temporary.path(), &destination)?;
+    Ok(destination)
+}
+
+fn activate(profile: &Path, generation: &Path) -> io::Result<()> {
+    let parent = profile.parent().unwrap();
+    fs::create_dir_all(parent)?;
+    let temporary = tempfile::tempdir_in(parent)?;
+    let link = temporary.path().join("current");
+    symlink(generation, &link)?;
+    fs::rename(link, profile)
+}
+
+#[cfg(test)]
+mod tests;

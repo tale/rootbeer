@@ -13,6 +13,14 @@ pub fn bin_dir() -> PathBuf {
     dir().join("bin")
 }
 
+/// The profile installed by `rb use`, independent of the Lua configuration.
+pub fn user_dir() -> PathBuf {
+    crate::state_dir()
+        .join("profiles")
+        .join("user")
+        .join("current")
+}
+
 pub fn bin_path(bin: &str) -> PathBuf {
     bin_dir().join(bin)
 }
@@ -29,7 +37,11 @@ pub fn env_path_for_bin_dir(bin_dir: &Path) -> PathBuf {
 }
 
 pub fn env_contents() -> String {
-    env_contents_for_bin_dir(&bin_dir())
+    format!(
+        "{}{}",
+        env_contents_for_bin_dir(&bin_dir()),
+        env_contents_for_bin_dir(&user_dir().join("bin"))
+    )
 }
 
 pub fn write_env_file() -> io::Result<()> {
@@ -41,7 +53,12 @@ pub fn write_env_file_for_bin_dir(bin_dir: &Path) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, env_contents_for_bin_dir(bin_dir))
+    let contents = if bin_dir == self::bin_dir() {
+        env_contents()
+    } else {
+        env_contents_for_bin_dir(bin_dir)
+    };
+    fs::write(path, contents)
 }
 
 fn env_contents_for_bin_dir(bin_dir: &Path) -> String {

@@ -220,6 +220,27 @@ Use a trusted cache and identify the OS image and tools in `BUILD_ENVIRONMENT_ID
 A missing entry runs full verification; corruption fails. `--recheck` bypasses
 reuse. CI keeps scheduled full checks to detect upstream and platform drift.
 
+## Qualify packages in parallel
+
+Export supports zero-based shards. Run every shard on each platform, using the
+same catalog and shard count, then assemble their output directories:
+
+```sh
+rb package --catalog packages export --registry tale/rootbeer-index \
+  --output result-0 --shard 0 --shards 8
+```
+
+Each package version stays in the same shard when unrelated recipes change.
+Keep separate caches per platform and shard. `--jobs` controls compiler jobs
+within a source build; shards distribute package verification across runners.
+Empty shards are valid, but assembly still requires every declared version and
+platform before publication.
+
+The index workflow builds the engine once per platform, then runs eight shards
+on each of four platforms. PRs also run the complete assembly check. Before
+merging this workflow, build an `rb` containing the shard flags and update the
+index repository's `ROOTBEER_REV` variable to that engine commit's full SHA.
+
 ## Publish independently
 
 `rb package assemble` merges platform bundles and requires complete coverage.

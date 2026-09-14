@@ -4,6 +4,7 @@ mod edit;
 mod init;
 mod package;
 mod remote;
+mod run;
 mod typegen;
 mod update;
 
@@ -45,6 +46,12 @@ enum Commands {
     /// Inspect and export the canonical package catalog
     Package(package::Args),
 
+    /// Run a package command without a configuration or permanent installation
+    Run(run::RunArgs),
+
+    /// Install packages for your user without a Lua configuration
+    Use(run::UseArgs),
+
     /// Create or load a rootbeer configuration in the source directory
     Init(init::Args),
 
@@ -79,6 +86,8 @@ fn main() {
         ),
         Commands::Init(args) => init::run(args),
         Commands::Package(args) => package::run(args),
+        Commands::Run(args) => run::run(args),
+        Commands::Use(args) => run::install(args),
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),
         Commands::Apply(args) => apply::run(args, cli.lua_dir.as_ref()),

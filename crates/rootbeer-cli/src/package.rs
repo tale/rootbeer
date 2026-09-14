@@ -56,8 +56,15 @@ enum Command {
         registry: String,
         #[arg(long)]
         output: PathBuf,
+        /// Compiler jobs per source build; use shards to qualify packages in parallel
         #[arg(short, long, default_value_t = 2)]
         jobs: usize,
+        /// Zero-based partition to export
+        #[arg(long, requires = "shards")]
+        shard: Option<usize>,
+        /// Total number of partitions; each retains the full catalog for assembly
+        #[arg(long, requires = "shard")]
+        shards: Option<usize>,
         /// Reuse verified results from this trusted cache directory
         #[arg(long, requires = "cache_context")]
         cache: Option<PathBuf>,
@@ -279,6 +286,8 @@ fn execute(args: Args) -> Result<(), String> {
             registry,
             output,
             jobs,
+            shard,
+            shards,
             cache,
             cache_context,
             recheck,
@@ -288,12 +297,16 @@ fn execute(args: Args) -> Result<(), String> {
                 context: cache_context.unwrap(),
                 recheck,
             });
-            rootbeer_core::package::export_catalog_with_cache(
+            rootbeer_core::package::export_catalog_shard(
                 catalog,
                 &registry,
                 &output,
                 jobs,
                 cache.as_ref(),
+                shard.map(|index| rootbeer_core::package::ExportShard {
+                    index,
+                    count: shards.unwrap(),
+                }),
             )?;
         }
         Command::Assemble { inputs, output } => {
