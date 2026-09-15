@@ -33,6 +33,11 @@ transitive exports.
 Release discovery currently handles GitHub binary assets; source builds still
 require explicit versions and source hashes.
 
+Source output qualification statically audits ELF and Mach-O loader references.
+Bundled libraries resolve through package-relative search paths, while external
+runtime references fail unless covered by the OS-runtime baseline. The audit
+runs before package checks, on cache hits, and when bundling source receipts.
+
 The current executor builds for its own host. Runtime dependency closures,
 isolated pinned toolchains, cross-compilation, and a resource-aware graph
 scheduler are follow-up work. Build environment locks pin declared executable

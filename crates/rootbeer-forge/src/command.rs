@@ -137,6 +137,8 @@ enum Command {
     },
     /// Hash a build environment specification and write its lock to stdout
     PinEnvironment { specification: PathBuf },
+    /// Audit native loader references in an installed package directory
+    Audit { directory: PathBuf },
     /// Inspect the dependency graph without executing builds
     Plan { name: String },
     /// Compile a trusted source recipe into an installable local artifact
@@ -431,6 +433,16 @@ fn execute(args: Args) -> Result<(), String> {
                     .map_err(|error| error.to_string())?
             )
             .map_err(|error| error.to_string())?;
+        }
+        Command::Audit { directory } => {
+            let report = rootbeer_packaging::audit::audit(&directory)?;
+            writeln!(
+                output,
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+            )
+            .map_err(|error| error.to_string())?;
+            report.validate()?;
         }
         Command::Plan { name } => {
             catalog.validate()?;

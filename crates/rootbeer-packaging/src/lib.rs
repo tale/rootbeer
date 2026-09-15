@@ -1,7 +1,7 @@
 //! Package qualification and publication, independent of configuration execution.
 
 pub use rootbeer_build::{
-    build_package, verify_environment, BuildCache, BuildEnvironment, BuildOptions, BuildPlan,
+    audit, build_package, verify_environment, BuildCache, BuildEnvironment, BuildOptions, BuildPlan,
 };
 pub use rootbeer_package::*;
 mod bundle;

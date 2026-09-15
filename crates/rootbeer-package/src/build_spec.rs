@@ -235,6 +235,8 @@ pub struct BuildArtifact {
     pub environment: Option<BuildEnvironmentLock>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub isolation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_audit_sha256: Option<String>,
     pub catalog_sha256: String,
     pub revision: u32,
     pub system: String,

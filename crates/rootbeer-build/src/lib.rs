@@ -6,6 +6,7 @@ pub use cache::BuildCache;
 pub use plan::BuildPlan;
 
 mod archive;
+pub mod audit;
 mod backend;
 mod runner;
 mod sandbox;
@@ -235,6 +236,10 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
             plan.binaries[key].clone()
         };
         let realized = realizer.realize(&locked).map_err(|e| e.to_string())?;
+        if let Some(artifact) = built.as_mut() {
+            artifact.runtime_audit_sha256 =
+                Some(audit_output(&realized.store_entry.path, &destination)?);
+        }
         let check_workspace = tempfile::tempdir_in(&output).map_err(|error| error.to_string())?;
         let check_environment =
             environment.variables(&host_tools, &host_tools, check_workspace.path());
@@ -431,6 +436,7 @@ fn compile(
         }
     }
     dependencies::validate(&prefix, &build.libraries)?;
+    let runtime_audit = audit_output(&prefix, output)?;
     let artifact_path = output.join("package.tar.gz");
     pack(&prefix, &artifact_path).map_err(|e| e.to_string())?;
     let artifact = BuildArtifact {
@@ -439,6 +445,7 @@ fn compile(
         build_environment: None,
         environment: None,
         isolation: None,
+        runtime_audit_sha256: Some(runtime_audit),
         catalog_sha256: plan.catalog_sha256.clone(),
         revision: recipe.revision,
         system: plan.graph.system.clone(),
@@ -465,6 +472,14 @@ fn compile(
         },
     };
     Ok(artifact)
+}
+
+fn audit_output(root: &Path, output: &Path) -> Result<String, String> {
+    let report = audit::audit(root)?;
+    let bytes = serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?;
+    fs::write(output.join("runtime-audit.json"), &bytes).map_err(|error| error.to_string())?;
+    report.validate()?;
+    Ok(rootbeer_store::hash_bytes(&bytes))
 }
 
 fn write_install_files(artifact: &BuildArtifact, output: &Path) -> Result<(), String> {

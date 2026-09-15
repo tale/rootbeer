@@ -134,6 +134,49 @@ cache hits verify archive and output hashes and rerun package checks. Export's
 pass through this executor; only binary qualification uses the outer export
 cache directly.
 
+### Auditing native outputs
+
+```sh
+rootbeer-forge audit /path/to/installed/package
+```
+
+The command emits a JSON report and exits unsuccessfully when native loader
+references cannot be justified. It parses ELF and Mach-O metadata, including
+all slices of universal Mach-O files, without executing package code.
+
+Source builds run this audit before packaging and again on realized outputs,
+including cache hits. Failed audits cannot publish build-cache results. Bundling
+source receipts reruns the audit too. `runtime-audit.json` contains relative
+file paths, architectures, library identities, interpreters, search paths, and
+violations; receipts record `runtime_audit_sha256`.
+
+Bundled libraries must resolve inside the package through loader-relative paths:
+ELF `$ORIGIN`/`${ORIGIN}` or Mach-O `@loader_path`, `@executable_path`, and
+`@rpath`. Resolution checks architecture, word size, and byte order. Mach-O
+inherited rpaths and ELF RPATH/RUNPATH inheritance are followed along dependency
+chains. Symlinks may stay inside the package; escaping targets fail. Absolute
+library identities, working-directory searches, undeclared host prefixes, and
+missing bundled libraries fail even if the current machine could load them.
+
+The OS-runtime baseline remains explicit: macOS libraries under `/usr/lib` and
+`/System/Library/Frameworks`, and Linux libc, libm, libdl, libpthread, librt,
+libgcc_s, libstdc++, and the supported glibc/musl loaders. This baseline is tied
+to the host-image identity; the audit does not establish symbol-version or OS
+version compatibility. Standard system search directories are permitted, but
+arbitrary library names in them are not automatically approved on Linux.
+
+Scripts, static archives, relocatable object files, and runtime `dlopen` calls
+are outside this check. ELF audit/filter/configuration loading and Mach-O
+embedded loader environment settings are rejected. Weak dependencies are
+required to resolve too. A shared library using `@executable_path` without a
+known executable context cannot be qualified by this pass.
+
+Separate runtime packages are not installed yet. External dependencies must
+currently be bundled or linked statically; the audit reports missing runtime
+inputs rather than guessing a host location or rewriting binaries.
+
+### Dependency roles
+
 New recipes can scope dependencies explicitly:
 
 ```lua

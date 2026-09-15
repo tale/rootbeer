@@ -104,9 +104,17 @@ pub(super) fn prepare_artifact(
         path: target,
         sha256: sha256.clone(),
     };
-    realizer
+    let realized = realizer
         .realize(&package)
         .map_err(|e| format!("{key}: {e}"))?;
+    let report = rootbeer_build::audit::audit(&realized.store_entry.path)?;
+    report.validate()?;
+    if let Some(expected) = &receipt.runtime_audit_sha256 {
+        let report = serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?;
+        if hash_bytes(&report) != *expected {
+            return Err(format!("{key}: runtime audit digest mismatch"));
+        }
+    }
     package.source = LockedSource::Url {
         url: if base_url.starts_with("ghcr://") {
             format!("{base_url}@sha256:{sha256}")
@@ -248,6 +256,7 @@ pub(crate) mod tests {
             build_environment: None,
             environment: None,
             isolation: None,
+            runtime_audit_sha256: None,
             catalog_sha256: catalog.sha256(),
             revision: recipe.revision,
             system: "aarch64-linux".into(),
@@ -357,6 +366,31 @@ pub(crate) mod tests {
         assert_eq!(url, &format!("ghcr://tale/rootbeer/xz@sha256:{sha256}"));
         *url = format!("ghcr://tale/rootbeer/xz@sha256:{}", "0".repeat(64));
         assert!(index.validate().unwrap_err().contains("does not match"));
+    }
+
+    #[test]
+    fn verifies_runtime_audit_receipt_digest() {
+        let root = tempfile::tempdir().unwrap();
+        let (catalog, path) = fixture(root.path());
+        let mut receipt: BuildArtifact = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        receipt.runtime_audit_sha256 = Some("0".repeat(64));
+        fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        let output = root.path().join("bundle");
+        assert!(bundle_artifacts(
+            &catalog,
+            std::slice::from_ref(&path),
+            "https://packages.example",
+            &output
+        )
+        .unwrap_err()
+        .contains("runtime audit digest mismatch"));
+        assert!(!output.exists());
+
+        let report = rootbeer_build::audit::audit(&root.path().join("tree")).unwrap();
+        receipt.runtime_audit_sha256 =
+            Some(hash_bytes(&serde_json::to_vec_pretty(&report).unwrap()));
+        fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        bundle_artifacts(&catalog, &[path], "https://packages.example", &output).unwrap();
     }
 
     #[test]
