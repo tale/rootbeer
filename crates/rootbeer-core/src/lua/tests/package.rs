@@ -325,3 +325,27 @@ fn package_specs_preserve_pinned_runtime_dependencies() {
         matches!(&dependency.source, LockedSource::File { path, .. } if path.is_absolute() && path.ends_with("runtime/library.tar.gz"))
     );
 }
+
+#[test]
+fn source_selections_are_explicit_planned_inputs() {
+    let ops = run(r#"rb.package("jq@1.8.2", { source = true })
+        rb.package("zlib", { head = true })
+        rb.package({ request = "zlib", tag = "v1.3.2" })"#);
+    let selections: Vec<_> = ops
+        .iter()
+        .map(|op| match op {
+            Op::Package {
+                intent: PackageIntent::Request(request),
+            } => request.source.clone().unwrap(),
+            _ => panic!("expected a source request"),
+        })
+        .collect();
+    assert_eq!(
+        selections,
+        [
+            crate::package::SourceSelection::Release,
+            crate::package::SourceSelection::Head,
+            crate::package::SourceSelection::Tag("v1.3.2".into())
+        ]
+    );
+}

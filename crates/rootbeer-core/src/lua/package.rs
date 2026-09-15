@@ -156,7 +156,12 @@ fn parse_intent(
     let (request, opts, is_structured) = match spec {
         Value::String(value) => (value.to_str()?.to_string(), opts, false),
         Value::Table(table) if !matches!(table.raw_get::<Value>("request")?, Value::Nil) => {
-            fields(&table, &["request", "asset", "bins"])?;
+            fields(
+                &table,
+                &[
+                    "request", "asset", "bins", "source", "head", "tag", "rev", "branch",
+                ],
+            )?;
             let request = required(&table, "request")?;
             (request, Some(table), true)
         }
@@ -187,14 +192,35 @@ fn parse_intent(
         fields(
             &opts,
             if is_structured {
-                &["request", "asset", "bins"]
+                &[
+                    "request", "asset", "bins", "source", "head", "tag", "rev", "branch",
+                ]
             } else {
-                &["asset", "bins"]
+                &["asset", "bins", "source", "head", "tag", "rev", "branch"]
             },
         )?;
+        let selections = [
+            optional::<bool>(&opts, "source")?
+                .filter(|value| *value)
+                .map(|_| crate::package::SourceSelection::Release),
+            optional::<bool>(&opts, "head")?
+                .filter(|value| *value)
+                .map(|_| crate::package::SourceSelection::Head),
+            optional::<String>(&opts, "tag")?.map(crate::package::SourceSelection::Tag),
+            optional::<String>(&opts, "rev")?.map(crate::package::SourceSelection::Revision),
+            optional::<String>(&opts, "branch")?.map(crate::package::SourceSelection::Branch),
+        ];
+        for selection in selections.into_iter().flatten() {
+            if request.source.is_some() {
+                return Err(LuaError::RuntimeError(
+                    "choose only one source selector".into(),
+                ));
+            }
+            request.source = Some(selection);
+        }
         request.asset = optional(&opts, "asset")?;
         let bins = optional::<Table>(&opts, "bins")?;
-        if (!is_structured || request.asset.is_some() || bins.is_some())
+        if (request.asset.is_some() || bins.is_some())
             && request.resolver.as_deref() != Some("github")
         {
             return Err(LuaError::RuntimeError(
@@ -212,6 +238,18 @@ fn parse_intent(
         }
         if let Some(bins) = bins {
             request.bins = parse_provides(bins)?.bins;
+        }
+    }
+    if let Some(selection) = &request.source {
+        selection.validate().map_err(LuaError::RuntimeError)?;
+        if request
+            .resolver
+            .as_deref()
+            .is_some_and(|resolver| resolver != "rootbeer")
+            || (request.version.is_some()
+                && !matches!(selection, crate::package::SourceSelection::Release))
+        {
+            return Err(LuaError::RuntimeError("source selectors require a canonical package and cannot combine Git refs with a release version".into()));
         }
     }
     let mut names: Vec<String> = request.bins.keys().cloned().collect();

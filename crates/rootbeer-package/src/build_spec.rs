@@ -82,6 +82,8 @@ impl From<&str> for BuildDependency {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceBuild {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git: Option<crate::GitSource>,
     pub backend: BuildBackend,
     pub url: String,
     pub sha256: String,
@@ -142,6 +144,9 @@ fn deserialize_archive<'de, D: serde::Deserializer<'de>>(
 
 impl SourceBuild {
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(git) = &self.git {
+            git.validate()?;
+        }
         if !self.url.starts_with("https://")
             || self.sha256.len() != 64
             || !self

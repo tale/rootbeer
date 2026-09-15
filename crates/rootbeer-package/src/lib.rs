@@ -17,7 +17,9 @@ mod intent;
 pub mod official;
 pub mod realize;
 mod resolve;
+mod source;
 mod spec;
+pub use source::{GitSource, SourceBuildProof, SourceSelection};
 pub mod staging;
 pub mod upstream;
 

@@ -114,8 +114,15 @@ shims that need access to undeclared developer directories.
 On Linux, install Bubblewrap at `/usr/bin/bwrap`. The host must permit user,
 mount, process, and network namespaces. Restricted containers can prevent this;
 Rootbeer reports a sandbox startup failure instead of reducing isolation.
+On Ubuntu 24.04, install `apparmor-profiles` and load the supplied
+`/usr/share/apparmor/extra-profiles/bwrap-userns-restrict` profile into AppArmor.
+It permits Bubblewrap to set up namespaces while denying capabilities to its
+children. The engine CI installs this profile and checks sandbox startup before
+running tests.
 The Linux launcher creates a private filesystem with read-only input mounts,
 a writable scratch mount, and private process and network namespaces.
+Compiler helpers must also be declared: GCC reports its `cc1` executable with
+`cc -print-prog-name=cc1`.
 
 The OS runtime remains a declared exception: macOS loader/framework locations
 and Linux library/loader locations are readable. macOS also permits filesystem
@@ -609,3 +616,29 @@ Package publication does not create Rootbeer GitHub releases.
 
 Read [index hosting and trust](/contributing/package-hosting) for deployment
 boundaries and endpoint changes.
+
+## Source recipes with optional binaries
+
+A recipe may declare both `inputs.source` and `inputs.prebuilt`, using one
+`build` section and one output contract. Export prefers a matching upstream
+binary; `rootbeer-forge build` explicitly exercises the source recipe. Consumers
+prefer published artifacts and can force a source build. Prebuilt-only recipes
+still omit source and build sections.
+
+For development builds, add `git = { github = "owner/repo", branch = "main" }`
+inside `inputs.source`. The branch is optional and defaults to the repository's
+HEAD. Declare this only when the build steps work on Git archives, including any
+preparation that release archives normally provide. Source repositories with
+required submodules need a recipe that supplies those inputs; GitHub archives do
+not include submodule contents.
+
+`inputs.prebuilt.systems` can restrict binaries to a subset of the source recipe's
+platforms. A version can use `inputs.prebuilt = { enabled = false }` to retain its
+source build without inheriting shared binary rules. New source releases without
+matching release assets can be published as source-only versions.
+
+Artifact index schema 7 carries source alternatives and Git origins. Source
+recipes can be published without prebuilt artifacts; binary-only recipes still
+require artifacts for every declared platform. Coordinate these changes with the
+index's engine pin. Qualify the source path as well as the preferred binary before
+adding a source alternative.

@@ -181,7 +181,8 @@ pub fn run(args: Args, lua_dir: Option<&PathBuf>) {
         opts.lua_dir = lua_dir.clone();
     }
 
-    let pipeline = rootbeer_core::Pipeline::new(opts);
+    let pipeline = rootbeer_core::Pipeline::new(opts)
+        .with_package_resolver(rootbeer_build::consumer::resolver_stack_for_inputs);
 
     eprintln!(
         "applying ({}){}",

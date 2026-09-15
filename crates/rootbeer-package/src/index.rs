@@ -62,11 +62,14 @@ pub fn validate_https(url: &str) -> Result<(), String> {
 }
 
 impl ArtifactIndex {
-    /// Requires an artifact for every declared version and platform before publication.
+    /// Requires artifacts for prebuilt-only recipes; source recipes can be built by consumers.
     pub fn validate_complete(&self) -> Result<(), String> {
         self.validate()?;
         for package in self.catalog.packages.values() {
             for (version, recipe) in &package.versions {
+                if self.schema >= 7 && recipe.build.is_some() {
+                    continue;
+                }
                 let key = format!("{}@{version}", package.name);
                 for system in &recipe.systems {
                     if !self
@@ -84,13 +87,31 @@ impl ArtifactIndex {
 
     /// Validates the catalog and every advertised artifact without executing recipes.
     pub fn validate(&self) -> Result<(), String> {
-        if self.artifacts.is_empty() {
+        if self.artifacts.is_empty()
+            && (self.schema < 7
+                || !self.catalog.packages.values().any(|package| {
+                    package
+                        .versions
+                        .values()
+                        .any(|recipe| recipe.build.is_some())
+                }))
+        {
             return Err("empty artifact index".into());
         }
         self.validate_fragment()
     }
 
     pub fn schema_for(catalog: &super::PackageCatalog) -> u32 {
+        if catalog.packages.values().any(|package| {
+            package.versions.values().any(|recipe| {
+                recipe
+                    .build
+                    .as_ref()
+                    .is_some_and(|build| build.git.is_some() || recipe.source.is_some())
+            })
+        }) {
+            return 7;
+        }
         if catalog.packages.values().any(|package| {
             package.versions.values().any(|recipe| {
                 recipe.build.as_ref().is_some_and(|build| {
@@ -138,8 +159,13 @@ impl ArtifactIndex {
 
     pub fn validate_fragment(&self) -> Result<(), String> {
         self.catalog.validate()?;
-        if !matches!(self.schema, 1..=6) || self.catalog_sha256 != self.catalog.sha256() {
+        if !matches!(self.schema, 1..=7) || self.catalog_sha256 != self.catalog.sha256() {
             return Err("invalid artifact index schema or catalog digest".into());
+        }
+        if self.schema < 7 && Self::schema_for(&self.catalog) == 7 {
+            return Err(
+                "source alternatives and Git inputs require artifact index schema 7".into(),
+            );
         }
         if self.schema < 6 && Self::schema_for(&self.catalog) == 6 {
             return Err("runtime dependencies require artifact index schema 6".into());
@@ -320,14 +346,19 @@ pub struct IndexResolver {
 
 impl IndexResolver {
     pub fn new(pin: &PackageIndexPin) -> Self {
+        Self::with_cache(pin, crate::state_dir().join("downloads"))
+    }
+
+    /// Uses a caller-owned download cache for verified index snapshots.
+    pub fn with_cache(pin: &PackageIndexPin, cache: impl Into<std::path::PathBuf>) -> Self {
         Self {
             pin: pin.clone(),
-            downloads: DownloadCache::new(crate::state_dir().join("downloads")),
+            downloads: DownloadCache::new(cache),
             index: OnceLock::new(),
         }
     }
 
-    fn index(&self) -> Result<&ArtifactIndex, String> {
+    pub fn index(&self) -> Result<&ArtifactIndex, String> {
         self.index
             .get_or_init(|| {
                 self.pin.validate()?;
@@ -363,6 +394,9 @@ impl PackageResolver for IndexResolver {
         request: &PackageRequest,
         context: &ResolveContext,
     ) -> Result<Option<PackageResolution>, String> {
+        if request.source.is_some() {
+            return Err("source requests require a source-build resolver".into());
+        }
         if request.asset.is_some() || !request.bins.is_empty() {
             return Err("index packages do not accept asset or command overrides".into());
         }
@@ -733,7 +767,7 @@ mod tests {
             index.validate_fragment().unwrap();
         }
 
-        for schema in [0, 7] {
+        for schema in [0, 8] {
             index.schema = schema;
             assert!(index.validate().unwrap_err().contains("schema"));
         }

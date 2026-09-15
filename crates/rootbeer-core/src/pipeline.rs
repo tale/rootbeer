@@ -86,11 +86,24 @@ impl Options {
 /// Entry point: configure the pipeline, then call `.plan()` to evaluate Lua.
 pub struct Pipeline {
     opts: Options,
+    package_resolver: fn(&PackageResolverInputs) -> crate::package::ResolverStack,
 }
 
 impl Pipeline {
     pub fn new(opts: Options) -> Self {
-        Self { opts }
+        Self {
+            opts,
+            package_resolver: crate::package::resolver_stack_for_inputs,
+        }
+    }
+
+    /// Supplies the consumer resolver without coupling configuration to a build engine.
+    pub fn with_package_resolver(
+        mut self,
+        resolver: fn(&PackageResolverInputs) -> crate::package::ResolverStack,
+    ) -> Self {
+        self.package_resolver = resolver;
+        self
     }
 
     pub fn mode(&self) -> Mode {
@@ -130,6 +143,7 @@ impl Pipeline {
         let ops = vm.drain_ops();
 
         Ok(PlannedPipeline {
+            package_resolver: self.package_resolver,
             opts: self.opts,
             package_index,
             ops,
@@ -139,6 +153,7 @@ impl Pipeline {
 
 /// A pipeline that has been planned — ops are collected, ready to execute.
 pub struct PlannedPipeline {
+    package_resolver: fn(&PackageResolverInputs) -> crate::package::ResolverStack,
     package_index: Option<PackageIndexPin>,
     opts: Options,
     ops: Vec<Op>,
@@ -254,7 +269,12 @@ impl PlannedPipeline {
                 .resolvers
                 .insert("aqua".into(), current.resolvers["aqua"].clone());
         }
-        let builder = PackageLockBuilder::current_system_with_inputs(inputs);
+        let builder = PackageLockBuilder::new_with_inputs(
+            (self.package_resolver)(&inputs),
+            crate::package::PackageRealizer::default(),
+            crate::package::ResolveContext::current(),
+            inputs,
+        );
         let input = builder.lock_input_from_ops(&self.ops);
         let lock = builder.build(&input)?;
         lock.write(&path)?;
@@ -346,6 +366,7 @@ mod tests {
     fn apply_attempts_to_build_lock_when_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let planned = PlannedPipeline {
+            package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
@@ -368,6 +389,7 @@ mod tests {
             .write(tmp.path().join("rootbeer.lock"))
             .unwrap();
         let planned = PlannedPipeline {
+            package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
@@ -395,6 +417,7 @@ mod tests {
             .write(tmp.path().join("rootbeer.lock"))
             .unwrap();
         let planned = PlannedPipeline {
+            package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
@@ -413,6 +436,7 @@ mod tests {
         let mut opts = opts(tmp.path().to_path_buf(), Mode::Apply);
         opts.package_lock = PackageLockMode::Locked;
         let planned = PlannedPipeline {
+            package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
             opts,
             ops: vec![Op::Package {
@@ -441,6 +465,7 @@ mod tests {
         let mut opts = opts(tmp.path().to_path_buf(), Mode::Apply);
         opts.package_lock = PackageLockMode::Locked;
         let planned = PlannedPipeline {
+            package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
             opts,
             ops: vec![Op::Package {

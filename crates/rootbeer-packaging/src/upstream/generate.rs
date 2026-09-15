@@ -1,3 +1,4 @@
+use rootbeer_package::PackageRequest;
 use std::collections::BTreeMap;
 
 use super::{GitHubUpstream, Repository};
@@ -327,13 +328,35 @@ pub(super) fn source_package(
     } else {
         build.sha256 = hash_source(&build.url)?;
         build.validate()?;
+        let mut assets = BTreeMap::new();
+        let can_use_prebuilt = existing
+            .versions
+            .values()
+            .filter_map(|recipe| recipe.source.as_deref())
+            .any(|source| {
+                let request = PackageRequest::parse(source);
+                request.resolver.as_deref() == Some("github")
+                    && request.name.eq_ignore_ascii_case(&upstream.repository)
+            });
+        if can_use_prebuilt {
+            for (system, pattern) in &upstream.assets {
+                let name = pattern
+                    .replace("{tag}", &release.tag_name)
+                    .replace("{version}", version);
+                if release.assets.iter().any(|asset| asset.name == name) {
+                    assets.insert(system.clone(), name);
+                }
+            }
+        }
+        let source = (!assets.is_empty())
+            .then(|| format!("github:{}@{}", upstream.repository, release.tag_name));
         package.versions.insert(
             (*version).into(),
             CatalogRecipe {
                 revision: 1,
-                source: None,
+                source,
                 build: Some(build),
-                assets: BTreeMap::new(),
+                assets,
                 systems: upstream.systems.clone(),
                 bins: upstream.bins.clone(),
                 bin_paths: upstream.bin_paths.clone(),

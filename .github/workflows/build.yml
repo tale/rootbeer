@@ -11,6 +11,7 @@ jobs:
   check:
     name: Check (${{ matrix.name }})
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: linux-x86_64
@@ -55,7 +56,12 @@ jobs:
 
       - name: Install Linux sandbox
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap apparmor-profiles
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser --replace /etc/apparmor.d/bwrap-userns-restrict
+          bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-net --unshare-uts --die-with-parent --new-session --cap-drop ALL --ro-bind / / /bin/true
 
       - name: Test
         run: cargo test

@@ -106,7 +106,7 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
     throw new Error("The package catalog contents could not be verified.");
   const index = JSON.parse(decoder.decode(snapshot));
   if (
-    ![1, 2, 3, 4, 5].includes(index.schema) ||
+    ![1, 2, 3, 4, 5, 6, 7].includes(index.schema) ||
     index.catalog?.schema !== 1 ||
     !index.catalog.packages ||
     !index.artifacts
@@ -170,7 +170,10 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
         }
       }
       const published = index.artifacts[`${pkg.name}@${version}`] ?? {};
-      recipe.systems = recipe.systems.filter((system) => Object.hasOwn(published, system));
+      recipe.systems = recipe.systems.filter(
+        (system) =>
+          Object.hasOwn(published, system) || (index.schema >= 7 && recipe.build !== undefined),
+      );
     }
   }
   return {

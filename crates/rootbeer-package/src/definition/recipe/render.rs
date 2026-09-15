@@ -146,6 +146,7 @@ fn split(recipe: &CatalogRecipe) -> Result<(Inputs, Option<Build>, Outputs), Str
     if let Some(build) = &recipe.build {
         let value = serde_json::to_value(build).map_err(|error| error.to_string())?;
         let input = Source {
+            git: build.git.clone(),
             url: Some(build.url.clone()),
             sha256: Some(build.sha256.clone()),
             archive: value["archive"].as_str().map(String::from),
@@ -155,7 +156,7 @@ fn split(recipe: &CatalogRecipe) -> Result<(Inputs, Option<Build>, Outputs), Str
         return Ok((
             Inputs {
                 source: Some(input),
-                prebuilt: None,
+                prebuilt: prebuilt(recipe)?,
             },
             Some(Build {
                 backend: build.backend.clone(),
@@ -167,26 +168,38 @@ fn split(recipe: &CatalogRecipe) -> Result<(Inputs, Option<Build>, Outputs), Str
             outputs,
         ));
     }
-    let request = PackageRequest::parse(recipe.source.as_deref().ok_or("missing prebuilt input")?);
-    if !matches!(request.resolver.as_deref(), Some("github" | "aqua")) {
-        return Err("unsupported prebuilt input provider".into());
-    }
     Ok((
         Inputs {
-            prebuilt: Some(Prebuilt {
-                github: (request.resolver.as_deref() == Some("github"))
-                    .then(|| request.name.clone()),
-                aqua: (request.resolver.as_deref() == Some("aqua")).then_some(request.name),
-                tag: request.version,
-                assets: (!recipe.assets.is_empty()).then(|| recipe.assets.clone()),
-                checksums: (!recipe.checksums.is_empty()).then(|| recipe.checksums.clone()),
-                mirror: recipe.mirror.then_some(true),
-            }),
+            prebuilt: prebuilt(recipe)?,
             source: None,
         },
         None,
         outputs,
     ))
+}
+
+fn prebuilt(recipe: &CatalogRecipe) -> Result<Option<Prebuilt>, String> {
+    let Some(source) = &recipe.source else {
+        return Ok(None);
+    };
+    let request = PackageRequest::parse(source);
+    if !matches!(request.resolver.as_deref(), Some("github" | "aqua")) {
+        return Err("unsupported prebuilt input provider".into());
+    }
+    Ok(Some(Prebuilt {
+        enabled: None,
+        systems: recipe
+            .build
+            .as_ref()
+            .filter(|_| request.resolver.as_deref() == Some("github"))
+            .map(|_| recipe.assets.keys().cloned().collect()),
+        github: (request.resolver.as_deref() == Some("github")).then(|| request.name.clone()),
+        aqua: (request.resolver.as_deref() == Some("aqua")).then_some(request.name),
+        tag: request.version,
+        assets: (!recipe.assets.is_empty()).then(|| recipe.assets.clone()),
+        checksums: (!recipe.checksums.is_empty()).then(|| recipe.checksums.clone()),
+        mirror: recipe.mirror.then_some(true),
+    }))
 }
 
 fn minimize(
@@ -230,6 +243,12 @@ fn minimize(
             entry.outputs = None;
         }
     }
+    if recipe.source.is_none() && shared.inputs.prebuilt.is_some() {
+        entry.inputs.get_or_insert_with(Inputs::default).prebuilt = Some(Prebuilt {
+            enabled: Some(false),
+            ..Prebuilt::default()
+        });
+    }
     if let Some(inputs) = &mut entry.inputs {
         if let (Some(input), Some(base)) = (&mut inputs.prebuilt, &shared.inputs.prebuilt) {
             if input.github == base.github {
@@ -238,7 +257,7 @@ fn minimize(
             if input.aqua == base.aqua {
                 input.aqua = None;
             }
-            let tag = input.tag.clone().ok_or("missing prebuilt tag")?;
+            let tag = input.tag.clone().unwrap_or_default();
             if base
                 .tag
                 .as_ref()
@@ -288,6 +307,9 @@ fn minimize(
                 {
                     *value = None;
                 }
+            }
+            if input.git == base.git {
+                input.git = None;
             }
             if input.archive == base.archive {
                 input.archive = None;

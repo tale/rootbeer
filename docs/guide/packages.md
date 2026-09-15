@@ -179,3 +179,39 @@ Installation does not compile packages locally.
 For tools outside the catalog, see [other package sources](/guide/package-sources).
 Catalog packages may also export macOS app bundles. For other desktop apps and
 service integration, use [Homebrew](/modules/brew) or another system package manager.
+
+## Source builds and development revisions
+
+Source-capable packages prefer a matching published binary. If the pinned index
+has no binary for the requested version and platform, Rootbeer builds its source
+recipe locally. Prebuilt-only packages remain supported; they reject source requests.
+
+```lua
+rb.package("jq")                         -- Prefer the published binary.
+rb.package("jq@1.8.2", { source = true }) -- Build the approved release.
+rb.package("zlib", { head = true })      -- Pin the development branch to a commit.
+rb.package("zlib", { tag = "v1.3.2" })   -- Resolve a Git tag to a commit.
+rb.package("zlib", { rev = "<full 40-character commit SHA>" })
+```
+
+Choose one source selector. Git selectors cannot be combined with `@version`.
+The recipe must declare its Git repository; a release archive alone does not
+promise that development checkouts can be built. Source builds use the recipe's
+build commands and require its toolchain on the host.
+
+Standalone installs and commands accept the same selections:
+
+```sh
+rb use jq --source
+rb use zlib --head
+rb use zlib --tag v1.3.2
+rb run jq --source -- --version
+```
+
+`@HEAD`, `@tag:<tag>`, `@branch:<branch>`, and `@rev:<commit>` also work in package
+request strings. HEAD follows the recipe's declared branch, or the repository's
+default branch. Tags and branches are resolved to immutable commits before building.
+The lock records the requested selector, resolved commit, archive checksum, recipe,
+and build identity. Ordinary apply and offline replay reuse that lock; `--update`
+explicitly resolves moving references again. Source and prebuilt requests have
+distinct lock fingerprints.

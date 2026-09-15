@@ -111,7 +111,7 @@ impl PackageCatalog {
                     .validate()
                     .map_err(|e| format!("{name}@{version}: {e}"))?;
                 if version.is_empty()
-                    || version == "latest"
+                    || matches!(version.as_str(), "latest" | "HEAD")
                     || version
                         .bytes()
                         .any(|c| c.is_ascii_whitespace() || matches!(c, b'/' | b':' | b'@'))
@@ -182,6 +182,9 @@ impl PackageResolver for CatalogResolver {
         request: &PackageRequest,
         context: &ResolveContext,
     ) -> Result<Option<PackageResolution>, String> {
+        if request.source.is_some() {
+            return Err("source requests require a source-build resolver".into());
+        }
         let catalog = &self.catalog;
         let Some(package) = catalog.find(&request.name) else {
             return Err(format!("unknown catalog package `{}`; use `rootbeer-forge list` or an explicit backend request", request.name));
@@ -223,6 +226,12 @@ impl PackageResolver for CatalogResolver {
             "{}@{version} has a source recipe but no published binary; use `rootbeer-forge build {} --output <directory>` explicitly",
             package.name, package.name
         ))?;
+        if recipe.build.is_some()
+            && source.starts_with("github:")
+            && !recipe.assets.contains_key(&context.system)
+        {
+            return Err("no matching upstream prebuilt; build this package from source".into());
+        }
         let mut source = PackageRequest::parse(source);
         source.asset = recipe.assets.get(&context.system).cloned();
         source.bins = recipe.bin_paths.clone();

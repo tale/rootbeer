@@ -12,6 +12,8 @@ use super::{GitHubRepositoryPin, LockedPackage};
 /// `aqua:ripgrep` or `github:BurntSushi/ripgrep` is explicit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::SourceSelection>,
     pub name: String,
     pub version: Option<String>,
     pub resolver: Option<String>,
@@ -33,6 +35,20 @@ impl fmt::Display for PackageRequest {
 
         write!(f, "{}", self.name)?;
 
+        if let Some(selection) = &self.source {
+            match selection {
+                crate::SourceSelection::Release => write!(
+                    f,
+                    "@source:{}",
+                    self.version.as_deref().unwrap_or("default")
+                )?,
+                crate::SourceSelection::Head => write!(f, "@HEAD")?,
+                crate::SourceSelection::Tag(value) => write!(f, "@tag:{value}")?,
+                crate::SourceSelection::Branch(value) => write!(f, "@branch:{value}")?,
+                crate::SourceSelection::Revision(value) => write!(f, "@rev:{value}")?,
+            }
+            return Ok(());
+        }
         if let Some(version) = &self.version {
             write!(f, "@{version}")?;
         }
@@ -47,6 +63,7 @@ impl PackageRequest {
             name: name.into(),
             version: None,
             resolver: None,
+            source: None,
             asset: None,
             bins: BTreeMap::new(),
         }
@@ -54,23 +71,54 @@ impl PackageRequest {
 
     pub fn parse(input: &str) -> Self {
         let (resolver, input) = match input.split_once(':') {
-            Some((resolver, name)) if !resolver.is_empty() && !name.is_empty() => {
+            Some((resolver, name))
+                if !resolver.is_empty() && !resolver.contains('@') && !name.is_empty() =>
+            {
                 (Some(resolver.to_string()), name)
             }
             _ => (None, input),
         };
-
-        let (name, version) = match input.rsplit_once('@') {
+        let (name, mut version) = match input.rsplit_once('@') {
             Some((name, version)) if !name.is_empty() && !version.is_empty() => {
-                (name.to_string(), Some(version.to_string()))
+                (name, Some(version.to_string()))
             }
-            _ => (input.to_string(), None),
+            _ => (input, None),
         };
-
+        let mut source = None;
+        if resolver
+            .as_deref()
+            .is_none_or(|resolver| resolver == "rootbeer")
+        {
+            source = match version.as_deref() {
+                Some("HEAD") => Some(crate::SourceSelection::Head),
+                Some(value) if value.starts_with("tag:") => {
+                    Some(crate::SourceSelection::Tag(value[4..].into()))
+                }
+                Some(value) if value.starts_with("branch:") => {
+                    Some(crate::SourceSelection::Branch(value[7..].into()))
+                }
+                Some(value) if value.starts_with("rev:") => {
+                    Some(crate::SourceSelection::Revision(value[4..].into()))
+                }
+                Some(value) if value.starts_with("source:") => {
+                    Some(crate::SourceSelection::Release)
+                }
+                _ => None,
+            };
+            if let Some(selection) = &source {
+                version = match selection {
+                    crate::SourceSelection::Release => version.as_ref().and_then(|value| {
+                        (value != "source:default").then(|| value[7..].to_string())
+                    }),
+                    _ => None,
+                };
+            }
+        }
         Self {
-            name,
+            name: name.into(),
             version,
             resolver,
+            source,
             asset: None,
             bins: BTreeMap::new(),
         }
@@ -148,6 +196,7 @@ impl PackageResolution {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResolutionProof {
     Catalog(super::CatalogProof),
+    SourceBuild(crate::SourceBuildProof),
     PublishedIndex(super::PublishedIndexProof),
     Snapshot(SnapshotProof),
     MetadataClosure(MetadataClosureProof),

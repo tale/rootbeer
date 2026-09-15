@@ -246,3 +246,42 @@ fn rejects_unpinned_sources_and_invalid_asset_rules() {
         assert!(PackageDefinition::from_lua(&text).is_err(), "{text}");
     }
 }
+
+#[test]
+fn source_and_prebuilt_share_a_contract_and_roundtrip_git_inputs() {
+    let text = source().replace("inputs = { source = {", "inputs = { prebuilt = { github = 'owner/tool', tag = 'v{version}', assets = { ['aarch64-macos'] = 'tool-{version}.tar.gz' } }, source = { git = { github = 'owner/tool', branch = 'main' },");
+    let definition = PackageDefinition::from_lua(&text).unwrap();
+    let recipe = &definition.package.versions["1"];
+    assert!(recipe.has_prebuilt("aarch64-macos"));
+    assert_eq!(
+        recipe
+            .build
+            .as_ref()
+            .unwrap()
+            .git
+            .as_ref()
+            .unwrap()
+            .branch
+            .as_deref(),
+        Some("main")
+    );
+    assert_eq!(recipe.source.as_deref(), Some("github:owner/tool@v1"));
+    roundtrip(&definition);
+    let mut updated = definition.clone();
+    let recipe = updated.package.versions.get_mut("1").unwrap();
+    recipe.source = None;
+    recipe.assets.clear();
+    roundtrip(&updated);
+}
+
+#[test]
+fn optional_prebuilts_can_cover_only_some_source_platforms() {
+    let text = source().replace("systems = { \"aarch64-macos\" }", "systems = { 'aarch64-macos', 'x86_64-linux' }")
+        .replace("inputs = { source = {", "inputs = { prebuilt = { github = 'owner/tool', tag = 'v{version}', systems = { 'aarch64-macos' }, assets = { ['aarch64-macos'] = 'tool.tar.gz' } }, source = {");
+    let definition = PackageDefinition::from_lua(&text).unwrap();
+    let recipe = &definition.package.versions["1"];
+    assert!(recipe.has_prebuilt("aarch64-macos"));
+    assert!(!recipe.has_prebuilt("x86_64-linux"));
+    assert!(recipe.build.is_some());
+    roundtrip(&definition);
+}

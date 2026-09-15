@@ -97,10 +97,20 @@ function rootbeer.exec(cmd, args) end
 --- @field strip_prefix? string Relative subdirectory to use as the install root.
 
 --- @class rootbeer.PackageOptions
+--- @field source? boolean Build the selected approved release from source instead of using a prebuilt.
+--- @field head? boolean Build the declared development branch, resolved to a commit in the lock.
+--- @field tag? string Build this literal Git tag from the recipe's source repository.
+--- @field rev? string Build this full lowercase Git commit SHA from the recipe's source repository.
+--- @field branch? string Build this Git branch, resolved to a commit in the lock.
 --- @field asset? string Exact GitHub release asset filename. Required when platform selection is ambiguous.
 --- @field bins? table<string, string> Binary name → relative path in the GitHub asset. Defaults to executable discovery for archives, or the repository name for raw binaries.
 
 --- @class rootbeer.PackageRequestSpec
+--- @field source? boolean Build the selected approved release from source instead of using a prebuilt.
+--- @field head? boolean Build the declared development branch, resolved to a commit in the lock.
+--- @field tag? string Build this literal Git tag from the recipe's source repository.
+--- @field rev? string Build this full lowercase Git commit SHA from the recipe's source repository.
+--- @field branch? string Build this Git branch, resolved to a commit in the lock.
 --- @field request string Package name, name@version, github:owner/repo@tag, or aqua:owner/repo@version.
 --- @field asset? string Exact release asset filename for an explicit github: request.
 --- @field bins? table<string, string> Exported command name → relative path for an explicit github: request.
@@ -120,7 +130,7 @@ function rootbeer.package_index(spec) end
 --- You can also use `github:owner/repo@tag`, `aqua:owner/repo@version`,
 --- or a table describing an exact download and installation.
 --- @param spec string|rootbeer.PackageRequestSpec|rootbeer.PackageSpec Package name, source request with options, or exact package specification.
---- @param opts? rootbeer.PackageOptions Options for an explicit `github:` request.
+--- @param opts? rootbeer.PackageOptions Source selection for canonical packages, or asset options for explicit `github:` requests.
 function rootbeer.package(spec, opts) end
 
 --- Declares a dense package list in order. Accepts the same entries as package().

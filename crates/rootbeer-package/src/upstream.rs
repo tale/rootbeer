@@ -124,8 +124,11 @@ impl GitHubUpstream {
         super::catalog::validate_systems(&self.systems)?;
         if let Some(build) = &self.build {
             build.validate()?;
-            if !self.assets.is_empty() || self.mirror {
-                return Err("source discovery cannot select prebuilt assets or mirroring".into());
+            if self.mirror {
+                return Err(
+                    "source discovery with mirrored prebuilts requires pinned release checksums"
+                        .into(),
+                );
             }
         }
         if !self.bins.is_empty()

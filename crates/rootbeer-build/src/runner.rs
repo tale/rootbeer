@@ -54,7 +54,14 @@ pub fn run_with_sandbox(
         .stderr(file)
         .process_group(0)
         .spawn()
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| {
+            format!(
+                "cannot start build command {} in {}: {error}; see {}",
+                args[0],
+                source.display(),
+                log.display()
+            )
+        })?;
     let start = Instant::now();
     loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {

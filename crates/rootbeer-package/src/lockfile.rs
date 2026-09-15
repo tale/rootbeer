@@ -210,11 +210,9 @@ impl RootbeerLock {
                 .ok_or_else(|| LockError::MissingPackage { id: id.clone() });
         }
 
-        if let Some(version) = request
-            .version
-            .as_ref()
-            .filter(|_| request.asset.is_none() && request.bins.is_empty())
-        {
+        if let Some(version) = request.version.as_ref().filter(|_| {
+            request.source.is_none() && request.asset.is_none() && request.bins.is_empty()
+        }) {
             let id = package_id_for_request_version(request, version);
             if let Some(package) = self.packages.get(&id) {
                 return Ok(package);

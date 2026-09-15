@@ -155,7 +155,7 @@ pub fn export_catalog_with_workers(
                     eprintln!("REUSE {key} on {}", context.system);
                 }
                 Ok((fingerprint, None)) => tasks.push((
-                    recipe.build.is_some(),
+                    recipe.build.is_some() && !recipe.has_prebuilt(&context.system),
                     (key, &package.name, recipe, fingerprint),
                 )),
                 Err(error) => {
@@ -393,7 +393,9 @@ fn export_recipe(
         &downloads,
         root.join("install"),
     );
-    let (mut artifact, receipt_bytes, proof) = if recipe.build.is_some() {
+    let (mut artifact, receipt_bytes, proof) = if recipe.build.is_some()
+        && !recipe.has_prebuilt(&context.system)
+    {
         let build = root.join("build");
         rootbeer_build::BuildPlan::resolve(catalog, key, inputs)?.execute(
             &build,

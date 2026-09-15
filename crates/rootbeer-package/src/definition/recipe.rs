@@ -58,6 +58,10 @@ struct Inputs {
 #[serde(deny_unknown_fields)]
 struct Prebuilt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    systems: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     aqua: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     github: Option<String>,
@@ -74,6 +78,8 @@ struct Prebuilt {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Source {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    git: Option<crate::GitSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -173,8 +179,8 @@ impl RecipeDefinition {
         if !self.versions.contains_key(&self.default_version) {
             return Err("default version has no recipe".into());
         }
-        if self.inputs.prebuilt.is_some() == self.inputs.source.is_some() {
-            return Err("inputs must select exactly one of prebuilt or source".into());
+        if self.inputs.prebuilt.is_none() && self.inputs.source.is_none() {
+            return Err("inputs require source, prebuilt, or both".into());
         }
         if self
             .inputs
@@ -337,20 +343,30 @@ impl RecipeDefinition {
             checksums: BTreeMap::new(),
             mirror: false,
         };
-        if let Some(shared) = &self.inputs.prebuilt {
-            if inputs.source.is_some() || self.build.is_some() || entry.build.is_some() {
+        if let Some(shared) = self.inputs.prebuilt.as_ref().filter(|shared| {
+            inputs
+                .prebuilt
+                .as_ref()
+                .and_then(|input| input.enabled)
+                .or(shared.enabled)
+                != Some(false)
+        }) {
+            if self.inputs.source.is_none()
+                && (inputs.source.is_some() || self.build.is_some() || entry.build.is_some())
+            {
                 return Err("prebuilt inputs cannot have a source build".into());
             }
-            if outputs
-                .libraries
-                .as_ref()
-                .is_some_and(|libraries| !libraries.is_empty())
+            if self.inputs.source.is_none()
+                && outputs
+                    .libraries
+                    .as_ref()
+                    .is_some_and(|libraries| !libraries.is_empty())
             {
                 return Err(
                     "prebuilt library exports require a source-defined build contract".into(),
                 );
             }
-            let input = inputs.prebuilt.unwrap_or_default();
+            let input = inputs.prebuilt.clone().unwrap_or_default();
             let github = field(&shared.github, &input.github);
             let aqua = field(&shared.aqua, &input.aqua);
             let (provider, repository) = match (github, aqua) {
@@ -385,10 +401,21 @@ impl RecipeDefinition {
                 }
                 assets.insert(system, asset);
             }
-            for system in recipe.systems.iter().filter(|_| provider == "github") {
-                let asset = assets
-                    .get(system)
-                    .ok_or_else(|| format!("missing asset for {system}"))?;
+            let prebuilt_systems =
+                field(&shared.systems, &input.systems).unwrap_or_else(|| recipe.systems.clone());
+            if prebuilt_systems
+                .iter()
+                .any(|system| !recipe.systems.contains(system))
+            {
+                return Err("prebuilt systems must be supported by the recipe".into());
+            }
+            for system in prebuilt_systems.iter().filter(|_| provider == "github") {
+                let Some(asset) = assets.get(system) else {
+                    if self.inputs.source.is_some() {
+                        continue;
+                    }
+                    return Err(format!("missing asset for {system}"));
+                };
                 recipe
                     .assets
                     .insert(system.clone(), expand(asset, version, Some(&tag))?);
@@ -398,11 +425,9 @@ impl RecipeDefinition {
             if provider == "aqua" && !assets.is_empty() {
                 return Err("aqua inputs cannot declare GitHub release assets".into());
             }
-            recipe.validate()?;
-            return Ok(recipe);
         }
         if let Some(shared) = &self.inputs.source {
-            if inputs.prebuilt.is_some() {
+            if self.inputs.prebuilt.is_none() && inputs.prebuilt.is_some() {
                 return Err("source inputs cannot contain prebuilt overrides".into());
             }
             let input = inputs.source.unwrap_or_default();
@@ -413,6 +438,8 @@ impl RecipeDefinition {
                 .ok_or("source inputs require a build")?;
             let tag = self.source_tag(version)?;
             let mut value = serde_json::to_value(build).map_err(|error| error.to_string())?;
+            value["git"] = serde_json::to_value(field(&shared.git, &input.git))
+                .map_err(|error| error.to_string())?;
             value["url"] = expand(
                 &field(&shared.url, &input.url).ok_or("source input requires a URL")?,
                 version,

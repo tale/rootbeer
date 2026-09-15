@@ -5,8 +5,71 @@ use std::process::Command;
 
 use rootbeer_core::package::{standalone, PackageRequest, RealizedPackage};
 
+#[derive(clap::Args, Debug, Default)]
+#[group(multiple = false)]
+struct SourceArgs {
+    /// Build the selected release from source
+    #[arg(long)]
+    source: bool,
+    /// Build the recipe's development branch, pinned to a commit
+    #[arg(long)]
+    head: bool,
+    /// Build a Git tag from the recipe's source repository
+    #[arg(long)]
+    tag: Option<String>,
+    /// Build a full Git commit SHA from the recipe's source repository
+    #[arg(long)]
+    rev: Option<String>,
+    /// Build a Git branch, pinned to a commit
+    #[arg(long)]
+    branch: Option<String>,
+}
+
+impl SourceArgs {
+    fn selection(&self) -> Option<rootbeer_core::package::SourceSelection> {
+        use rootbeer_core::package::SourceSelection;
+        if self.head {
+            return Some(SourceSelection::Head);
+        }
+        if self.source {
+            return Some(SourceSelection::Release);
+        }
+        if let Some(tag) = &self.tag {
+            return Some(SourceSelection::Tag(tag.clone()));
+        }
+        if let Some(rev) = &self.rev {
+            return Some(SourceSelection::Revision(rev.clone()));
+        }
+        self.branch.clone().map(SourceSelection::Branch)
+    }
+
+    fn apply(&self, request: &mut PackageRequest) -> Result<(), String> {
+        use rootbeer_core::package::SourceSelection;
+        if let Some(selection) = self.selection() {
+            if request.source.is_some() {
+                return Err("choose only one source selector".into());
+            }
+            request.source = Some(selection);
+        }
+        if let Some(selection) = &request.source {
+            selection.validate()?;
+            if request
+                .resolver
+                .as_deref()
+                .is_some_and(|resolver| resolver != "rootbeer")
+                || (request.version.is_some() && !matches!(selection, SourceSelection::Release))
+            {
+                return Err("source selectors require a canonical package and cannot combine Git refs with a release version".into());
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(clap::Args, Debug)]
 pub struct RunArgs {
+    #[command(flatten)]
+    source_selection: SourceArgs,
     /// Package name or name@version (aliases and explicit backends are accepted)
     package: String,
 
@@ -37,6 +100,8 @@ pub struct RunArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct UseArgs {
+    #[command(flatten)]
+    source_selection: SourceArgs,
     /// Packages to install or replace, optionally pinned with @version
     #[arg(required = true)]
     packages: Vec<String>,
@@ -78,14 +143,21 @@ fn execute(args: RunArgs) -> Result<(), String> {
     if args.app.is_some() && !cfg!(target_os = "macos") {
         return Err("--app is supported only on macOS".into());
     }
-    let request = PackageRequest::parse(&args.package);
+    let mut request = PackageRequest::parse(&args.package);
+    args.source_selection.apply(&mut request)?;
     let mut requests = vec![request.clone()];
     requests.extend(
         args.packages
             .iter()
             .map(|package| PackageRequest::parse(package)),
     );
-    let environment = standalone::prepare(&requests, false, args.offline, args.update)?;
+    let environment = standalone::prepare_with_resolver(
+        &requests,
+        false,
+        args.offline,
+        args.update,
+        rootbeer_build::consumer::resolver_stack_for_inputs,
+    )?;
     let package = &environment.packages[0];
     let path = command_path(&environment.bin_dir)?;
     if let Some(app) = args.app {
@@ -101,12 +173,23 @@ fn execute(args: RunArgs) -> Result<(), String> {
 }
 
 pub fn install(args: UseArgs) {
-    let requests = args
-        .packages
-        .iter()
-        .map(|package| PackageRequest::parse(package))
-        .collect::<Vec<_>>();
-    match standalone::prepare(&requests, true, args.offline, args.update) {
+    let requests = (|| -> Result<Vec<PackageRequest>, String> {
+        if args.source_selection.selection().is_some() && args.packages.len() != 1 {
+            return Err("source flags require exactly one package; use per-package @HEAD or @rev: selectors for multiple packages".into());
+        }
+        args.packages.iter().map(|package| {
+            let mut request = PackageRequest::parse(package);
+            args.source_selection.apply(&mut request)?;
+            Ok(request)
+        }).collect()
+    })().unwrap_or_else(|error| { eprintln!("error: {error}"); std::process::exit(1); });
+    match standalone::prepare_with_resolver(
+        &requests,
+        true,
+        args.offline,
+        args.update,
+        rootbeer_build::consumer::resolver_stack_for_inputs,
+    ) {
         Ok(environment) => {
             for package in environment.packages {
                 eprintln!(
@@ -471,6 +554,34 @@ mod tests {
                 "".into(),
             ]
         );
+    }
+
+    #[test]
+    fn cli_source_flags_are_exclusive_and_preserve_release_pins() {
+        for args in [
+            vec!["rb", "use", "zlib", "--head", "--source"],
+            vec!["rb", "run", "zlib", "--tag", "v1", "--rev", "bad"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        let cli = Cli::try_parse_from(["rb", "use", "jq@1.8.2", "--source"]).unwrap();
+        let Commands::Use(args) = cli.command else {
+            panic!("expected use command");
+        };
+        let mut request = PackageRequest::parse(&args.packages[0]);
+        args.source_selection.apply(&mut request).unwrap();
+        assert_eq!(
+            request.source,
+            Some(rootbeer_core::package::SourceSelection::Release)
+        );
+        assert_eq!(request.version.as_deref(), Some("1.8.2"));
+        let mut request = PackageRequest::parse("zlib@1.3.2");
+        assert!(SourceArgs {
+            head: true,
+            ..Default::default()
+        }
+        .apply(&mut request)
+        .is_err());
     }
 
     #[cfg(not(target_os = "macos"))]

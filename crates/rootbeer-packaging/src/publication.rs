@@ -186,6 +186,7 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
         if index.catalog_sha256 != fragment.catalog_sha256 {
             return Err("platforms used different catalog snapshots".into());
         }
+        index.schema = index.schema.max(fragment.schema);
         for (key, systems) in std::mem::take(&mut fragment.artifacts) {
             for (system, artifact) in systems {
                 if index
@@ -201,7 +202,7 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
         }
     }
     let mut index = combined.unwrap();
-    index.schema = ArtifactIndex::schema_for(&index.catalog);
+    index.schema = index.schema.max(ArtifactIndex::schema_for(&index.catalog));
     index.validate_complete()?;
     write_json(&destination.join("index.json"), &index)?;
     fs::rename(destination, output).map_err(|e| e.to_string())
@@ -546,6 +547,33 @@ mod tests {
             .unwrap_err()
             .contains("already exists"));
         assert_eq!(bytes, fs::read(bundle.join("index.json")).unwrap());
+    }
+
+    #[test]
+    fn source_only_publication_preserves_schema_seven() {
+        let root = tempfile::tempdir().unwrap();
+        let inputs = root.path().join("inputs");
+        fs::create_dir(&inputs).unwrap();
+        let source = fragment(root.path(), "aarch64-linux");
+        let mut index: ArtifactIndex = read_json(&source.join("index.json")).unwrap();
+        index.schema = 7;
+        index.artifacts.clear();
+        write_json(&source.join("index.json"), &index).unwrap();
+        fs::rename(source, inputs.join("source")).unwrap();
+        let output = root.path().join("source-only");
+        assemble_indexes(&inputs, &output).unwrap();
+        let published: ArtifactIndex = read_json(&output.join("index.json")).unwrap();
+        assert_eq!(published.schema, 7);
+        assert!(published.artifacts.is_empty());
+        published.validate_complete().unwrap();
+        for package in index.catalog.packages.values_mut() {
+            for recipe in package.versions.values_mut() {
+                recipe.build = None;
+                recipe.source = Some("github:owner/xz@v1".into());
+            }
+        }
+        index.catalog_sha256 = index.catalog.sha256();
+        assert!(index.validate_complete().is_err());
     }
 
     #[test]

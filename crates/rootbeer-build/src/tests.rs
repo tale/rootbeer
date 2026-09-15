@@ -410,8 +410,9 @@ EOF
     assert_eq!(dependency.resolver_inputs, inputs);
     assert_eq!(receipt.dependencies["tool@5.8.3"], dependency.package);
 
+    let cache_directory = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
     let cache = BuildCache {
-        directory: directory.path().join("build-cache"),
+        directory: PathBuf::from(cache_directory.path().file_name().unwrap()),
         context: "test-host-v1".into(),
         recheck: false,
     };
@@ -757,6 +758,20 @@ fn isolated_builds_and_cache_hits_use_distinct_policy_keys() {
         }
         tools
     };
+    #[cfg(target_os = "linux")]
+    let tools = {
+        let mut tools = tools;
+        let found = Command::new(&tools["cc"])
+            .arg("-print-prog-name=cc1")
+            .output()
+            .unwrap();
+        assert!(found.status.success());
+        let helper = PathBuf::from(String::from_utf8(found.stdout).unwrap().trim());
+        if helper.is_absolute() {
+            tools.insert("cc1".into(), helper);
+        }
+        tools
+    };
     let environment = BuildEnvironment {
         tools,
         variables: BTreeMap::from([("SECRET".into(), secret.to_string_lossy().into_owned())]),
@@ -781,7 +796,11 @@ fn isolated_builds_and_cache_hits_use_distinct_policy_keys() {
         build_package(&catalog, "xz", &root.join("isolated"), &opts).unwrap_or_else(|error| {
             panic!(
                 "{error}: {}",
-                fs::read_to_string(root.join("isolated/checks.log")).unwrap_or_default()
+                ["configure.log", "build.log", "checks.log"]
+                    .iter()
+                    .filter_map(|name| fs::read_to_string(root.join("isolated").join(name)).ok())
+                    .collect::<Vec<_>>()
+                    .join("\n")
             )
         });
     assert_ne!(host.build_key, isolated.build_key);

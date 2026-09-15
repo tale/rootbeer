@@ -25,6 +25,23 @@ pub fn prepare(
     is_offline: bool,
     should_update: bool,
 ) -> Result<Environment, String> {
+    prepare_with_resolver(
+        requests,
+        is_persistent,
+        is_offline,
+        should_update,
+        resolver_stack_for_inputs,
+    )
+}
+
+/// Prepares a command environment using the caller's package resolver.
+pub fn prepare_with_resolver(
+    requests: &[PackageRequest],
+    is_persistent: bool,
+    is_offline: bool,
+    should_update: bool,
+    resolver: fn(&PackageResolverInputs) -> super::ResolverStack,
+) -> Result<Environment, String> {
     if requests.is_empty() {
         return Err("at least one package is required".into());
     }
@@ -75,7 +92,7 @@ pub fn prepare(
                     inputs.resolvers.insert("rootbeer".into(), selection.input);
                 }
                 let builder = PackageLockBuilder::new_with_inputs(
-                    resolver_stack_for_inputs(&inputs),
+                    resolver(&inputs),
                     realizer.clone(),
                     ResolveContext::current(),
                     inputs.clone(),

@@ -89,10 +89,10 @@ test("loads a signed published snapshot and preserves platform defaults", async 
 });
 
 test("accepts signed schemas 2 through 5 and rejects unsupported schemas", async () => {
-  for (const schema of [2, 3, 4, 5, 6]) {
+  for (const schema of [2, 3, 4, 5, 6, 7, 8]) {
     const data = fixture(undefined, undefined, schema);
     await withResponses(data, async () => {
-      if (schema < 6) {
+      if (schema < 8) {
         assert.equal((await loadCatalog(data.source)).packages[0].name, pkg.name);
         return;
       }
@@ -299,4 +299,14 @@ test("validates schema 3 app exports before presenting package metadata", async 
       await assert.rejects(loadCatalog(data.source), /invalid app exports/);
     });
   }
+});
+
+test("schema 7 keeps source-capable packages available without prebuilts", async () => {
+  const source = structuredClone(pkg);
+  source.versions["2.0"].build = { url: "https://example.org/source.tar.gz" };
+  const data = fixture([source], {}, 7);
+  await withResponses(data, async () => {
+    const catalog = await loadCatalog(data.source);
+    assert.deepEqual(availableVersions(catalog.packages[0]), ["2.0"]);
+  });
 });

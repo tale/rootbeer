@@ -7,6 +7,9 @@ pub fn find_recipe<'a>(
     request: &str,
 ) -> Result<(&'a CatalogPackage, &'a str, &'a CatalogRecipe), String> {
     let request = PackageRequest::parse(request);
+    if request.source.is_some() {
+        return Err("build graphs require resolved source revisions; use the consumer source resolver to pin HEAD or Git refs first".into());
+    }
     if request
         .resolver
         .as_deref()

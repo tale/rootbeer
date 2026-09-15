@@ -1,4 +1,7 @@
 mod cache;
+pub mod consumer;
+#[cfg(test)]
+mod consumer_test;
 mod environment;
 pub use environment::{verify_environment, BuildEnvironment};
 mod plan;
@@ -131,12 +134,13 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
         )
         .map_err(|error| format!("build isolation is unavailable: {error}"))?;
     }
+    let store = cache
+        .map(|cache| cache.directory.join("store"))
+        .unwrap_or_else(|| workspace.path().join("store"));
+    fs::create_dir_all(&store).map_err(|error| error.to_string())?;
+    let store = store.canonicalize().map_err(|error| error.to_string())?;
     let realizer = PackageRealizer::with_dirs(
-        Store::new(
-            cache
-                .map(|cache| cache.directory.join("store"))
-                .unwrap_or_else(|| workspace.path().join("store")),
-        ),
+        Store::new(store),
         &opts.downloads,
         workspace.path().join("install"),
     );

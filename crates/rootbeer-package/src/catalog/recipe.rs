@@ -60,9 +60,20 @@ impl CatalogPackage {
 }
 
 impl CatalogRecipe {
+    /// Whether the recipe declares an upstream binary for this platform.
+    pub fn has_prebuilt(&self, system: &str) -> bool {
+        self.source.as_ref().is_some_and(|source| {
+            self.build.is_none()
+                || !source.starts_with("github:")
+                || self.assets.contains_key(system)
+        })
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
-        if self.revision == 0 || self.source.is_some() == self.build.is_some() {
-            return Err("recipe needs a revision and exactly one of source or build".into());
+        if self.revision == 0 || (self.source.is_none() && self.build.is_none()) {
+            return Err(
+                "recipe needs a revision and at least one of prebuilt source or build".into(),
+            );
         }
         if let Some(build) = &self.build {
             build.validate()?;
@@ -97,7 +108,7 @@ impl CatalogRecipe {
                 .source
                 .as_deref()
                 .is_none_or(|source| !source.starts_with("github:"))
-                || self.assets.len() != self.systems.len()
+                || (self.build.is_none() && self.assets.len() != self.systems.len())
                 || self.assets.iter().any(|(system, asset)| {
                     !self.systems.contains(system) || asset.trim().is_empty()
                 }))
@@ -121,9 +132,15 @@ impl CatalogRecipe {
         }
         validate_bin_paths(&self.bins, &self.bin_paths)?;
         if !self.checksums.is_empty()
-            && (self.checksums.len() != self.systems.len()
+            && (self.checksums.len()
+                != if self.build.is_some() {
+                    self.assets.len()
+                } else {
+                    self.systems.len()
+                }
                 || self.checksums.iter().any(|(system, digest)| {
-                    !self.systems.contains(system)
+                    (!self.systems.contains(system)
+                        || (self.build.is_some() && !self.assets.contains_key(system)))
                         || digest.len() != 64
                         || !digest
                             .bytes()
