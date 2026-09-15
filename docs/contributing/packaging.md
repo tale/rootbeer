@@ -4,6 +4,9 @@ Package definitions live in the [official index repository](https://github.com/t
 Rootbeer owns the package engine; the index owns recipes and publication. A new
 recipe normally needs no Rust changes or Rootbeer release.
 
+Package discovery, build checks, and publication CI run in the index repository,
+which pins Forge with its `engine-revision` file. Engine CI runs regression tests.
+
 The `packages/` directory in the engine repository is the smaller embedded fallback
 and authoring fixture. It is not the complete hosted catalog.
 

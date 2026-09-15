@@ -1,5 +1,8 @@
 name: CI
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
@@ -12,11 +15,14 @@ jobs:
         include:
           - name: linux-x86_64
             target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
           - name: linux-aarch64
             target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
           - name: macos-aarch64
             target: aarch64-apple-darwin
-    runs-on: ${{ contains(matrix.target, 'apple') && 'macos-latest' || 'ubuntu-latest' }}
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -27,10 +33,6 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
           targets: ${{ matrix.target }}
-
-      - name: Cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
       - name: Cache Cargo
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -47,20 +49,13 @@ jobs:
 
       - name: Lint
         run: cargo clippy --all-targets --target ${{ matrix.target }} -- -D warnings
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
 
       - name: Install Linux sandbox
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
       - name: Test
-        if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: cargo test
