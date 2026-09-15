@@ -25,19 +25,114 @@ then uses those locked facts throughout the run.
 
 The build cache reuses individual dependencies across different root packages.
 Its key includes the recipe, verified dependency outputs and selected library
-exports, platform, build engine, job count, and explicit environment identity.
+exports, platform, build engine, job count, environment variables, and tool/input
+hashes. The caller-supplied host identity also remains part of the key.
 Archive paths, unrelated catalog entries, and publication destinations do not
-change build keys. Receipts retain the key and environment identity.
+change build keys. Receipts retain the key, environment lock, and host identity.
 
-Set `BUILD_ENVIRONMENT_ID` to identify the host image, compiler, SDK, and system
-tools. These are trusted host builds with network access, not isolated builds.
-Change that identity whenever the host build environment changes. `--recheck`
-rebuilds each node; `--phase-timeout SECONDS` overrides the default 20-minute
-command limit. Successful outputs enter the cache only after verification and
-checks; cache hits verify archive and output hashes and rerun package checks.
+### Pinning a build environment
 
-Export's existing `--cache` also enables this dependency cache under `builds/`.
-Qualification results remain separate because they include publication details.
+Write an environment specification with absolute executable paths in `tools`,
+SDK/sysroot and compiler resource directories in `inputs`, and explicit values
+in `variables`. For example, this specification uses a toolchain installed under
+`/opt/toolchain`:
+
+```json
+{
+  "tools": {
+    "sh": "/opt/toolchain/bin/sh",
+    "cc": "/opt/toolchain/bin/cc",
+    "c++": "/opt/toolchain/bin/c++",
+    "make": "/opt/toolchain/bin/make",
+    "patch": "/opt/toolchain/bin/patch"
+  },
+  "inputs": {
+    "toolchain": "/opt/toolchain",
+    "sysroot": "/opt/sysroot"
+  },
+  "variables": {
+    "CFLAGS": "--sysroot=/opt/sysroot -O2",
+    "LDFLAGS": "--sysroot=/opt/sysroot"
+  }
+}
+```
+
+List other utilities required by the recipe, such as `ar`, `ranlib`, `sed`,
+`mkdir`, and `cp`, in `tools`. Declare script interpreters at their exact paths
+(for example `/bin/sh` for a `#!/bin/sh` script). On macOS, declare the actual compiler and its
+resource directory, include the SDK directory in `inputs`, and set `SDKROOT`
+in `variables`. Hashing an SDK directory can take time; it reads the full tree.
+Directory symlinks must resolve within their declared input root.
+
+```sh
+rootbeer-forge pin-environment environment.json > environment.lock.json
+rootbeer-forge build xz --output /tmp/xz-build \
+  --environment environment.lock.json \
+  --cache /tmp/rootbeer-builds --cache-context "$BUILD_ENVIRONMENT_ID"
+```
+
+`build` and `export` accept `--environment`. A lock pins tool bytes, input tree
+contents, platform, paths, and variables. The executor verifies it before cache
+lookup and again after each package's checks. Changed inputs fail the build;
+review the change and regenerate the lock to get new cache keys.
+
+Pinned execution clears inherited variables and puts only dependency tools and
+declared tools on `PATH`. Rootbeer owns `PATH`, `CC`, `CXX`, shell selection,
+temporary directories, locale, and package-config lookup. Dependency library
+flags are appended to your `CPPFLAGS` and `LDFLAGS`.
+
+Environment locks describe input selection. Add `--isolate` to enforce filesystem
+and network restrictions while package code runs:
+
+```sh
+rootbeer-forge build xz --output /tmp/xz-build \
+  --environment environment.lock.json --isolate \
+  --cache /tmp/rootbeer-builds --cache-context "$BUILD_ENVIRONMENT_ID"
+```
+
+`export` accepts the same flag. Isolation requires a lock and never falls back
+to host execution. Rootbeer downloads and extracts sources before starting
+package commands. Tool probes, patches, build phases, and package checks all run
+inside the sandbox; cache hits rerun their checks there too.
+
+Declared tools, SDK inputs, and realized dependencies are read-only. Each build
+or check gets a separate writable scratch directory. Undeclared file contents
+and host network access are denied, including loopback. The executor opens log
+files before launching commands, so logs remain available on failure. Successful
+isolated commands also trigger cleanup of their remaining process group.
+
+On macOS, Rootbeer uses `/usr/bin/sandbox-exec`. Select actual developer tools
+with `xcrun --find clang`, `xcrun --find make`, and similar commands when writing
+the environment specification: `/usr/bin/cc` and `/usr/bin/make` may be discovery
+shims that need access to undeclared developer directories.
+
+On Linux, install Bubblewrap at `/usr/bin/bwrap`. The host must permit user,
+mount, process, and network namespaces. Restricted containers can prevent this;
+Rootbeer reports a sandbox startup failure instead of reducing isolation.
+The Linux launcher creates a private filesystem with read-only input mounts,
+a writable scratch mount, and private process and network namespaces.
+
+The OS runtime remains a declared exception: macOS loader/framework locations
+and Linux library/loader locations are readable. macOS also permits filesystem
+metadata queries. These runtime inputs still need a stable `BUILD_ENVIRONMENT_ID`;
+this mode does not provide a fully pinned OS image. Input locks are verified
+before and after execution, but other host processes can still change files.
+
+Cache keys distinguish host and isolated execution and include the launcher
+identity and policy implementation. Receipts record the selected isolation
+identity. Isolated exports bypass the outer qualification cache so package
+checks cannot be skipped.
+
+Without a lock, trusted host builds remain available. Rootbeer hashes the
+selected host compiler and basic tools before lookup, but the host identity
+must still account for SDKs, libraries, and other utilities. `--recheck` rebuilds
+each node; `--phase-timeout SECONDS` sets the build command time limit.
+
+Successful outputs enter the cache only after input verification and checks;
+cache hits verify archive and output hashes and rerun package checks. Export's
+`--cache` enables the dependency cache under `builds/`. Source exports always
+pass through this executor; only binary qualification uses the outer export
+cache directly.
 
 New recipes can scope dependencies explicitly:
 

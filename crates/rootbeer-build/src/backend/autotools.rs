@@ -1,7 +1,7 @@
 use super::{Context, Phase};
 
 pub(super) fn plan(options: &[String], context: &Context<'_>) -> Vec<Phase> {
-    let mut configure = vec!["/bin/sh".into(), "./configure".into(), "--prefix=/".into()];
+    let mut configure = vec!["sh".into(), "./configure".into(), "--prefix=/".into()];
     configure.extend(options.iter().map(|argument| context.expand(argument)));
     vec![
         Phase {

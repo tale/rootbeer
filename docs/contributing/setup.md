@@ -126,3 +126,8 @@ For the best experience working on Lua modules, configure your editor to use
 **lua-language-server** with the `lua/` directory. The `@meta` file at
 `lua/rootbeer/core.lua` provides type information for all native bindings,
 giving you autocomplete and diagnostics in the high-level modules.
+
+Build isolation tests need `sandbox-exec` on macOS or `/usr/bin/bwrap` on Linux
+(`sudo apt-get install bubblewrap` on Debian/Ubuntu). Linux must allow user and
+mount namespaces. These tests exercise real filesystem and network denials;
+a surrounding sandbox or restricted container can prevent them from starting.

@@ -246,6 +246,8 @@ pub(crate) mod tests {
             schema: 1,
             build_key: None,
             build_environment: None,
+            environment: None,
+            isolation: None,
             catalog_sha256: catalog.sha256(),
             revision: recipe.revision,
             system: "aarch64-linux".into(),

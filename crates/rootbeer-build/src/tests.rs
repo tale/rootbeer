@@ -303,6 +303,9 @@ EOF
         jobs: 1,
         ..BuildOptions::default()
     };
+    let environment = environment::Environment::resolve(None).unwrap();
+    let host_tools = directory.path().join("host-tools");
+    environment.stage(&host_tools).unwrap();
     let artifact = compile(
         &plan,
         "fixture@5.8.3",
@@ -310,6 +313,7 @@ EOF
         &tools,
         &output,
         &opts,
+        (&environment, &host_tools, &BTreeMap::new()),
     )
     .unwrap();
     write_install_files(&artifact, &output).unwrap();
@@ -554,12 +558,92 @@ EOF
     assert!(!snapshot.join("build.log").exists());
     let description = &mut catalog.packages.get_mut("tool").unwrap().description;
     description.truncate(description.len() - " changed after planning".len());
+    let mut specification = BuildEnvironment {
+        tools: environment
+            .lock
+            .tools
+            .iter()
+            .map(|(name, input)| (name.clone(), input.path.clone()))
+            .collect(),
+        ..Default::default()
+    };
+    for tool in ["cat", "chmod", "mkdir", "cp"] {
+        let path = ["/usr/bin", "/bin"]
+            .iter()
+            .map(|root| PathBuf::from(root).join(tool))
+            .find(|path| path.is_file())
+            .unwrap();
+        specification.tools.insert(tool.into(), path);
+    }
+    let sdk = directory.path().join("sdk");
+    fs::create_dir(&sdk).unwrap();
+    fs::write(sdk.join("header.h"), "#define VERSION 1\n").unwrap();
+    specification.inputs.insert("sdk".into(), sdk.clone());
+    let mut pinned_opts = BuildOptions {
+        environment: Some(specification.pin().unwrap()),
+        cache: Some(cache.clone()),
+        ..opts.clone()
+    };
+    let pinned_plan = BuildPlan::resolve(&catalog, "fixture", &inputs).unwrap();
+    let pinned_first = pinned_plan
+        .execute(&directory.path().join("pinned-first"), &pinned_opts)
+        .unwrap();
+    let reused = directory.path().join("pinned-reused");
+    let pinned_second = pinned_plan.execute(&reused, &pinned_opts).unwrap();
+    assert_eq!(pinned_first.build_key, pinned_second.build_key);
+    assert_eq!(pinned_first.environment, pinned_opts.environment);
+    assert!(!reused.join("build.log").exists());
+    fs::write(sdk.join("header.h"), "#define VERSION 2\n").unwrap();
+    let stale_output = directory.path().join("pinned-stale");
+    assert!(pinned_plan
+        .execute(&stale_output, &pinned_opts)
+        .unwrap_err()
+        .contains("changed"));
+    assert!(!stale_output.exists());
+    pinned_opts.environment = Some(specification.pin().unwrap());
+    let changed = directory.path().join("pinned-sdk-changed");
+    let changed_artifact = pinned_plan.execute(&changed, &pinned_opts).unwrap();
+    assert_ne!(pinned_first.build_key, changed_artifact.build_key);
+    assert!(changed.join("build.log").exists());
+    specification
+        .variables
+        .insert("CFLAGS".into(), "-O2".into());
+    pinned_opts.environment = Some(specification.pin().unwrap());
+    let changed_flags = pinned_plan
+        .execute(&directory.path().join("pinned-flags-changed"), &pinned_opts)
+        .unwrap();
+    assert_ne!(changed_artifact.build_key, changed_flags.build_key);
+    let mutating_make = directory.path().join("mutating-make");
+    fs::write(&mutating_make, "#!/bin/sh\nif [ \"$1\" != --version ]; then printf changed > \"$MUTATION_TARGET\"; fi\nexec /usr/bin/make \"$@\"\n").unwrap();
+    fs::set_permissions(&mutating_make, fs::Permissions::from_mode(0o755)).unwrap();
+    specification.tools.insert("make".into(), mutating_make);
+    specification.variables.insert(
+        "MUTATION_TARGET".into(),
+        sdk.join("header.h").to_string_lossy().into_owned(),
+    );
+    pinned_opts.environment = Some(specification.pin().unwrap());
+    let cache_entries = || {
+        fs::read_dir(cache.directory.join("results"))
+            .unwrap()
+            .count()
+    };
+    let before = cache_entries();
+    assert!(pinned_plan
+        .execute(
+            &directory.path().join("pinned-mutated-during-build"),
+            &pinned_opts
+        )
+        .unwrap_err()
+        .contains("changed"));
+    assert_eq!(cache_entries(), before);
     let key = cache::key(
         "tool@5.8.3",
         &catalog.packages["tool"].versions["5.8.3"],
         &ResolveContext::current().system,
         &BTreeMap::new(),
-        &cache.context,
+        &environment
+            .identity(&format!("{}\0host", cache.context))
+            .unwrap(),
         1,
         &BTreeMap::new(),
     )
@@ -584,4 +668,128 @@ EOF
         )
         .unwrap_err();
     assert!(error.contains("hash mismatch"));
+}
+
+#[test]
+fn isolated_build_requires_a_lock_before_creating_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("output");
+    let error = build_package(
+        &source_catalog(),
+        "xz",
+        &output,
+        &BuildOptions {
+            is_isolated: true,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert!(error.contains("pinned environment"));
+    assert!(!output.exists());
+}
+
+#[test]
+fn isolated_builds_and_cache_hits_use_distinct_policy_keys() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let secret = root.join("secret");
+    fs::write(&secret, "secret\n").unwrap();
+    let source = root.join("sources");
+    fs::create_dir_all(source.join("fixture")).unwrap();
+    fs::write(source.join("fixture/input"), "source\n").unwrap();
+    fs::write(
+        source.join("fixture/main.c"),
+        "int answer(void) { return 42; }\n",
+    )
+    .unwrap();
+    let archive = root.join("source.tar.gz");
+    pack(&source, &archive).unwrap();
+    let downloads = root.join("downloads");
+    let downloaded = DownloadCache::new(&downloads)
+        .materialize(&format!("file://{}", archive.display()), None)
+        .unwrap();
+    let mut catalog = source_catalog();
+    let package = catalog.packages.get_mut("xz").unwrap();
+    let recipe = package.versions.get_mut("5.8.3").unwrap();
+    recipe.bins = vec!["xz".into()];
+    recipe.checks = vec![vec!["xz".into()]];
+    recipe.build = Some(serde_json::from_value(serde_json::json!({
+        "backend": "custom", "url": "https://source.invalid/isolation.tar.gz",
+        "sha256": downloaded.sha256, "archive": "tar.gz", "strip_prefix": "fixture",
+        "steps": {
+            "configure": [], "build": [["cc", "-c", "main.c", "-o", "main.o"], ["sh", "-c", "read value < input; test \"$value\" = source"]],
+            "check": [["sh", "-c", "exit 0"]], "install": [["sh", "-c", "mkdir -p \"$1/bin\"; printf '#!/bin/sh\\nif (read value < \"$SECRET\") 2>/dev/null; then printf host-visible; else printf isolated; fi\\n' > \"$1/bin/xz\"; chmod +x \"$1/bin/xz\"", "install", "{prefix}"]]
+        }
+    })).unwrap());
+    let tools: BTreeMap<String, PathBuf> = ["sh", "cc", "as", "make", "patch", "mkdir", "chmod"]
+        .into_iter()
+        .map(|name| {
+            let path = ["/bin", "/usr/bin"]
+                .iter()
+                .map(|root| Path::new(root).join(name))
+                .find(|path| path.is_file())
+                .unwrap();
+            (name.into(), path)
+        })
+        .collect();
+    #[cfg(target_os = "macos")]
+    let tools = {
+        let mut tools = tools;
+        for (name, command) in [("cc", "clang"), ("make", "make")] {
+            let found = Command::new("/usr/bin/xcrun")
+                .args(["--find", command])
+                .output()
+                .unwrap();
+            assert!(found.status.success());
+            tools.insert(
+                name.into(),
+                String::from_utf8(found.stdout).unwrap().trim().into(),
+            );
+        }
+        tools
+    };
+    let environment = BuildEnvironment {
+        tools,
+        variables: BTreeMap::from([("SECRET".into(), secret.to_string_lossy().into_owned())]),
+        ..Default::default()
+    }
+    .pin()
+    .unwrap();
+    let mut opts = BuildOptions {
+        environment: Some(environment),
+        downloads,
+        jobs: 1,
+        cache: Some(BuildCache {
+            directory: root.join("cache"),
+            context: "sandbox-test".into(),
+            recheck: false,
+        }),
+        ..Default::default()
+    };
+    let host = build_package(&catalog, "xz", &root.join("host"), &opts).unwrap();
+    opts.is_isolated = true;
+    let isolated =
+        build_package(&catalog, "xz", &root.join("isolated"), &opts).unwrap_or_else(|error| {
+            panic!(
+                "{error}: {}",
+                fs::read_to_string(root.join("isolated/checks.log")).unwrap_or_default()
+            )
+        });
+    assert_ne!(host.build_key, isolated.build_key);
+    assert_ne!(host.isolation, isolated.isolation);
+    let cached = root.join("cached");
+    let reused = build_package(&catalog, "xz", &cached, &opts).unwrap();
+    assert_eq!(isolated.build_key, reused.build_key);
+    assert!(!cached.join("build.log").exists());
+    assert!(fs::read_to_string(root.join("host/checks.log"))
+        .unwrap()
+        .contains("host-visible"));
+    assert_eq!(
+        fs::read_to_string(root.join("isolated/checks.log")).unwrap(),
+        "isolated"
+    );
+    assert_eq!(
+        fs::read_to_string(cached.join("checks.log")).unwrap(),
+        "isolated"
+    );
 }

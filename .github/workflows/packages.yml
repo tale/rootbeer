@@ -55,6 +55,10 @@ jobs:
           key: package-cargo-${{ matrix.runner }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
             package-cargo-${{ matrix.runner }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-
+      - name: Install Linux sandbox
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
       - name: Test package engine
         run: cargo test --locked --workspace --quiet
       - name: Build packaging tool

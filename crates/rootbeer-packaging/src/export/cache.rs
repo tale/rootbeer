@@ -160,7 +160,7 @@ fn fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{bundle_artifacts, export_catalog_with_cache, ArtifactIndex, ResolveContext};
+    use crate::{bundle_artifacts, ArtifactIndex, ResolveContext};
 
     #[test]
     fn fingerprints_track_dependencies_without_invalidating_unrelated_packages() {
@@ -319,40 +319,13 @@ mod tests {
             );
         }
         publication::write_json(&record_path, &record).unwrap();
-        let mut current = catalog.clone();
-        current.packages.retain(|name, _| name == "xz");
         let output = root.path().join("output");
-        export_catalog_with_cache(&current, "owner/index", &output, 2, Some(&options)).unwrap();
-        let exported: ArtifactIndex = publication::read_json(&output.join("index.json")).unwrap();
-        assert_eq!(exported.catalog_sha256, current.sha256());
-        assert_eq!(
-            exported.artifacts[key][&system].receipt_sha256,
-            artifact.receipt_sha256
-        );
-        let mut shard_artifacts = BTreeMap::new();
-        for index in 0..8 {
-            let shard_output = root.path().join(format!("shard-{index}"));
-            crate::export_catalog_shard(
-                &current,
-                "owner/index",
-                &shard_output,
-                2,
-                Some(&options),
-                Some(crate::ExportShard { index, count: 8 }),
-            )
+        publication::create_bundle(&output).unwrap();
+        let restored = cache
+            .restore(&fingerprint, key, &system, recipe, &output)
+            .unwrap()
             .unwrap();
-            let fragment: ArtifactIndex =
-                publication::read_json(&shard_output.join("index.json")).unwrap();
-            assert_eq!(fragment.catalog_sha256, exported.catalog_sha256);
-            assert_eq!(fragment.catalog.sha256(), current.sha256());
-            for (key, artifact) in fragment.artifacts {
-                assert!(shard_artifacts.insert(key, artifact).is_none());
-            }
-        }
-        assert_eq!(
-            serde_json::to_value(shard_artifacts).unwrap(),
-            serde_json::to_value(&exported.artifacts).unwrap()
-        );
+        assert_eq!(restored.receipt_sha256, artifact.receipt_sha256);
         let receipt = format!("{}.json", artifact.receipt_sha256);
         assert_eq!(
             fs::read(output.join("receipts").join(&receipt)).unwrap(),
@@ -368,9 +341,9 @@ mod tests {
         )
         .unwrap();
         let failed = root.path().join("failed");
-        assert!(
-            export_catalog_with_cache(&current, "owner/index", &failed, 2, Some(&options)).is_err()
-        );
+        assert!(cache
+            .restore(&fingerprint, key, &system, recipe, &failed)
+            .is_err());
         assert!(!failed.exists());
         cache
             .save(&fingerprint, key, &system, recipe, artifact, &source)

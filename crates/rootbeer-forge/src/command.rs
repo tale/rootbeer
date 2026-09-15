@@ -52,6 +52,12 @@ enum Command {
     },
     /// Build, check, and export the current platform's package recipes
     Export {
+        /// Pinned tools, SDK/sysroot inputs, and build variables
+        #[arg(long)]
+        environment: Option<PathBuf>,
+        /// Deny network access and restrict filesystem access to build inputs and scratch
+        #[arg(long, requires = "environment")]
+        isolate: bool,
         #[arg(long)]
         registry: String,
         #[arg(long)]
@@ -129,11 +135,19 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Hash a build environment specification and write its lock to stdout
+    PinEnvironment { specification: PathBuf },
     /// Inspect the dependency graph without executing builds
     Plan { name: String },
     /// Compile a trusted source recipe into an installable local artifact
     Build {
         name: String,
+        /// Pinned tools, SDK/sysroot inputs, and build variables
+        #[arg(long)]
+        environment: Option<PathBuf>,
+        /// Deny network access and restrict filesystem access to build inputs and scratch
+        #[arg(long, requires = "environment")]
+        isolate: bool,
         #[arg(long)]
         output: PathBuf,
         #[arg(short, long, default_value_t = 2)]
@@ -302,6 +316,8 @@ fn execute(args: Args) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         }
         Command::Export {
+            environment,
+            isolate,
             registry,
             output,
             jobs,
@@ -321,7 +337,12 @@ fn execute(args: Args) -> Result<(), String> {
                 catalog,
                 &registry,
                 &output,
-                jobs,
+                &rootbeer_packaging::BuildOptions {
+                    jobs,
+                    environment: read_environment(environment)?,
+                    is_isolated: isolate,
+                    ..Default::default()
+                },
                 workers,
                 cache.as_ref(),
                 shard.map(|index| rootbeer_packaging::ExportShard {
@@ -398,6 +419,19 @@ fn execute(args: Args) -> Result<(), String> {
             file.write_all(&manifest).map_err(|e| e.to_string())?;
             file.sync_all().map_err(|e| e.to_string())?;
         }
+        Command::PinEnvironment { specification } => {
+            let specification: rootbeer_packaging::BuildEnvironment = serde_json::from_slice(
+                &std::fs::read(specification).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            writeln!(
+                output,
+                "{}",
+                serde_json::to_string_pretty(&specification.pin()?)
+                    .map_err(|error| error.to_string())?
+            )
+            .map_err(|error| error.to_string())?;
+        }
         Command::Plan { name } => {
             catalog.validate()?;
             let graph = rootbeer_packaging::graph::DependencyGraph::new(
@@ -414,6 +448,8 @@ fn execute(args: Args) -> Result<(), String> {
         }
         Command::Build {
             name,
+            environment,
+            isolate,
             output: destination,
             jobs,
             cache,
@@ -431,6 +467,8 @@ fn execute(args: Args) -> Result<(), String> {
                 &name,
                 &destination,
                 &rootbeer_packaging::BuildOptions {
+                    environment: read_environment(environment)?,
+                    is_isolated: isolate,
                     jobs,
                     cache,
                     phase_timeout: std::time::Duration::from_secs(phase_timeout),
@@ -449,6 +487,16 @@ fn execute(args: Args) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn read_environment(
+    path: Option<PathBuf>,
+) -> Result<Option<rootbeer_packaging::BuildEnvironmentLock>, String> {
+    path.map(|path| {
+        serde_json::from_slice(&std::fs::read(path).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())
+    })
+    .transpose()
 }
 
 #[cfg(test)]

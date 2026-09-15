@@ -123,11 +123,16 @@ pub(crate) fn environment(
     if !prefix.try_exists().map_err(|error| error.to_string())? {
         return Ok(());
     }
-    environment.insert("CPPFLAGS", format!("-I{}", quoted(&prefix.join("include"))));
+    let cppflags = environment.get("CPPFLAGS").cloned().unwrap_or_default();
+    environment.insert(
+        "CPPFLAGS",
+        format!("{cppflags} -I{}", quoted(&prefix.join("include"))),
+    );
+    let ldflags = environment.get("LDFLAGS").cloned().unwrap_or_default();
     environment.insert(
         "LDFLAGS",
         format!(
-            "-L{} -L{}",
+            "{ldflags} -L{} -L{}",
             quoted(&prefix.join("lib")),
             quoted(&prefix.join("lib64"))
         ),

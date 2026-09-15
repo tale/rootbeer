@@ -231,6 +231,10 @@ pub struct BuildArtifact {
     pub build_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_environment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<BuildEnvironmentLock>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isolation: Option<String>,
     pub catalog_sha256: String,
     pub revision: u32,
     pub system: String,
@@ -239,6 +243,25 @@ pub struct BuildArtifact {
     pub resolver_inputs: PackageResolverInputs,
     pub toolchain: BTreeMap<String, String>,
     pub package: LockedPackage,
+}
+
+/// Content identities and variables used by the build executor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildEnvironmentLock {
+    pub schema: u32,
+    pub system: String,
+    pub tools: BTreeMap<String, BuildEnvironmentInput>,
+    pub inputs: BTreeMap<String, BuildEnvironmentInput>,
+    pub variables: BTreeMap<String, String>,
+}
+
+/// A tool executable or a directory containing SDK or toolchain inputs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildEnvironmentInput {
+    pub path: PathBuf,
+    pub sha256: String,
 }
 
 #[cfg(test)]

@@ -66,7 +66,18 @@ pub fn export_catalog_shard(
     cache_options: Option<&ExportCache>,
     shard: Option<ExportShard>,
 ) -> Result<(), String> {
-    export_catalog_with_workers(catalog, registry, output, jobs, 2, cache_options, shard)
+    export_catalog_with_workers(
+        catalog,
+        registry,
+        output,
+        &BuildOptions {
+            jobs,
+            ..Default::default()
+        },
+        2,
+        cache_options,
+        shard,
+    )
 }
 
 /// Qualifies recipes concurrently, limiting source compilation to one package at a time.
@@ -74,14 +85,14 @@ pub fn export_catalog_with_workers(
     catalog: &PackageCatalog,
     registry: &str,
     output: &Path,
-    jobs: usize,
+    build_options: &BuildOptions,
     workers: usize,
     cache_options: Option<&ExportCache>,
     shard: Option<ExportShard>,
 ) -> Result<(), String> {
     catalog.validate()?;
     rootbeer_package::ghcr::validate_repository(registry)?;
-    if jobs == 0 || jobs > 64 {
+    if build_options.jobs == 0 || build_options.jobs > 64 {
         return Err("jobs must be between 1 and 64".into());
     }
     if workers == 0 || workers > 64 {
@@ -89,6 +100,15 @@ pub fn export_catalog_with_workers(
     }
     if let Some(shard) = shard {
         shard.validate()?;
+    }
+    if build_options.is_isolated && build_options.environment.is_none() {
+        return Err("isolated export requires a pinned environment".into());
+    }
+    if build_options.is_isolated {
+        rootbeer_build::Sandbox::identity()?;
+    }
+    if let Some(lock) = &build_options.environment {
+        rootbeer_build::verify_environment(lock)?;
     }
     let staging = publication::staging(output)?;
     let destination = staging.path().join("bundle");
@@ -114,6 +134,7 @@ pub fn export_catalog_with_workers(
             let cached = (|| {
                 let fingerprint = cache
                     .as_ref()
+                    .filter(|_| recipe.build.is_none() && !build_options.is_isolated)
                     .map(|cache| cache.fingerprint(catalog, &key, &context.system, registry))
                     .transpose()?;
                 let restored = match (&cache, &fingerprint) {
@@ -153,7 +174,7 @@ pub fn export_catalog_with_workers(
         let environment = ExportEnvironment {
             catalog,
             registry,
-            jobs,
+            build_options,
             inputs: &inputs,
             cache: build_cache.as_ref(),
         };
@@ -339,7 +360,7 @@ fn run_workers<T: Send, R: Send>(
 struct ExportEnvironment<'a> {
     catalog: &'a PackageCatalog,
     registry: &'a str,
-    jobs: usize,
+    build_options: &'a BuildOptions,
     inputs: &'a PackageResolverInputs,
     cache: Option<&'a rootbeer_build::BuildCache>,
 }
@@ -355,7 +376,7 @@ fn export_recipe(
     let ExportEnvironment {
         catalog,
         registry,
-        jobs,
+        build_options,
         inputs,
         cache,
     } = *environment;
@@ -379,12 +400,11 @@ fn export_recipe(
         rootbeer_build::BuildPlan::resolve(catalog, key, inputs)?.execute(
             &build,
             &rootbeer_build::BuildOptions {
-                jobs,
                 cache: cache.cloned(),
                 downloads: cache
                     .map(|cache| cache.directory.join("downloads"))
                     .unwrap_or_else(|| rootbeer_store::state_dir().join("downloads")),
-                ..Default::default()
+                ..build_options.clone()
             },
         )?;
         let (_, artifact, receipt) = super::bundle::prepare_artifact(
@@ -422,6 +442,11 @@ fn export_recipe(
             )?;
         }
         let mut receipt = serde_json::json!({"schema": 1, "catalog_sha256": catalog.sha256(), "revision": recipe.revision, "system": context.system, "package": locked, "proof": resolution.proof, "resolver_inputs": inputs});
+        if build_options.is_isolated {
+            receipt["isolation"] = rootbeer_build::Sandbox::identity()?.into();
+            receipt["environment"] = serde_json::to_value(&build_options.environment)
+                .map_err(|error| error.to_string())?;
+        }
         if let Some(upstream) = upstream {
             receipt["upstream_package"] =
                 serde_json::to_value(upstream).map_err(|e| e.to_string())?;
@@ -446,22 +471,52 @@ fn export_recipe(
     for (name, path) in &realized.bins {
         symlink(path, profile.join(name)).map_err(|e| e.to_string())?;
     }
+    let check_workspace = tempfile::tempdir_in(root).map_err(|error| error.to_string())?;
     let environment = BTreeMap::from([
-        ("HOME", root.to_string_lossy().into_owned()),
-        ("PATH", format!("{}:/usr/bin:/bin", profile.display())),
+        (
+            "HOME",
+            check_workspace.path().to_string_lossy().into_owned(),
+        ),
+        (
+            "PATH",
+            if build_options.is_isolated {
+                profile.display().to_string()
+            } else {
+                format!("{}:/usr/bin:/bin", profile.display())
+            },
+        ),
         ("LC_ALL", "C".into()),
-        ("TMPDIR", root.to_string_lossy().into_owned()),
+        (
+            "TMPDIR",
+            check_workspace.path().to_string_lossy().into_owned(),
+        ),
     ]);
+    let sandbox = if build_options.is_isolated {
+        Some(rootbeer_build::Sandbox::new(
+            build_options
+                .environment
+                .as_ref()
+                .ok_or("missing build environment")?,
+            [profile.clone(), realized.store_entry.path.clone()],
+            check_workspace.path(),
+        )?)
+    } else {
+        None
+    };
     for check in &recipe.checks {
         let mut command = check.clone();
         command[0] = profile.join(&command[0]).to_string_lossy().into_owned();
-        rootbeer_build::run(
+        rootbeer_build::run_with_sandbox(
             &command,
-            root,
+            check_workspace.path(),
             &environment,
             &root.join("checks.log"),
             Duration::from_secs(30),
+            sandbox.as_ref(),
         )?;
+    }
+    if let Some(environment) = &build_options.environment {
+        rootbeer_build::verify_environment(environment)?;
     }
     let entry = match proof {
         Some(proof) => PackageLockEntry::resolved(
@@ -649,7 +704,10 @@ MAKE
             &catalog,
             "owner/index",
             &output,
-            1,
+            &BuildOptions {
+                jobs: 1,
+                ..Default::default()
+            },
             2,
             Some(&options),
             None,
@@ -658,17 +716,62 @@ MAKE
         assert!(error.contains("a-failure@"), "{error}");
         assert!(!output.exists());
         assert_eq!(
-            fs::read_dir(&options.directory)
+            fs::read_dir(options.directory.join("builds/results"))
                 .unwrap()
-                .filter(|entry| entry.as_ref().unwrap().path().join("record.json").is_file())
+                .filter(|entry| entry
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .join("receipt.json")
+                    .is_file())
                 .count(),
             1
         );
         catalog.packages.remove("a-failure");
-        export_catalog_with_workers(&catalog, "owner/index", &output, 1, 2, Some(&options), None)
-            .unwrap();
+        export_catalog_with_workers(
+            &catalog,
+            "owner/index",
+            &output,
+            &BuildOptions {
+                jobs: 1,
+                ..Default::default()
+            },
+            2,
+            Some(&options),
+            None,
+        )
+        .unwrap();
         let index: ArtifactIndex = publication::read_json(&output.join("index.json")).unwrap();
         assert_eq!(index.artifacts.len(), 1);
+        let mut shard_artifacts = BTreeMap::new();
+        for shard in 0..8 {
+            let shard_output = root.path().join(format!("shard-{shard}"));
+            export_catalog_shard(
+                &catalog,
+                "owner/index",
+                &shard_output,
+                1,
+                Some(&options),
+                Some(ExportShard {
+                    index: shard,
+                    count: 8,
+                }),
+            )
+            .unwrap();
+            let fragment: ArtifactIndex =
+                publication::read_json(&shard_output.join("index.json")).unwrap();
+            assert_eq!(fragment.catalog_sha256, index.catalog_sha256);
+            for (key, artifact) in fragment.artifacts {
+                assert!(shard_artifacts.insert(key, artifact).is_none());
+            }
+        }
+        assert_eq!(shard_artifacts.len(), index.artifacts.len());
+        for (key, systems) in shard_artifacts {
+            for (system, artifact) in systems {
+                assert_eq!(artifact.package, index.artifacts[&key][&system].package);
+                assert_eq!(artifact.revision, index.artifacts[&key][&system].revision);
+            }
+        }
     }
 
     #[test]

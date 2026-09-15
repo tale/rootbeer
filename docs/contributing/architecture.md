@@ -35,8 +35,13 @@ require explicit versions and source hashes.
 
 The current executor builds for its own host. Runtime dependency closures,
 isolated pinned toolchains, cross-compilation, and a resource-aware graph
-scheduler are follow-up work. The current cache requires a caller-supplied host
-environment identity; it does not establish reproducibility by itself.
+scheduler are follow-up work. Build environment locks pin declared executable
+bytes, SDK/toolchain trees, and variables, and verification precedes cache
+lookup. Pinned builds use a declared tool path. They still require a host image
+identity for OS runtime inputs. Optional isolation uses macOS Seatbelt or Linux
+Bubblewrap to deny host networking, restrict reads, and make declared inputs
+read-only. All package subprocesses share this boundary, including tool probes
+and cache-hit checks. Source export caching goes through the same executor.
 
 ## Layer 1 — Rust Primitives
 

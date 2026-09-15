@@ -82,7 +82,7 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
                 "libraries": if is_library { vec![format!("lib/lib{name}.a")] } else { vec![] },
                 "steps": {
                     "configure": [], "build": [["make", "-j{jobs}"]], "check": [["make", "check"]],
-                    "install": [["/bin/sh", "-ec", install, "install", "{prefix}"]]
+                    "install": [["sh", "-ec", install, "install", "{prefix}"]]
                 }
             }))
             .unwrap(),
@@ -99,17 +99,38 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
             },
         )]),
     };
+    let tools = [
+        "sh", "cc", "c++", "make", "patch", "ar", "as", "ld", "chmod", "mkdir", "cp",
+    ]
+    .into_iter()
+    .map(|name| {
+        let path = ["/usr/bin", "/bin"]
+            .iter()
+            .map(|root| Path::new(root).join(name))
+            .find(|path| path.is_file())
+            .unwrap();
+        (name.into(), path)
+    })
+    .collect();
+    let environment = BuildEnvironment {
+        tools,
+        ..Default::default()
+    }
+    .pin()
+    .unwrap();
     let output = root.join("output");
     let artifact = BuildPlan::resolve(&catalog, "consumer", &inputs)
         .unwrap()
         .execute(
             &output,
             &BuildOptions {
+                environment: Some(environment.clone()),
                 downloads: downloads.clone(),
                 ..BuildOptions::default()
             },
         )
         .unwrap();
+    assert_eq!(artifact.environment, Some(environment));
     assert_eq!(artifact.dependencies.len(), 3);
     assert_eq!(ArtifactIndex::schema_for(&catalog), 5);
     let mut index = ArtifactIndex {
