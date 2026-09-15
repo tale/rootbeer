@@ -1,0 +1,24 @@
+[package]
+name = "rootbeer-package"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+
+[dependencies]
+sha2 = "0.10"
+libc = "0.2.182"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+rootbeer-store = { path = "../rootbeer-store" }
+aqua-registry = "=2026.9.1"
+flate2 = "1"
+lzma-rust2 = { version = "0.20", default-features = false, features = ["std", "xz"] }
+mlua = { version = "0.11.5", features = ["luau-jit", "serialize"] }
+serde_yml = "0.0.12"
+ring = "0.17.14"
+tar = "0.4"
+ureq = "3"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
+[dev-dependencies]
+lzma-rust2 = { version = "0.20", default-features = false, features = ["std", "xz", "encoder"] }

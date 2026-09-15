@@ -4,6 +4,40 @@ Rootbeer's native API is built in three layers. Each layer builds on the one
 below it, keeping individual pieces small while giving users a high-level,
 declarative interface.
 
+## Crate boundaries
+
+| Crate | Owns |
+|---|---|
+| `rootbeer-store` | Content hashing, normalized trees, and storage |
+| `rootbeer-package` | Package/recipe models, Lua recipe parsing, dependency graphs, resolution, verified downloads and installation |
+| `rootbeer-build` | Resolved build plans, backend phases, process execution, and persistent build results |
+| `rootbeer-packaging` | Release discovery, qualification, bundling, signing, and publication |
+| `rootbeer-core` | Configuration Lua, operation plans, lock adapters, profiles, and apply |
+| `rootbeer-cli` | The `rb` configuration and package-consumption CLI |
+| `rootbeer-forge` | The package-maintainer CLI |
+
+`rootbeer-core` depends on package and store APIs. It does not depend on the
+build or packaging crates. Both applications share the package runtime;
+compilation and publishing belong to the maintainer application.
+
+A build plan owns its recipes and resolved binary inputs. Execution never
+re-resolves package metadata. Autotools, Zig, and Custom backend modules produce
+phases consumed by one executor. Graph planning, receipt validation, and cache
+closure selection share the same dependency model.
+
+Dependency edges distinguish build tools from link libraries. A library’s build
+tools stay out of its consumers’ environments; link dependencies propagate
+headers and static libraries. Existing string dependencies retain their combined
+transitive exports.
+
+Release discovery currently handles GitHub binary assets; source builds still
+require explicit versions and source hashes.
+
+The current executor builds for its own host. Runtime dependency closures,
+isolated pinned toolchains, cross-compilation, and a resource-aware graph
+scheduler are follow-up work. The current cache requires a caller-supplied host
+environment identity; it does not establish reproducibility by itself.
+
 ## Layer 1 — Rust Primitives
 
 The bottom layer defines the fundamental operations Rootbeer can perform.

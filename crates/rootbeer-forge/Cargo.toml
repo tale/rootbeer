@@ -1,0 +1,10 @@
+[package]
+name = "rootbeer-forge"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+
+[dependencies]
+clap = { version = "4.5.60", features = ["derive", "wrap_help"] }
+rootbeer-packaging = { path = "../rootbeer-packaging" }
+serde_json = "1"

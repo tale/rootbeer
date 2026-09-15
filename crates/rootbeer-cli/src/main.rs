@@ -2,7 +2,6 @@ mod apply;
 mod cd;
 mod edit;
 mod init;
-mod package;
 mod remote;
 mod run;
 mod typegen;
@@ -42,9 +41,6 @@ struct Cli {
 enum Commands {
     /// Show license notices for package backend libraries
     Licenses,
-
-    /// Inspect and export the canonical package catalog
-    Package(package::Args),
 
     /// Run a package command without a configuration or permanent installation
     Run(run::RunArgs),
@@ -88,7 +84,6 @@ fn main() {
             include_str!("../../../licenses/zip.txt")
         ),
         Commands::Init(args) => init::run(args),
-        Commands::Package(args) => package::run(args),
         Commands::Run(args) => run::run(args),
         Commands::Use(args) => run::install(args),
         Commands::Unuse(args) => run::uninstall(args),

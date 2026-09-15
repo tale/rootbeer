@@ -7,6 +7,58 @@ recipe normally needs no Rust changes or Rootbeer release.
 The `packages/` directory in the engine repository is the smaller embedded fallback
 and authoring fixture. It is not the complete hosted catalog.
 
+## Packaging entrypoint
+
+`rootbeer-forge` owns recipe inspection, builds, updates, qualification, and
+publication. `rb` owns configuration and user package environments.
+
+```sh
+cargo build --bin rootbeer-forge
+rootbeer-forge --catalog packages plan xz
+rootbeer-forge --catalog packages build xz --output /tmp/xz-build \
+  --cache /tmp/rootbeer-builds --cache-context "$BUILD_ENVIRONMENT_ID"
+```
+
+`plan` prints direct dependencies, transitive inputs, and execution order without
+fetching or building anything. Build execution resolves binary inputs up front,
+then uses those locked facts throughout the run.
+
+The build cache reuses individual dependencies across different root packages.
+Its key includes the recipe, verified dependency outputs and selected library
+exports, platform, build engine, job count, and explicit environment identity.
+Archive paths, unrelated catalog entries, and publication destinations do not
+change build keys. Receipts retain the key and environment identity.
+
+Set `BUILD_ENVIRONMENT_ID` to identify the host image, compiler, SDK, and system
+tools. These are trusted host builds with network access, not isolated builds.
+Change that identity whenever the host build environment changes. `--recheck`
+rebuilds each node; `--phase-timeout SECONDS` overrides the default 20-minute
+command limit. Successful outputs enter the cache only after verification and
+checks; cache hits verify archive and output hashes and rerun package checks.
+
+Export's existing `--cache` also enables this dependency cache under `builds/`.
+Qualification results remain separate because they include publication details.
+
+New recipes can scope dependencies explicitly:
+
+```lua
+dependencies = {
+    { package = "cmake@4.0.0", kind = "build" },
+    { package = "zlib@1.3.1", kind = "link" },
+}
+```
+
+These are syntax examples; use versions available in your selected catalog.
+`build` exposes the dependency’s commands. `link` exposes its libraries and
+headers, including transitive link inputs, without leaking its build tools onto
+`PATH`. String entries retain their previous combined behavior, also available
+as `kind = "all"`. Scoped entries require artifact index schema 5 when published;
+existing catalogs retain their current schema and digest.
+
+`custom` is the authoring name for explicit build phases. The serialized catalog
+continues to use `commands` for compatibility with existing pinned catalog
+hashes; both spellings are accepted. No recipe migration is required.
+
 ## Definition API
 
 Declare shared source settings, commands, and checks once. Version entries contain
@@ -89,7 +141,7 @@ from the verified store with `rb run bobrwm --app Bobrwm.app`.
 ### Source builds
 
 Use a shared `build` instead of `source`. It declares the supported `backend`
-(`autotools`, `zig`, or `commands`), archive format, source URL, strip prefix, and exact build
+(`autotools`, `zig`, or `custom`), archive format, source URL, strip prefix, and exact build
 dependencies. Autotools accepts `configure` flags. URL and strip prefix accept `{version}`. Build
 packages must declare `homepage` and `systems` explicitly.
 
@@ -138,7 +190,7 @@ a complete compiler sysroot.
 
 ### Command build phases
 
-Use `backend = "commands"` when a project's build does not fit a preset. Each
+Use `backend = "custom"` when a project's build does not fit a preset. Each
 phase contains argument arrays, executed in order from the unpacked source root:
 
 ```lua
@@ -165,7 +217,7 @@ and upstream build scripts execute trusted code.
 
 Compact files expand into the same exact recipes used by resolution, caches,
 qualification, and signed snapshots. Existing expanded Lua definitions still load.
-`rb package index` shows the expanded result. Discovery preserves existing templates
+`rootbeer-forge index` shows the expanded result. Discovery preserves existing templates
 and version overrides; expanded files stay expanded. Import and seeding infer compact
 templates once for new definitions.
 Migration preserves array ordering, so some older definitions keep explicit platform
@@ -180,7 +232,7 @@ Authoring-only changes must leave expanded recipes unchanged to reuse their resu
 Generate candidates without editing the current catalog:
 
 ```sh
-rb package --catalog packages import github:owner/tool \
+rootbeer-forge --catalog packages import github:owner/tool \
   --name tool --bin tool --output candidates
 ```
 
@@ -224,9 +276,9 @@ the platform checks below before publication.
 To rediscover a selected directory of complete package definitions:
 
 ```sh
-rb package --catalog packages import --packages selected-packages --output candidates
-rb package --catalog candidates/packages check
-rb package --catalog candidates/packages export \
+rootbeer-forge --catalog packages import --packages selected-packages --output candidates
+rootbeer-forge --catalog candidates/packages check
+rootbeer-forge --catalog candidates/packages export \
   --registry tale/rootbeer-index --output result
 ```
 
@@ -249,7 +301,7 @@ untracked; automatic discovery currently supports GitHub binary releases only.
 Run discovery directly against the package directory:
 
 ```sh
-rb package --catalog packages updates \
+rootbeer-forge --catalog packages updates \
   --cache .upstream-metadata --output candidates
 ```
 
@@ -285,8 +337,8 @@ Review qualified candidates before copying them into the index's `packages/` dir
 ## Qualify a change
 
 ```sh
-rb package --catalog packages check
-rb package --catalog packages export --registry tale/rootbeer-index --output result
+rootbeer-forge --catalog packages check
+rootbeer-forge --catalog packages export --registry tale/rootbeer-index --output result
 ```
 
 Export installs every applicable version, runs its command checks, and recreates
@@ -308,7 +360,7 @@ must not force unrelated packages to rebuild. Original receipts stay intact when
 results are reused in a newer catalog snapshot.
 
 ```sh
-rb package --catalog packages export --registry tale/rootbeer-index --output result \
+rootbeer-forge --catalog packages export --registry tale/rootbeer-index --output result \
   --cache /tmp/rootbeer-package-results --cache-context "$BUILD_ENVIRONMENT_ID"
 ```
 
@@ -322,7 +374,7 @@ Each platform job builds its engine, then immediately exports the catalog with a
 bounded worker queue:
 
 ```sh
-rb package --catalog packages export --registry tale/rootbeer-index \
+rootbeer-forge --catalog packages export --registry tale/rootbeer-index \
   --output result --workers 2 --jobs 2
 ```
 
@@ -337,8 +389,8 @@ these flags before deploying the workflow.
 
 ## Publish independently
 
-`rb package assemble` merges platform bundles and requires complete coverage.
-`rb package publish` uploads source-built archives to GHCR, verifies anonymous
+`rootbeer-forge assemble` merges platform bundles and requires complete coverage.
+`rootbeer-forge publish` uploads source-built archives to GHCR, verifies anonymous
 access, and signs an immutable index snapshot. Imported binaries retain their
 upstream URLs. CI retains snapshots and receipts, then deploys the latest signed
 manifest through GitHub Pages.

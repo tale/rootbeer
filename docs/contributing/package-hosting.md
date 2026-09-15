@@ -87,8 +87,8 @@ package does not trigger another provider. Developer builds without an official
 endpoint report embedded fallback. `rb apply --update` requires a successful
 refresh; offline installs use the matching lock and cached package contents.
 
-Package search displays the published catalog. `rb package list` and
-`rb package show` inspect the embedded authoring catalog or the directory passed
+Package search displays the published catalog. `rootbeer-forge list` and
+`rootbeer-forge show` inspect the embedded authoring catalog or the directory passed
 to `--catalog`; they do not search the remote catalog.
 
 Explicit `rb.package_index()` pins bypass official catalog selection and fallback.

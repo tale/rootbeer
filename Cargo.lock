@@ -1220,6 +1220,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rootbeer-build"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "libc",
+ "rootbeer-package",
+ "rootbeer-store",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+]
+
+[[package]]
 name = "rootbeer-cli"
 version = "0.1.0"
 dependencies = [
@@ -1237,22 +1251,75 @@ dependencies = [
 name = "rootbeer-core"
 version = "0.1.0"
 dependencies = [
+ "flate2",
+ "libc",
+ "mlua",
+ "plist",
+ "rootbeer-package",
+ "rootbeer-store",
+ "serde",
+ "serde_json",
+ "serde_yml",
+ "tar",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "rootbeer-forge"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "rootbeer-packaging",
+ "serde_json",
+]
+
+[[package]]
+name = "rootbeer-package"
+version = "0.1.0"
+dependencies = [
  "aqua-registry",
  "flate2",
  "libc",
  "lzma-rust2",
  "mlua",
- "plist",
  "ring",
+ "rootbeer-store",
  "serde",
  "serde_json",
  "serde_yml",
  "sha2 0.10.9",
  "tar",
  "tempfile",
- "toml",
  "ureq",
  "zip",
+]
+
+[[package]]
+name = "rootbeer-packaging"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "ring",
+ "rootbeer-build",
+ "rootbeer-package",
+ "rootbeer-store",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "ureq",
+]
+
+[[package]]
+name = "rootbeer-store"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]

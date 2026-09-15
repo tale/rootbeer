@@ -88,11 +88,11 @@ test("loads a signed published snapshot and preserves platform defaults", async 
   });
 });
 
-test("accepts signed schemas 2 through 4 and rejects unsupported schemas", async () => {
-  for (const schema of [2, 3, 4, 5]) {
+test("accepts signed schemas 2 through 5 and rejects unsupported schemas", async () => {
+  for (const schema of [2, 3, 4, 5, 6]) {
     const data = fixture(undefined, undefined, schema);
     await withResponses(data, async () => {
-      if (schema < 5) {
+      if (schema < 6) {
         assert.equal((await loadCatalog(data.source)).packages[0].name, pkg.name);
         return;
       }

@@ -178,7 +178,7 @@ impl PlannedPipeline {
     }
 
     fn locked_ops_for_apply(&self, notice: &mut dyn FnMut(&str)) -> Result<Vec<Op>, Error> {
-        if !RootbeerLock::has_package_ops(&self.ops) {
+        if !crate::package::lockfile::has_package_ops(&self.ops) {
             return Ok(self.ops.clone());
         }
 
@@ -201,13 +201,13 @@ impl PlannedPipeline {
                 return Err(LockError::StaleLockfile { path }.into());
             }
 
-            return lock.apply_to_ops(&self.ops).map_err(Into::into);
+            return crate::package::lockfile::apply_to_ops(lock, &self.ops).map_err(Into::into);
         }
 
         if !matches!(self.opts.package_lock, PackageLockMode::Update) {
             if let Some(lock) = existing.as_ref() {
                 if self.lock_matches_plan(lock)? {
-                    match lock.apply_to_ops(&self.ops) {
+                    match crate::package::lockfile::apply_to_ops(lock, &self.ops) {
                         Ok(ops) => return Ok(ops),
                         Err(
                             LockError::MissingPackage { .. } | LockError::PackageChanged { .. },
@@ -258,7 +258,7 @@ impl PlannedPipeline {
         let input = builder.lock_input_from_ops(&self.ops);
         let lock = builder.build(&input)?;
         lock.write(&path)?;
-        Ok(lock.apply_to_ops(&self.ops)?)
+        Ok(crate::package::lockfile::apply_to_ops(&lock, &self.ops)?)
     }
 
     fn lock_matches_plan(&self, lock: &RootbeerLock) -> Result<bool, Error> {

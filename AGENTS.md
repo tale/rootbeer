@@ -4,6 +4,15 @@ it akin to a dotfile manager like home-manager or chezmoi.
 
 - `crates/rootbeer-cli`: The command line tool the user interacts with
 - `crates/rootbeer-core`: The core library that runs the lua script
+- `crates/rootbeer-store`: Shared content hashing and normalized storage
+- `crates/rootbeer-package`: Package models, recipe parsing, graph, resolution, and installation
+- `crates/rootbeer-build`: Build plans, backend phases, execution, and build caching
+- `crates/rootbeer-packaging`: Discovery, qualification, signing, and publication
+- `crates/rootbeer-forge`: The package-maintainer CLI (`rootbeer-forge`)
+
+Configuration must not depend on the build or packaging crates. Backends produce
+phases for the shared build executor. Preserve existing catalog serialization
+when changing recipe models: pinned index hashes depend on it.
 
 User configuration is provided through a layering system in the core library,
 where the base fundamentals (such as symlinking files, creating new files,

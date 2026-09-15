@@ -46,6 +46,16 @@
             commonArgs
             // {
               inherit cargoArtifacts;
+              cargoExtraArgs = "--package rootbeer-cli";
+              meta = { license = lib.licenses.mit; };
+            }
+          );
+          forge = craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              pname = "rootbeer-forge";
+              cargoExtraArgs = "--package rootbeer-forge";
               meta = { license = lib.licenses.mit; };
             }
           );
@@ -54,6 +64,7 @@
           packages = {
             default = rootbeer;
             inherit rootbeer;
+            rootbeer-forge = forge;
           };
 
           checks = {

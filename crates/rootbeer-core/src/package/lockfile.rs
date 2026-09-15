@@ -1,323 +1,48 @@
-use std::collections::BTreeMap;
-use std::fmt;
-use std::fs;
-use std::io;
-use std::path::Path;
-
-use serde::{Deserialize, Serialize};
-
-use super::{
-    LockedPackage, PackageIntent, PackageRequest, PackageResolution, PackageResolverInputs,
-    ResolutionProof, ResolveContext,
-};
-use crate::deterministic::DeterministicInput;
+#[cfg(test)]
+use super::{LockedPackage, PackageRequest, PackageResolution, ResolutionProof};
+use super::{PackageIntent, ResolveContext};
 use crate::Op;
+pub use rootbeer_package::lockfile::*;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RootbeerLock {
-    pub schema: u32,
-    #[serde(default, skip_serializing_if = "PackageResolverInputs::is_empty")]
-    pub inputs: PackageResolverInputs,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_fingerprint: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub resolutions: BTreeMap<String, PackageLockResolution>,
-    pub packages: BTreeMap<String, LockedPackage>,
+pub fn from_ops(ops: &[Op]) -> Result<RootbeerLock, LockError> {
+    RootbeerLock::from_packages(ops.iter().filter_map(|op| match op {
+        Op::RealizePackage { package } => Some(package.clone()),
+        Op::Package {
+            intent: PackageIntent::Locked(package),
+        } => Some(package.clone()),
+        _ => None,
+    }))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackageLockResolution {
-    pub package: String,
-    pub proof: ResolutionProof,
+pub fn has_package_ops(ops: &[Op]) -> bool {
+    ops.iter()
+        .any(|op| matches!(op, Op::Package { .. } | Op::RealizePackage { .. }))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PackageLockEntry {
-    pub package: LockedPackage,
-    pub id: Option<String>,
-    pub resolution_fingerprint: Option<String>,
-    pub proof: Option<ResolutionProof>,
-}
-
-impl PackageLockEntry {
-    pub fn locked(package: LockedPackage) -> Self {
-        Self {
-            package,
-            id: None,
-            resolution_fingerprint: None,
-            proof: None,
-        }
-    }
-
-    pub fn resolved(
-        request: &PackageRequest,
-        context: &ResolveContext,
-        resolution: PackageResolution,
-    ) -> Result<Self, LockError> {
-        let id = package_id_for_request(request, &resolution.package);
-        Ok(Self {
-            package: resolution.package,
-            id: Some(id),
-            resolution_fingerprint: Some(resolution_fingerprint(request, context)?),
-            proof: Some(resolution.proof),
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LockError {
-    DuplicatePackage { id: String },
-    DuplicateResolution { fingerprint: String },
-    MissingResolutionProof { id: String },
-    MissingPackage { id: String },
-    PackageChanged { id: String },
-    MissingLockfile { path: std::path::PathBuf },
-    StaleLockfile { path: std::path::PathBuf },
-    Fingerprint { kind: &'static str, error: String },
-}
-
-impl fmt::Display for LockError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LockError::DuplicatePackage { id } => write!(f, "duplicate package `{id}`"),
-            LockError::DuplicateResolution { fingerprint } => {
-                write!(f, "duplicate package resolution `{fingerprint}`")
-            }
-            LockError::MissingResolutionProof { id } => {
-                write!(f, "package resolution `{id}` is missing a proof")
-            }
-            LockError::MissingPackage { id } => {
-                write!(f, "package `{id}` is not present in rootbeer.lock")
-            }
-            LockError::PackageChanged { id } => write!(
-                f,
-                "package `{id}` differs from the facts recorded in rootbeer.lock"
-            ),
-            LockError::MissingLockfile { path } => {
-                write!(f, "package lockfile {} is missing", path.display())
-            }
-            LockError::StaleLockfile { path } => write!(
-                f,
-                "package lockfile {} is stale for the current plan",
-                path.display()
-            ),
-            LockError::Fingerprint { kind, error } => {
-                write!(f, "failed to fingerprint {kind}: {error}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for LockError {}
-
-impl RootbeerLock {
-    pub fn from_packages(
-        packages: impl IntoIterator<Item = LockedPackage>,
-    ) -> Result<Self, LockError> {
-        Self::from_package_entries(packages.into_iter().map(PackageLockEntry::locked))
-    }
-
-    pub fn from_package_entries(
-        entries: impl IntoIterator<Item = PackageLockEntry>,
-    ) -> Result<Self, LockError> {
-        let mut map = BTreeMap::new();
-        let mut resolutions = BTreeMap::new();
-        for entry in entries {
-            let id = entry.id.unwrap_or_else(|| entry.package.id());
-            if map.insert(id.clone(), entry.package).is_some() {
-                return Err(LockError::DuplicatePackage { id });
-            }
-
-            if let Some(fingerprint) = entry.resolution_fingerprint {
-                let proof = entry
-                    .proof
-                    .ok_or_else(|| LockError::MissingResolutionProof { id: id.clone() })?;
-                let resolution = PackageLockResolution {
-                    package: id.clone(),
-                    proof,
+pub fn apply_to_ops(lock: &RootbeerLock, ops: &[Op]) -> Result<Vec<Op>, LockError> {
+    let context = ResolveContext::current();
+    ops.iter()
+        .map(|op| match op {
+            Op::Package { intent } => Ok(Op::RealizePackage {
+                package: lock.package_for_intent(intent, &context)?.clone(),
+            }),
+            Op::RealizePackage { package } => {
+                let id = package.id();
+                let Some(locked) = lock.packages.get(&id) else {
+                    return Err(LockError::MissingPackage { id });
                 };
-                if let Some(previous) = resolutions.insert(fingerprint.clone(), resolution) {
-                    if previous.package != id {
-                        return Err(LockError::DuplicateResolution { fingerprint });
-                    }
+
+                if !locked.same_realization_input(package) {
+                    return Err(LockError::PackageChanged { id });
                 }
+
+                Ok(Op::RealizePackage {
+                    package: locked.clone(),
+                })
             }
-        }
-
-        let schema = if map
-            .values()
-            .any(|package| !package.provides.apps.is_empty())
-        {
-            2
-        } else {
-            1
-        };
-        Ok(Self {
-            schema,
-            inputs: PackageResolverInputs::default(),
-            input_fingerprint: None,
-            resolutions,
-            packages: map,
+            op => Ok(op.clone()),
         })
-    }
-
-    pub fn with_input_fingerprint(mut self, fingerprint: impl Into<String>) -> Self {
-        self.input_fingerprint = Some(fingerprint.into());
-        self
-    }
-
-    pub fn with_resolver_inputs(mut self, inputs: PackageResolverInputs) -> Self {
-        self.inputs = inputs;
-        self
-    }
-
-    pub fn matches_input_fingerprint(&self, fingerprint: &str) -> bool {
-        self.input_fingerprint.as_deref() == Some(fingerprint)
-    }
-
-    pub fn from_ops(ops: &[Op]) -> Result<Self, LockError> {
-        Self::from_packages(ops.iter().filter_map(|op| match op {
-            Op::RealizePackage { package } => Some(package.clone()),
-            Op::Package {
-                intent: PackageIntent::Locked(package),
-            } => Some(package.clone()),
-            _ => None,
-        }))
-    }
-
-    pub fn has_package_ops(ops: &[Op]) -> bool {
-        ops.iter()
-            .any(|op| matches!(op, Op::Package { .. } | Op::RealizePackage { .. }))
-    }
-
-    pub fn apply_to_ops(&self, ops: &[Op]) -> Result<Vec<Op>, LockError> {
-        let context = ResolveContext::current();
-        ops.iter()
-            .map(|op| match op {
-                Op::Package { intent } => Ok(Op::RealizePackage {
-                    package: self.package_for_intent(intent, &context)?.clone(),
-                }),
-                Op::RealizePackage { package } => {
-                    let id = package.id();
-                    let Some(locked) = self.packages.get(&id) else {
-                        return Err(LockError::MissingPackage { id });
-                    };
-
-                    if !locked.same_realization_input(package) {
-                        return Err(LockError::PackageChanged { id });
-                    }
-
-                    Ok(Op::RealizePackage {
-                        package: locked.clone(),
-                    })
-                }
-                op => Ok(op.clone()),
-            })
-            .collect()
-    }
-
-    pub fn package_for_intent(
-        &self,
-        intent: &PackageIntent,
-        context: &ResolveContext,
-    ) -> Result<&LockedPackage, LockError> {
-        match intent {
-            PackageIntent::Request(request) => self.package_for_request(request, context),
-            PackageIntent::Locked(package) => self.package_for_locked_spec(package),
-        }
-    }
-
-    pub fn package_for_request(
-        &self,
-        request: &PackageRequest,
-        context: &ResolveContext,
-    ) -> Result<&LockedPackage, LockError> {
-        let fingerprint = resolution_fingerprint(request, context)?;
-        if let Some(resolution) = self.resolutions.get(&fingerprint) {
-            let id = &resolution.package;
-            return self
-                .packages
-                .get(id)
-                .ok_or_else(|| LockError::MissingPackage { id: id.clone() });
-        }
-
-        if let Some(version) = request
-            .version
-            .as_ref()
-            .filter(|_| request.asset.is_none() && request.bins.is_empty())
-        {
-            let id = package_id_for_request_version(request, version);
-            if let Some(package) = self.packages.get(&id) {
-                return Ok(package);
-            }
-        }
-
-        Err(LockError::MissingPackage {
-            id: request.to_string(),
-        })
-    }
-
-    fn package_for_locked_spec(
-        &self,
-        package: &LockedPackage,
-    ) -> Result<&LockedPackage, LockError> {
-        let id = package.id();
-        let Some(locked) = self.packages.get(&id) else {
-            return Err(LockError::MissingPackage { id });
-        };
-
-        if !locked.same_realization_input(package) {
-            return Err(LockError::PackageChanged { id });
-        }
-
-        Ok(locked)
-    }
-
-    pub fn read(path: impl AsRef<Path>) -> io::Result<Self> {
-        let bytes = fs::read(path)?;
-        let lock: Self = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-        if !matches!(lock.schema, 1 | 2) {
-            return Err(io::Error::other(
-                "unsupported package lock schema; update Rootbeer",
-            ));
-        }
-        Ok(lock)
-    }
-
-    pub fn write(&self, path: impl AsRef<Path>) -> io::Result<()> {
-        let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let json = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
-        fs::write(path, format!("{json}\n"))
-    }
-}
-
-fn package_id_for_request(request: &PackageRequest, package: &LockedPackage) -> String {
-    package_id_for_request_version(request, &package.version)
-}
-
-fn package_id_for_request_version(request: &PackageRequest, version: &str) -> String {
-    match &request.resolver {
-        Some(resolver) => format!("{resolver}:{}@{version}", request.name),
-        None => format!("{}@{version}", request.name),
-    }
-}
-
-fn resolution_fingerprint(
-    request: &PackageRequest,
-    context: &ResolveContext,
-) -> Result<String, LockError> {
-    request
-        .resolution_input(context)
-        .fingerprint()
-        .map(|fingerprint| fingerprint.into_string())
-        .map_err(|e| LockError::Fingerprint {
-            kind: "package.resolution",
-            error: e.to_string(),
-        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -377,7 +102,7 @@ mod tests {
     #[test]
     fn collects_packages_from_ops_into_map() {
         let package = package();
-        let lock = RootbeerLock::from_ops(&[Op::RealizePackage {
+        let lock = crate::package::lockfile::from_ops(&[Op::RealizePackage {
             package: package.clone(),
         }])
         .unwrap();
@@ -409,9 +134,11 @@ mod tests {
         let planned = package();
         let lock = RootbeerLock::from_packages([locked]).unwrap();
 
-        let ops = lock
-            .apply_to_ops(&[Op::RealizePackage { package: planned }])
-            .unwrap();
+        let ops = crate::package::lockfile::apply_to_ops(
+            &lock,
+            &[Op::RealizePackage { package: planned }],
+        )
+        .unwrap();
 
         let [Op::RealizePackage { package }] = ops.as_slice() else {
             panic!("expected package op");
@@ -433,11 +160,13 @@ mod tests {
         .unwrap()])
         .unwrap();
 
-        let ops = lock
-            .apply_to_ops(&[Op::Package {
+        let ops = crate::package::lockfile::apply_to_ops(
+            &lock,
+            &[Op::Package {
                 intent: PackageIntent::Request(request),
-            }])
-            .unwrap();
+            }],
+        )
+        .unwrap();
 
         let [Op::RealizePackage { package }] = ops.as_slice() else {
             panic!("expected package op");
@@ -495,9 +224,11 @@ mod tests {
         };
         let lock = RootbeerLock::from_packages([locked]).unwrap();
 
-        let err = lock
-            .apply_to_ops(&[Op::RealizePackage { package: planned }])
-            .unwrap_err();
+        let err = crate::package::lockfile::apply_to_ops(
+            &lock,
+            &[Op::RealizePackage { package: planned }],
+        )
+        .unwrap_err();
 
         assert_eq!(
             err,

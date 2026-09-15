@@ -31,7 +31,7 @@ the shell when you enter the project directory.
 ### With Cargo
 
 ```bash
-# Debug build (binary lands in target/debug/rb)
+# Debug build (binaries land in target/debug/)
 cargo build
 
 # Release build
@@ -39,7 +39,7 @@ cargo build --release
 ```
 
 The debug binary is automatically on your `PATH` via the `mise.toml` env
-config, so you can run `rb` directly after building.
+config, so you can run `rb` and `rootbeer-forge` directly after building.
 
 ### With Nix
 
@@ -51,7 +51,8 @@ nix build
 nix flake check
 ```
 
-The binary is built to `./result/bin/rb`.
+The binary is built to `./result/bin/rb`. Build the maintainer tool separately
+with `nix build .#rootbeer-forge`.
 
 ## Running Tests
 

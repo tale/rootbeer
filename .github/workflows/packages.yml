@@ -57,11 +57,11 @@ jobs:
             package-cargo-${{ matrix.runner }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-
       - name: Test package engine
         run: cargo test --locked --workspace --quiet
-      - name: Build standalone rb
-        run: cargo build --locked --release --bin rb
+      - name: Build packaging tool
+        run: cargo build --locked --release --bin rootbeer-forge
       - name: Validate catalog
-        run: target/release/rb package check
+        run: target/release/rootbeer-forge check
       - name: Install and check package commands
-        run: target/release/rb package --catalog packages export --registry tale/rootbeer-index --output result --workers 2 --jobs 2
+        run: target/release/rootbeer-forge --catalog packages export --registry tale/rootbeer-index --output result --workers 2 --jobs 2
         env:
           GITHUB_TOKEN: ${{ github.token }}

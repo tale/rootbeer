@@ -1,11 +1,11 @@
-pub mod deterministic;
+pub use rootbeer_store::deterministic;
 mod executor;
 mod lua;
 pub mod package;
 mod pipeline;
 mod plan;
 pub mod profile;
-pub mod store;
+pub use rootbeer_store as store;
 
 pub use executor::{ExecutionHandler, ExecutionReport, OpResult};
 pub use pipeline::{Mode, Options, PackageLockMode, Pipeline, PlannedPipeline};
@@ -54,7 +54,7 @@ pub fn config_dir() -> PathBuf {
 /// State directory (`~/.local/state/rootbeer`).
 /// Revisions, operation history, and other persistent runtime state.
 pub fn state_dir() -> PathBuf {
-    xdg_dir("XDG_STATE_HOME", ".local/state")
+    rootbeer_store::state_dir()
 }
 
 /// Data directory (`~/.local/share/rootbeer`).

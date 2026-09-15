@@ -1,84 +1,9 @@
-//! Deterministic package realization primitives.
-//!
-//! The package layer consumes locked package facts, verifies their source
-//! content, installs them into a normalized tree, and inserts that tree into
-//! the content-addressed store. Higher-level package backends should lower to
-//! these locked package facts before apply.
+//! Configuration adapters for the package runtime.
 
+pub use rootbeer_package::*;
 pub(crate) mod applications;
-mod aqua;
-mod build;
-mod bundle;
-mod catalog;
-mod definition;
-mod download;
-mod export;
-mod ghcr;
-mod github;
-mod index;
-mod inputs;
-mod intent;
 mod lock;
 pub mod lockfile;
-pub(crate) mod official;
 pub mod profile;
-mod publication;
-mod realize;
-mod resolve;
-mod spec;
 pub mod standalone;
-mod upstream;
-
-pub use aqua::AquaResolver;
-pub use build::{build_package, BuildArtifact, BuildBackend, BuildSteps, SourceBuild};
-pub use bundle::{bundle_artifacts, ArtifactIndex, PublishedArtifact};
-pub use catalog::{CatalogPackage, CatalogProof, CatalogRecipe, PackageCatalog};
-pub use definition::{PackageDefinition, PackageUpstream};
-pub use export::{
-    export_catalog, export_catalog_shard, export_catalog_with_cache, export_catalog_with_workers,
-    ExportCache, ExportShard,
-};
-pub use github::GitHubResolver;
-pub use index::{PackageIndexPin, PublishedIndexProof};
-pub use inputs::{GitHubRepositoryPin, PackageResolverInputs, ResolverInput};
-pub use intent::{PackageIntent, PackageLockInput};
 pub use lock::{LockBuildError, PackageLockBuilder, PackageRealizerBackend};
-pub use official::{sign_index, IndexSelection, OfficialIndexSource};
-pub use publication::{assemble_indexes, publish_index, PublishOptions};
-pub use realize::{PackageRealizer, RealizedPackage};
-pub use resolve::{
-    ArtifactProof, DependencyProof, ExternalManagerProof, GitReleaseProof, MetadataClosureProof,
-    MetadataDocumentProof, PackageRequest, PackageRequestResolver, PackageResolution,
-    PackageResolutionInput, PackageResolver, ResolutionProof, ResolveAttempt, ResolveContext,
-    ResolveError, ResolverStack, SnapshotProof, SnapshotSource,
-};
-pub use spec::{
-    ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRealizationInput, Provides,
-};
-pub use upstream::{
-    discover_definition_updates, discover_updates, import_github_packages, seed_upstreams,
-    GitHubUpstream, UpdateReport,
-};
-
-pub fn default_resolver_stack() -> ResolverStack {
-    resolver_stack_for_inputs(&PackageResolverInputs::default())
-}
-
-pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
-    let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
-    match inputs.package_index() {
-        Some(pin) => stack.push(index::IndexResolver::new(pin)),
-        None => stack.push(catalog::CatalogResolver::new(inputs, backend_stack(inputs))),
-    };
-    stack
-}
-
-fn backend_stack(inputs: &PackageResolverInputs) -> ResolverStack {
-    let mut stack = ResolverStack::new();
-    stack.push(match inputs.aqua_registry() {
-        Some(pin) => AquaResolver::from_registry_pin(pin),
-        None => AquaResolver::new(),
-    });
-    stack.push(GitHubResolver::new());
-    stack
-}
