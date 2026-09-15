@@ -54,7 +54,10 @@ impl PackageResolver for LocalBinaries {
         _: &ResolveContext,
     ) -> Result<Option<PackageResolution>, String> {
         let name = request.name.strip_prefix("fixture/").unwrap();
-        assert!(matches!(name, "tool" | "runtime"));
+        assert_eq!(
+            name, "runtime",
+            "source-capable dependencies must not resolve upstream binaries"
+        );
         Ok(Some(PackageResolution::new(
             LockedPackage {
                 name: name.into(),
@@ -85,7 +88,7 @@ impl PackageResolver for LocalBinaries {
 }
 
 #[test]
-fn prebuilt_dependencies_prune_source_inputs_and_preserve_runtime_inputs() {
+fn source_dependencies_build_and_reuse_our_outputs_despite_upstream_binaries() {
     let root = tempfile::tempdir().unwrap();
     let system = ResolveContext::current().system;
     let mut catalog = catalog(&system);
@@ -98,44 +101,34 @@ fn prebuilt_dependencies_prune_source_inputs_and_preserve_runtime_inputs() {
     let cached = download::DownloadCache::new(&downloads)
         .materialize(&format!("file://{}", archive.display()), None)
         .unwrap();
-    let build = catalog
-        .packages
-        .get_mut("root")
-        .unwrap()
-        .versions
-        .get_mut("1")
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap();
-    build.backend = BuildBackend::Custom;
-    build.configure.clear();
-    build.url = "https://source.invalid/archive.tar.gz".into();
-    build.sha256 = cached.sha256;
-    build.strip_prefix = "fixture".into();
-    build.steps = Some(BuildSteps {
-        configure: vec![], build: vec![vec!["tool".into()]], check: vec![vec!["sh".into(), "-c".into(), "exit 0".into()]],
-        install: vec![vec!["sh".into(), "-c".into(), "mkdir -p \"$1/bin\"; printf '#!/bin/sh\\nexit 0\\n' > \"$1/bin/root\"; chmod +x \"$1/bin/root\"".into(), "install".into(), "{prefix}".into()]],
-    });
-    // This source-only compiler is unavailable on the host and must not enter the selected graph.
-    catalog
-        .packages
-        .get_mut("compiler")
-        .unwrap()
-        .versions
-        .get_mut("1")
-        .unwrap()
-        .systems = vec![if system == "x86_64-linux" {
-        "aarch64-linux"
-    } else {
-        "x86_64-linux"
+    for name in ["root", "tool", "compiler"] {
+        let build = catalog
+            .packages
+            .get_mut(name)
+            .unwrap()
+            .versions
+            .get_mut("1")
+            .unwrap()
+            .build
+            .as_mut()
+            .unwrap();
+        build.backend = BuildBackend::Custom;
+        build.configure.clear();
+        build.url = "https://source.invalid/archive.tar.gz".into();
+        build.sha256 = cached.sha256.clone();
+        build.strip_prefix = "fixture".into();
+        build.steps = Some(BuildSteps {
+            configure: vec![],
+            build: if name == "root" { vec![vec!["tool".into()]] } else { vec![vec!["sh".into(), "-c".into(), "exit 0".into()]] },
+            check: vec![vec!["sh".into(), "-c".into(), "exit 0".into()]],
+            install: vec![vec!["sh".into(), "-c".into(), format!("mkdir -p \"$1/bin\"; printf '#!/bin/sh\\nexit 0\\n' > \"$1/bin/{name}\"; chmod +x \"$1/bin/{name}\""), "install".into(), "{prefix}".into()]],
+        });
     }
-    .into()];
     catalog.validate().unwrap();
-    let graph = dependency_graph(&catalog, "root", &system).unwrap();
-    assert_eq!(graph.order, ["runtime@1", "tool@1", "root@1"]);
+    let graph = DependencyGraph::new(&catalog, &["root".into()], &system).unwrap();
+    assert_eq!(graph.order, ["compiler@1", "runtime@1", "tool@1", "root@1"]);
     assert_eq!(graph.nodes["tool@1"].runtime_closure, ["runtime@1"]);
-    assert!(!graph.nodes["root@1"].exports.contains_key("compiler@1"));
+    assert!(graph.nodes["root@1"].exports.contains_key("compiler@1"));
     let binary = root.path().join("binary");
     fs::write(&binary, "#!/bin/sh\nexit 0\n").unwrap();
     let mut backends = ResolverStack::new();
@@ -151,32 +144,53 @@ fn prebuilt_dependencies_prune_source_inputs_and_preserve_runtime_inputs() {
     let plan = BuildPlan::from_graph(&catalog, graph, &inputs, backends).unwrap();
     assert_eq!(
         plan.binaries.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["runtime@1", "tool@1"]
+        ["runtime@1"]
     );
-    let artifact = plan
-        .execute(
-            &root.path().join("output"),
-            &BuildOptions {
-                downloads,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+    let options = BuildOptions {
+        downloads,
+        cache: Some(crate::BuildCache {
+            directory: root.path().join("cache"),
+            context: "source-dependency-test".into(),
+            recheck: false,
+        }),
+        ..Default::default()
+    };
+    let artifact = plan.execute(&root.path().join("output"), &options).unwrap();
     assert!(artifact.dependencies["tool@1"]
         .runtime_dependencies
         .contains_key("runtime@1"));
-    assert!(!root
-        .path()
-        .join("output/dependency-tool@1/build.log")
-        .exists());
-    assert!(!artifact.dependencies.contains_key("compiler@1"));
+    assert!(artifact.dependencies.contains_key("compiler@1"));
+    for name in ["tool", "compiler"] {
+        assert!(root
+            .path()
+            .join(format!("output/dependency-{name}@1/receipt.json"))
+            .exists());
+        assert!(matches!(
+            artifact.dependencies[&format!("{name}@1")].source,
+            LockedSource::File { .. }
+        ));
+    }
+    let repeated = plan
+        .execute(&root.path().join("repeated"), &options)
+        .unwrap();
+    assert_eq!(artifact.build_key, repeated.build_key);
+    for name in ["tool", "compiler"] {
+        assert!(!root
+            .path()
+            .join(format!("repeated/dependency-{name}@1/build.log"))
+            .exists());
+        assert_eq!(
+            artifact.dependencies[&format!("{name}@1")].output_sha256,
+            repeated.dependencies[&format!("{name}@1")].output_sha256
+        );
+    }
 }
 
 #[test]
-fn source_roots_and_dependencies_without_matching_prebuilts_keep_source_edges() {
+fn source_roots_and_dependencies_keep_source_edges() {
     let system = ResolveContext::current().system;
     let mut catalog = catalog(&system);
-    let graph = dependency_graph(&catalog, "tool", &system).unwrap();
+    let graph = DependencyGraph::new(&catalog, &["tool".into()], &system).unwrap();
     assert_eq!(graph.order, ["compiler@1", "runtime@1", "tool@1"]);
     catalog
         .packages
@@ -187,7 +201,7 @@ fn source_roots_and_dependencies_without_matching_prebuilts_keep_source_edges() 
         .unwrap()
         .assets
         .clear();
-    let graph = dependency_graph(&catalog, "root", &system).unwrap();
+    let graph = DependencyGraph::new(&catalog, &["root".into()], &system).unwrap();
     assert_eq!(graph.order, ["compiler@1", "runtime@1", "tool@1", "root@1"]);
     let inputs = PackageResolverInputs {
         resolvers: BTreeMap::from([(
@@ -210,7 +224,7 @@ fn source_roots_and_dependencies_without_matching_prebuilts_keep_source_edges() 
 }
 
 #[test]
-fn prebuilt_libraries_preserve_transitive_link_exports() {
+fn source_libraries_preserve_transitive_link_exports() {
     let system = ResolveContext::current().system;
     let mut catalog = catalog(&system);
     let build = catalog
@@ -239,7 +253,7 @@ fn prebuilt_libraries_preserve_transitive_link_exports() {
         .as_mut()
         .unwrap()
         .libraries = vec!["lib/libbase.a".into()];
-    let graph = dependency_graph(&catalog, "root", &system).unwrap();
+    let graph = DependencyGraph::new(&catalog, &["root".into()], &system).unwrap();
     assert_eq!(graph.order, ["compiler@1", "runtime@1", "tool@1", "root@1"]);
     assert_eq!(
         graph.nodes["root@1"].exports["compiler@1"].libraries,

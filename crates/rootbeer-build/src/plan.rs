@@ -19,11 +19,15 @@ impl BuildPlan {
     /// Pins the metadata sources needed by this graph and resolves all binary inputs.
     pub fn current(catalog: &PackageCatalog, request: &str) -> Result<Self, String> {
         catalog.validate()?;
-        let graph = dependency_graph(catalog, request, &ResolveContext::current().system)?;
+        let graph = DependencyGraph::new(
+            catalog,
+            &[request.into()],
+            &ResolveContext::current().system,
+        )?;
         let needs_aqua = graph.order.iter().any(|key| {
             graph::find_recipe(catalog, key).is_ok_and(|(_, _, recipe)| {
                 Some(key) != graph.order.last()
-                    && recipe.has_prebuilt(&graph.system)
+                    && recipe.build.is_none()
                     && recipe
                         .source
                         .as_deref()
@@ -51,7 +55,11 @@ impl BuildPlan {
         inputs: &PackageResolverInputs,
     ) -> Result<Self, String> {
         catalog.validate()?;
-        let graph = dependency_graph(catalog, request, &ResolveContext::current().system)?;
+        let graph = DependencyGraph::new(
+            catalog,
+            &[request.into()],
+            &ResolveContext::current().system,
+        )?;
         Self::from_graph(catalog, graph, inputs, backend_stack(inputs))
     }
 
@@ -78,7 +86,7 @@ impl BuildPlan {
         let mut recipes = BTreeMap::new();
         for key in &graph.order {
             let (_, _, recipe) = graph::find_recipe(catalog, key)?;
-            let is_prebuilt = key != root && recipe.has_prebuilt(&graph.system);
+            let is_prebuilt = key != root && recipe.build.is_none();
             if is_prebuilt
                 && recipe
                     .source
@@ -114,42 +122,6 @@ impl BuildPlan {
     pub fn execute(&self, output: &Path, opts: &BuildOptions) -> Result<BuildArtifact, String> {
         crate::execute(self, output, opts)
     }
-}
-
-fn dependency_graph(
-    catalog: &PackageCatalog,
-    request: &str,
-    system: &str,
-) -> Result<DependencyGraph, String> {
-    let parsed = PackageRequest::parse(request);
-    let package = catalog
-        .find(&parsed.name)
-        .ok_or_else(|| format!("unknown package `{}`", parsed.name))?;
-    let version = parsed
-        .version
-        .as_deref()
-        .unwrap_or_else(|| package.default_version_for(system));
-    let root = format!("{}@{version}", package.name);
-    let mut selected = catalog.clone();
-    for package in selected.packages.values_mut() {
-        for (version, recipe) in &mut package.versions {
-            if format!("{}@{version}", package.name) == root || !recipe.has_prebuilt(system) {
-                continue;
-            }
-            if let Some(build) = &mut recipe.build {
-                let has_libraries = !build.libraries.is_empty();
-                build.dependencies.retain(|dependency| {
-                    dependency.kind().is_runtime()
-                        || (has_libraries
-                            && matches!(
-                                dependency.kind(),
-                                DependencyKind::All | DependencyKind::Link
-                            ))
-                });
-            }
-        }
-    }
-    DependencyGraph::new(&selected, &[request.into()], system)
 }
 
 #[cfg(test)]

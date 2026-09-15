@@ -155,7 +155,7 @@ pub fn export_catalog_with_workers(
                     eprintln!("REUSE {key} on {}", context.system);
                 }
                 Ok((fingerprint, None)) => tasks.push((
-                    recipe.build.is_some() && !recipe.has_prebuilt(&context.system),
+                    recipe.build.is_some(),
                     (key, &package.name, recipe, fingerprint),
                 )),
                 Err(error) => {
@@ -280,10 +280,11 @@ fn export_inputs<'a>(
                     .ok_or("export dependencies must use exact versions")?,
             )
             .ok_or_else(|| format!("unknown recipe {key}"))?;
-        needs_aqua |= recipe
-            .source
-            .as_deref()
-            .is_some_and(|source| source.starts_with("aqua:"));
+        needs_aqua |= recipe.build.is_none()
+            && recipe
+                .source
+                .as_deref()
+                .is_some_and(|source| source.starts_with("aqua:"));
         if let Some(build) = &recipe.build {
             pending.extend(
                 build
@@ -393,9 +394,7 @@ fn export_recipe(
         &downloads,
         root.join("install"),
     );
-    let (mut artifact, receipt_bytes, proof) = if recipe.build.is_some()
-        && !recipe.has_prebuilt(&context.system)
-    {
+    let (mut artifact, receipt_bytes, proof) = if recipe.build.is_some() {
         let build = root.join("build");
         rootbeer_build::BuildPlan::resolve(catalog, key, inputs)?.execute(
             &build,
@@ -692,6 +691,14 @@ MAKE
         recipe.systems = vec![ResolveContext::current().system];
         recipe.bins = vec!["xz".into()];
         recipe.checks = vec![vec!["xz".into(), "--version".into()]];
+        recipe.source = Some("github:fixture/should-not-fetch@1".into());
+        recipe
+            .assets
+            .insert(ResolveContext::current().system, "upstream.tar.gz".into());
+        recipe.mirror = true;
+        recipe
+            .checksums
+            .insert(ResolveContext::current().system, "a".repeat(64));
         let build = recipe.build.as_mut().unwrap();
         build.url = "https://example.invalid/rootbeer-worker-test.tar.gz".into();
         build.sha256 = downloaded.sha256;
@@ -755,6 +762,26 @@ MAKE
         .unwrap();
         let index: ArtifactIndex = publication::read_json(&output.join("index.json")).unwrap();
         assert_eq!(index.artifacts.len(), 1);
+        let published = &index.artifacts["xz@5.8.3"][&ResolveContext::current().system];
+        assert!(
+            matches!(&published.package.source, LockedSource::Url { url, .. } if url.starts_with("ghcr://owner/index/xz@sha256:"))
+        );
+        let receipt: rootbeer_package::BuildArtifact = publication::read_json(
+            &output
+                .join("receipts")
+                .join(format!("{}.json", published.receipt_sha256)),
+        )
+        .unwrap();
+        assert!(receipt.build_key.is_some());
+        assert_eq!(
+            receipt.build.sha256,
+            catalog.packages["xz"].versions["5.8.3"]
+                .build
+                .as_ref()
+                .unwrap()
+                .sha256
+        );
+
         let mut shard_artifacts = BTreeMap::new();
         for shard in 0..8 {
             let shard_output = root.path().join(format!("shard-{shard}"));

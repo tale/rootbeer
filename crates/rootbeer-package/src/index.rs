@@ -283,7 +283,10 @@ impl super::PublishedArtifact {
             ));
         }
         super::catalog::validate_apps(&package.provides.apps)?;
-        if !recipe.bin_paths.is_empty() && package.provides.bins != recipe.bin_paths {
+        if recipe.build.is_none()
+            && !recipe.bin_paths.is_empty()
+            && package.provides.bins != recipe.bin_paths
+        {
             return Err(format!(
                 "{key}: artifact command paths differ from the recipe"
             ));
@@ -323,10 +326,11 @@ impl super::PublishedArtifact {
         if !is_sha256(sha256) {
             return Err(format!("{key}: invalid archive SHA-256"));
         }
-        if recipe.mirror && !url.starts_with("ghcr://") {
+        if recipe.build.is_none() && recipe.mirror && !url.starts_with("ghcr://") {
             return Err(format!("{key}: mirrored artifacts must use GHCR"));
         }
-        if !recipe.mirror
+        if recipe.build.is_none()
+            && !recipe.mirror
             && recipe
                 .checksums
                 .get(system)
@@ -661,6 +665,29 @@ mod tests {
 
         recipe.bin_paths.clear();
         artifact.validate(key, "aarch64-linux", &recipe).unwrap();
+    }
+
+    #[test]
+    fn source_artifacts_do_not_inherit_upstream_archive_hashes_or_layouts() {
+        let root = tempfile::tempdir().unwrap();
+        let (index, _) = fixture(root.path());
+        let (key, platforms) = index.artifacts.iter().next().unwrap();
+        let artifact = &platforms["aarch64-linux"];
+        let package = &index.catalog.packages["new-tool"];
+        let mut recipe = package.versions[&package.default_version].clone();
+        assert!(recipe.build.is_some());
+        recipe.source = Some("github:owner/tool@v1".into());
+        recipe
+            .checksums
+            .insert("aarch64-linux".into(), "f".repeat(64));
+        recipe.bin_paths = recipe
+            .bins
+            .iter()
+            .map(|bin| (bin.clone(), std::path::PathBuf::from(bin)))
+            .collect();
+        artifact.validate(key, "aarch64-linux", &recipe).unwrap();
+        recipe.build = None;
+        assert!(artifact.validate(key, "aarch64-linux", &recipe).is_err());
     }
 
     #[test]

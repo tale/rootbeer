@@ -198,11 +198,11 @@ a receipt, only the package itself and the OS baseline are allowed.
 
 ### Dependency roles
 
-An explicit source build compiles the requested package. Its dependencies prefer
-matching prebuilts and fall back to source when none is declared for the platform.
-Selecting a prebuilt skips its source-only inputs, while preserving explicit
-runtime dependencies and transitive link inputs for packages exporting libraries. Failed binary resolution or verification remains
-an error; it does not silently switch to source.
+Source-capable dependencies use Rootbeer's source recipes, even when upstream
+binaries are available. Their verified build outputs are reused from the local
+build cache; a cache miss compiles the recipe and its required dependencies.
+Binary-only dependencies use their pinned upstream artifacts. A failed source
+build never falls back to an upstream binary.
 
 New recipes can scope dependencies explicitly:
 
@@ -626,9 +626,11 @@ boundaries and endpoint changes.
 ## Source recipes with optional binaries
 
 A recipe may declare both `inputs.source` and `inputs.prebuilt`, using one
-`build` section and one output contract. Export prefers a matching upstream
-binary; `rootbeer-forge build` explicitly exercises the source recipe. Consumers
-prefer published artifacts and can force a source build. Prebuilt-only recipes
+`build` section and one output contract. Export builds the source recipe and
+publishes Rootbeer’s compiled output, reusing verified build results when available.
+Consumers prefer these published artifacts and can explicitly select source.
+The signed index binds the recipe revision, artifact hash, and build receipt.
+Upstream binaries are used for binary-only recipes, which
 still omit source and build sections.
 
 For development builds, add `git = { github = "owner/repo", branch = "main" }`
@@ -646,5 +648,5 @@ matching release assets can be published as source-only versions.
 Artifact index schema 7 carries source alternatives and Git origins. Source
 recipes can be published without prebuilt artifacts; binary-only recipes still
 require artifacts for every declared platform. Coordinate these changes with the
-index's engine pin. Qualify the source path as well as the preferred binary before
-adding a source alternative.
+index's engine pin. Export qualifies the source build and its published binary
+before adding a source alternative.

@@ -90,7 +90,7 @@ fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), String> {
             }
             let package = &artifact.package;
             let recipe = &index.catalog.packages[&package.name].versions[&package.version];
-            if recipe.mirror {
+            if recipe.build.is_none() && recipe.mirror {
                 check_mirror_receipt(artifact, recipe, system, bundle)?;
             }
         }
