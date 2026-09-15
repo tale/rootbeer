@@ -8,8 +8,8 @@ use super::module::Module;
 use super::vm::{profile_bin_path, PackageBins};
 use crate::package::{
     lockfile::RootbeerLock, profile as package_profile, ArchiveFormat, LockedInstall,
-    LockedPackage, LockedSource, PackageCatalog, PackageIndexPin, PackageIntent, PackageRequest,
-    Provides, ResolveContext,
+    LockedPackage, LockedSource, PackageIndexPin, PackageIntent, PackageRequest, Provides,
+    ResolveContext,
 };
 use crate::plan::{Op, WriteSource};
 
@@ -258,40 +258,7 @@ fn request_bins(lua: &Lua, cx: &Ctx<'_>, request: &PackageRequest) -> LuaResult<
             }
         }
     }
-    if lua.app_data_ref::<PackageIndexPin>().is_some()
-        || crate::package::OfficialIndexSource::configured()
-            .map_err(LuaError::RuntimeError)?
-            .is_some()
-        || request
-            .resolver
-            .as_deref()
-            .is_some_and(|resolver| resolver != "rootbeer")
-    {
-        return Ok(Vec::new());
-    }
-    let catalog = PackageCatalog::embedded().map_err(LuaError::RuntimeError)?;
-    Ok(catalog_bins(catalog, request, &ResolveContext::current()))
-}
-
-fn catalog_bins(
-    catalog: &PackageCatalog,
-    request: &PackageRequest,
-    context: &ResolveContext,
-) -> Vec<String> {
-    let Some(package) = catalog.find(&request.name) else {
-        return Vec::new();
-    };
-    let version = request
-        .version
-        .as_deref()
-        .unwrap_or_else(|| package.default_version_for(&context.system));
-    let Some(recipe) = package.versions.get(version) else {
-        return Vec::new();
-    };
-    if !recipe.systems.contains(&context.system) {
-        return Vec::new();
-    }
-    recipe.bins.clone()
+    Ok(Vec::new())
 }
 
 fn fields(table: &Table, allowed: &[&str]) -> LuaResult<()> {
@@ -581,42 +548,5 @@ fn optional<T: PackageField>(table: &Table, field: &str) -> LuaResult<Option<T>>
         value => T::parse(value).map(Some).map_err(|error| {
             LuaError::RuntimeError(format!("invalid package field `{field}`: {error}"))
         }),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn planned_catalog_bins_follow_platform_defaults() {
-        let mut catalog = PackageCatalog::embedded().unwrap().clone();
-        let package = catalog.packages.get_mut("ripgrep").unwrap();
-        let default = package.default_version.clone();
-        let mut platform_recipe = package.versions[&default].clone();
-        platform_recipe.systems = vec!["aarch64-macos".into()];
-        platform_recipe.bins = vec!["platform-command".into()];
-        package
-            .versions
-            .insert("platform-version".into(), platform_recipe);
-        package
-            .default_versions
-            .insert("aarch64-macos".into(), "platform-version".into());
-        assert_eq!(
-            catalog_bins(
-                &catalog,
-                &PackageRequest::parse("rg"),
-                &ResolveContext::new("aarch64-macos")
-            ),
-            ["platform-command"]
-        );
-        assert_eq!(
-            catalog_bins(
-                &catalog,
-                &PackageRequest::parse(&format!("rg@{default}")),
-                &ResolveContext::new("aarch64-macos")
-            ),
-            ["rg"]
-        );
     }
 }

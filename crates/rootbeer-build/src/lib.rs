@@ -631,3 +631,7 @@ mod tests;
 
 #[cfg(test)]
 mod runtime_test;
+
+#[cfg(test)]
+#[path = "../../rootbeer-package/tests/support/catalog.rs"]
+mod test_catalog;

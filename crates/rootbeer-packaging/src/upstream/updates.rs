@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn unchanged_packages_need_no_qualification_and_failures_do_not_stop_other_projects() {
         let root = tempfile::tempdir().unwrap();
-        let catalog = PackageCatalog::embedded().unwrap();
+        let catalog = crate::test_catalog::catalog();
         let mut definition =
             GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
         definition.systems = vec!["aarch64-macos".into()];
@@ -469,7 +469,7 @@ mod tests {
     fn seeds_only_github_projects_and_preserves_functional_checks() {
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("upstreams");
-        let catalog = PackageCatalog::embedded().unwrap();
+        let catalog = crate::test_catalog::catalog();
         let count = seed_upstreams(catalog, &output).unwrap();
         let definitions = GitHubUpstream::from_directory(&output).unwrap();
         assert_eq!(count, definitions.len());

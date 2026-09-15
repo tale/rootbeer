@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +13,6 @@ mod recipe;
 
 pub(crate) use recipe::{validate_apps, validate_bin_paths, validate_commands, validate_systems};
 pub use recipe::{CatalogPackage, CatalogRecipe};
-
-include!(concat!(env!("OUT_DIR"), "/package_catalog.rs"));
 
 /// A versioned snapshot of Rootbeer's canonical package definitions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,20 +34,12 @@ pub struct CatalogProof {
 }
 
 impl PackageCatalog {
-    /// Loads and validates the collection shipped with this binary without I/O.
-    pub fn embedded() -> Result<&'static Self, String> {
-        static CATALOG: OnceLock<Result<PackageCatalog, String>> = OnceLock::new();
-        CATALOG
-            .get_or_init(|| Self::from_lua(EMBEDDED_RECIPES))
-            .as_ref()
-            .map_err(Clone::clone)
-    }
-
     /// Loads a recipe directory without rebuilding the executable.
     pub fn from_directory(directory: &Path) -> Result<Self, String> {
         Self::from_definitions(&super::PackageDefinition::from_directory(directory)?)
     }
 
+    #[cfg(test)]
     fn from_lua(recipes: &[(&str, &str)]) -> Result<Self, String> {
         let mut definitions = BTreeMap::new();
         for (name, source) in recipes {
@@ -164,20 +153,19 @@ pub fn valid_name(name: &str) -> bool {
 }
 
 pub struct CatalogResolver {
-    catalog: Option<PackageCatalog>,
+    catalog: PackageCatalog,
     inputs: PackageResolverInputs,
     backends: ResolverStack,
 }
 
 impl CatalogResolver {
-    pub fn with_catalog(mut self, catalog: &PackageCatalog) -> Self {
-        self.catalog = Some(catalog.clone());
-        self
-    }
-
-    pub fn new(inputs: &PackageResolverInputs, backends: ResolverStack) -> Self {
+    pub fn new(
+        catalog: &PackageCatalog,
+        inputs: &PackageResolverInputs,
+        backends: ResolverStack,
+    ) -> Self {
         Self {
-            catalog: None,
+            catalog: catalog.clone(),
             inputs: inputs.clone(),
             backends,
         }
@@ -194,10 +182,7 @@ impl PackageResolver for CatalogResolver {
         request: &PackageRequest,
         context: &ResolveContext,
     ) -> Result<Option<PackageResolution>, String> {
-        let catalog = match &self.catalog {
-            Some(catalog) => catalog,
-            None => PackageCatalog::embedded()?,
-        };
+        let catalog = &self.catalog;
         let Some(package) = catalog.find(&request.name) else {
             return Err(format!("unknown catalog package `{}`; use `rootbeer-forge list` or an explicit backend request", request.name));
         };
@@ -210,7 +195,7 @@ impl PackageResolver for CatalogResolver {
             .catalog_sha256()
             .is_some_and(|expected| expected != digest)
         {
-            return Err("the locked catalog differs from this binary; use the matching rb build or explicitly refresh with --update".into());
+            return Err("the locked catalog differs from the selected catalog; select the matching catalog or explicitly refresh with --update".into());
         }
         let version = request
             .version
@@ -311,8 +296,8 @@ mod tests {
     };
 
     #[test]
-    fn embedded_catalog_has_canonical_names_and_stable_roundtrip() {
-        let catalog = PackageCatalog::embedded().unwrap();
+    fn catalog_has_canonical_names_and_stable_roundtrip() {
+        let catalog = crate::test_catalog::catalog();
         assert_eq!(catalog.find("rg").unwrap().name, "ripgrep");
         assert!(catalog.find("BurntSushi/ripgrep").is_none());
         let decoded: PackageCatalog = serde_json::from_str(&catalog.to_json().unwrap()).unwrap();
@@ -328,17 +313,15 @@ mod tests {
                 &ResolveContext::new("aarch64-macos"),
             )
             .unwrap_err();
-        let crate::ResolveError::NotFound { attempts, .. } = error else {
-            panic!("expected an unknown catalog name")
+        let crate::ResolveError::UnknownExplicitResolver { resolver, .. } = error else {
+            panic!("expected an unconfigured canonical resolver")
         };
-        assert_eq!(attempts.len(), 1);
-        assert_eq!(attempts[0].resolver, "rootbeer");
-        assert!(attempts[0].reason.contains("unknown catalog package"));
+        assert_eq!(resolver, "rootbeer");
     }
 
     #[test]
     fn rejects_alias_collisions_and_invalid_recipes() {
-        let original = PackageCatalog::embedded().unwrap();
+        let original = crate::test_catalog::catalog();
         let mut catalog = original.clone();
         catalog
             .packages
@@ -379,7 +362,7 @@ mod tests {
 
     #[test]
     fn validates_complete_github_asset_maps() {
-        let catalog = PackageCatalog::embedded().unwrap();
+        let catalog = crate::test_catalog::catalog();
         let original = catalog.packages["ripgrep"].versions["15.2.0"].clone();
         assert!(original.validate().is_ok());
 
@@ -405,7 +388,7 @@ mod tests {
 
     #[test]
     fn platform_defaults_preserve_exact_requests_and_validate_support() {
-        let mut catalog = PackageCatalog::embedded().unwrap().clone();
+        let mut catalog = crate::test_catalog::catalog().clone();
         let package = catalog.packages.get_mut("ripgrep").unwrap();
         let recipe = package.versions["15.2.0"].clone();
         package.versions.insert("15.1.0".into(), recipe);
@@ -417,7 +400,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("rg");
         std::fs::write(&source, "test executable").unwrap();
-        let resolver = local_resolver(source).with_catalog(&catalog);
+        let resolver = local_resolver(&catalog, source);
         for (system, request, expected) in [
             ("x86_64-linux", "rg", "15.1.0"),
             ("aarch64-macos", "rg", "15.2.0"),
@@ -449,11 +432,11 @@ mod tests {
     fn recipe_evaluation_has_no_host_access_and_rejects_unknown_fields() {
         assert!(PackageCatalog::from_lua(&[("bad", "return os.getenv('HOME')")]).is_err());
         assert!(PackageCatalog::from_lua(&[("bad", "return require('rootbeer')")]).is_err());
-        let source = include_str!("../../../packages/age.lua").replacen(
-            "return {",
-            "return { typo = true,",
-            1,
-        );
+        let source =
+            crate::PackageDefinition::new(crate::test_catalog::catalog().packages["age"].clone())
+                .to_lua()
+                .unwrap()
+                .replacen("return {", "return { typo = true,", 1);
         assert!(PackageCatalog::from_lua(&[("age", &source)])
             .unwrap_err()
             .contains("unknown field"));
@@ -506,10 +489,10 @@ mod tests {
         }
     }
 
-    fn local_resolver(source: PathBuf) -> CatalogResolver {
+    fn local_resolver(catalog: &PackageCatalog, source: PathBuf) -> CatalogResolver {
         let mut backends = ResolverStack::new();
         backends.push(LocalBackend { source });
-        CatalogResolver::new(&PackageResolverInputs::default(), backends)
+        CatalogResolver::new(catalog, &PackageResolverInputs::default(), backends)
     }
 
     #[test]
@@ -517,7 +500,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("rg");
         std::fs::write(&source, "#!/bin/sh\nexit 0\n").unwrap();
-        let resolver = local_resolver(source);
+        let resolver = local_resolver(crate::test_catalog::catalog(), source);
         let context = ResolveContext::new("aarch64-macos");
         let canonical = resolver
             .resolve(&PackageRequest::parse("ripgrep"), &context)
@@ -535,7 +518,7 @@ mod tests {
         assert_eq!(proof.revision, 3);
         assert_eq!(
             proof.catalog_sha256,
-            PackageCatalog::embedded().unwrap().sha256()
+            crate::test_catalog::catalog().sha256()
         );
         assert_eq!(proof.source.name, "BurntSushi/ripgrep");
         assert_eq!(
@@ -557,13 +540,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("rg");
         std::fs::write(&source, "test executable").unwrap();
-        let mut catalog = PackageCatalog::embedded().unwrap().clone();
+        let mut catalog = crate::test_catalog::catalog().clone();
         let mut package = catalog.packages.remove("ripgrep").unwrap();
         package.name = "new-search".into();
         package.aliases.clear();
         catalog.packages.insert(package.name.clone(), package);
         catalog.validate().unwrap();
-        let resolver = local_resolver(source).with_catalog(&catalog);
+        let resolver = local_resolver(&catalog, source);
         let resolution = resolver
             .resolve(
                 &PackageRequest::parse("new-search"),
@@ -581,15 +564,15 @@ mod tests {
     #[test]
     fn loads_directory_recipes_with_the_same_validation_and_digest() {
         let directory = tempfile::tempdir().unwrap();
-        for (name, source) in EMBEDDED_RECIPES.iter().rev() {
+        for (name, package) in crate::test_catalog::catalog().packages.iter().rev() {
+            let source = crate::PackageDefinition::new(package.clone())
+                .to_lua()
+                .unwrap();
             std::fs::write(directory.path().join(format!("{name}.lua")), source).unwrap();
         }
         std::fs::write(directory.path().join("README.md"), "ignored").unwrap();
         let catalog = PackageCatalog::from_directory(directory.path()).unwrap();
-        assert_eq!(
-            catalog.sha256(),
-            PackageCatalog::embedded().unwrap().sha256()
-        );
+        assert_eq!(catalog.sha256(), crate::test_catalog::catalog().sha256());
         std::fs::write(
             directory.path().join("invalid.lua"),
             "return os.execute('false')",
@@ -600,7 +583,10 @@ mod tests {
 
     #[test]
     fn rejects_unknown_names_versions_platforms_overrides_and_catalog_changes_before_download() {
-        let mut resolver = local_resolver(PathBuf::from("must-not-read"));
+        let mut resolver = local_resolver(
+            crate::test_catalog::catalog(),
+            PathBuf::from("must-not-read"),
+        );
         let context = ResolveContext::new("aarch64-macos");
         for request in ["git", "ripgrep@0.0.0", "ripgrep@latest"] {
             assert!(resolver

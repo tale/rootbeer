@@ -175,11 +175,11 @@ impl Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rootbeer_package::{LockedInstall, PackageCatalog, Provides};
+    use rootbeer_package::{LockedInstall, Provides};
 
     #[test]
     fn keys_track_build_inputs_without_tracking_dependency_locations() {
-        let catalog = PackageCatalog::embedded().unwrap();
+        let catalog = crate::test_catalog::catalog();
         let recipe = catalog.packages["xz"].versions.values().next().unwrap();
         let mut dependencies = BTreeMap::from([(
             "compiler@1".into(),

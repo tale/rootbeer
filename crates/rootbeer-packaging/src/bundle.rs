@@ -350,7 +350,7 @@ pub(crate) mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     pub(crate) fn fixture(root: &Path) -> (PackageCatalog, PathBuf) {
-        let catalog = PackageCatalog::embedded().unwrap().clone();
+        let catalog = crate::test_catalog::catalog().clone();
         let entry = &catalog.packages["xz"];
         let recipe = &entry.versions[&entry.default_version];
         let tree = root.join("tree");

@@ -6,21 +6,18 @@ use crate::plan::Op;
 use super::super::test_support::{run, vm_in};
 
 #[test]
-fn catalog_commands_are_available_while_planning_without_a_lock() {
+fn planning_without_a_lock_does_not_guess_catalog_commands() {
     let root = tempfile::tempdir().unwrap();
     let vm = vm_in(
         r#"
         local rb = require("rootbeer")
-        rb.package("rg")
-        result = rb.which("rg")
+        rb.package("uninstalled_catalog_test_command")
+        result = rb.which("uninstalled_catalog_test_command")
     "#,
         root.path(),
     );
-    let result: String = vm.lua.globals().get("result").unwrap();
-    assert_eq!(
-        PathBuf::from(result),
-        crate::package::profile::bin_path("rg")
-    );
+    let result: Option<String> = vm.lua.globals().get("result").unwrap();
+    assert!(result.is_none());
     assert!(!root.path().join("rootbeer.lock").exists());
 }
 

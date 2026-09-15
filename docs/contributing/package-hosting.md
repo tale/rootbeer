@@ -81,15 +81,17 @@ runtime environment variables cannot replace it. A matching lock needs no
 catalog fetch.
 
 When the network is unavailable, resolution can use the last verified cached
-snapshot, then the smaller embedded catalog. Rootbeer reports this fallback.
+snapshot. Rootbeer reports this fallback. Without a verified cached snapshot,
+the first fetch must succeed. No catalog is bundled or fetched during compilation.
 Invalid signatures, corrupt snapshots, and rollback attempts fail. A missing
 package does not trigger another provider. Developer builds without an official
-endpoint report embedded fallback. `rb apply --update` requires a successful
+endpoint must configure one at build time or use an explicit `rb.package_index()`
+pin. `rb apply --update` requires a successful
 refresh; offline installs use the matching lock and cached package contents.
 
 Package search displays the published catalog. `rootbeer-forge list` and
-`rootbeer-forge show` inspect the embedded authoring catalog or the directory passed
-to `--catalog`; they do not search the remote catalog.
+`rootbeer-forge show` inspect the recipe directory passed to `--catalog`; they do
+not search the remote catalog.
 
 Explicit `rb.package_index()` pins bypass official catalog selection and fallback.
 The pin identifies exact bytes, not a publisher signature. Published artifact URLs

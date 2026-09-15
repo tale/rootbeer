@@ -26,7 +26,7 @@ fn runtime_chain_survives_cache_reuse_and_installation_without_build_trees() {
     let cached = DownloadCache::new(&downloads)
         .materialize(&format!("file://{}", archive.display()), None)
         .unwrap();
-    let mut catalog = PackageCatalog::embedded().unwrap().clone();
+    let mut catalog = crate::test_catalog::catalog().clone();
     let template = catalog.packages["xz"].clone();
     catalog.packages.clear();
     let extension = if cfg!(target_os = "macos") {

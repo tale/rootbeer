@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn fingerprints_track_dependencies_without_invalidating_unrelated_packages() {
-        let catalog = PackageCatalog::embedded().unwrap().clone();
+        let catalog = crate::test_catalog::catalog().clone();
         let key = "xz@5.8.3";
         let digest = |catalog: &PackageCatalog| {
             fingerprint(

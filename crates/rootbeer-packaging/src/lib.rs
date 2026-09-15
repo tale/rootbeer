@@ -22,3 +22,7 @@ pub use upstream::{
     discover_definition_updates, discover_updates, import_github_packages, seed_upstreams,
     UpdateReport,
 };
+
+#[cfg(test)]
+#[path = "../../rootbeer-package/tests/support/catalog.rs"]
+mod test_catalog;

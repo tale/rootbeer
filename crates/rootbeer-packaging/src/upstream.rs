@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn paginates_metadata_and_never_publishes_incomplete_batches() {
         let root = tempfile::tempdir().unwrap();
-        let catalog = PackageCatalog::embedded().unwrap();
+        let catalog = crate::test_catalog::catalog();
         let mut upstream =
             GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
         upstream.systems = vec!["aarch64-macos".into()];
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn rejects_replaced_or_moved_repositories_before_reading_releases() {
         let root = tempfile::tempdir().unwrap();
-        let catalog = PackageCatalog::embedded().unwrap();
+        let catalog = crate::test_catalog::catalog();
         let mut upstream =
             GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
         upstream.repository_id = Some(42);
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn recognizes_existing_upstreams_and_prevents_alias_takeover() {
-        let catalog = PackageCatalog::embedded().unwrap();
+        let catalog = crate::test_catalog::catalog();
         let upstream = GitHubUpstream::new(
             "encryption".into(),
             "filosottile/AGE".into(),
@@ -321,11 +321,7 @@ mod tests {
     fn writes_loadable_candidates_and_keeps_existing_output_intact() {
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("output");
-        let package = PackageCatalog::embedded()
-            .unwrap()
-            .find("age")
-            .unwrap()
-            .clone();
+        let package = crate::test_catalog::catalog().find("age").unwrap().clone();
         let catalog = PackageCatalog {
             schema: 1,
             packages: BTreeMap::from([("age".into(), package)]),

@@ -7,8 +7,8 @@ recipe normally needs no Rust changes or Rootbeer release.
 Package discovery, build checks, and publication CI run in the index repository,
 which pins Forge with its `engine-revision` file. Engine CI runs regression tests.
 
-The `packages/` directory in the engine repository is the smaller embedded fallback
-and authoring fixture. It is not the complete hosted catalog.
+The engine ships no recipes. Pass `--catalog` with the recipe directory from an
+index checkout for commands that inspect or build packages.
 
 ## Packaging entrypoint
 
@@ -17,8 +17,8 @@ publication. `rb` owns configuration and user package environments.
 
 ```sh
 cargo build --bin rootbeer-forge
-rootbeer-forge --catalog packages plan xz
-rootbeer-forge --catalog packages build xz --output /tmp/xz-build \
+rootbeer-forge --catalog ../rootbeer-index/packages plan xz
+rootbeer-forge --catalog ../rootbeer-index/packages build xz --output /tmp/xz-build \
   --cache /tmp/rootbeer-builds --cache-context "$BUILD_ENVIRONMENT_ID"
 ```
 
@@ -71,7 +71,7 @@ Directory symlinks must resolve within their declared input root. Use
 
 ```sh
 rootbeer-forge pin-environment environment.json > environment.lock.json
-rootbeer-forge build xz --output /tmp/xz-build \
+rootbeer-forge --catalog ../rootbeer-index/packages build xz --output /tmp/xz-build \
   --environment environment.lock.json \
   --cache /tmp/rootbeer-builds --cache-context "$BUILD_ENVIRONMENT_ID"
 ```
@@ -90,7 +90,7 @@ Environment locks describe input selection. Add `--isolate` to enforce filesyste
 and network restrictions while package code runs:
 
 ```sh
-rootbeer-forge build xz --output /tmp/xz-build \
+rootbeer-forge --catalog ../rootbeer-index/packages build xz --output /tmp/xz-build \
   --environment environment.lock.json --isolate \
   --cache /tmp/rootbeer-builds --cache-context "$BUILD_ENVIRONMENT_ID"
 ```
@@ -444,8 +444,8 @@ already exist.
 Names default to the lowercase repository name. Use `--name` to choose the canonical
 identity and repeat `--alias` for alternate names. The importer rejects names and
 aliases owned by another package, duplicate upstream projects, and changes to a
-recorded repository ID or location. It checks the selected `--catalog`; the embedded
-fallback alone cannot detect collisions with every official package.
+recorded repository ID or location. Pass the complete index with `--catalog` so
+collision checks include every official package.
 
 Exported commands are explicit: repeat `--bin` for each command. Checks default to
 `--version` for each command; use `--check '["tool", "--help"]'` or edit the saved

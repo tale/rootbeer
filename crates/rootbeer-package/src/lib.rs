@@ -52,10 +52,9 @@ pub fn default_resolver_stack() -> ResolverStack {
 
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
     let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
-    match inputs.package_index() {
-        Some(pin) => stack.push(index::IndexResolver::new(pin)),
-        None => stack.push(catalog::CatalogResolver::new(inputs, backend_stack(inputs))),
-    };
+    if let Some(pin) = inputs.package_index() {
+        stack.push(index::IndexResolver::new(pin));
+    }
     stack
 }
 
@@ -72,3 +71,10 @@ pub fn backend_stack(inputs: &PackageResolverInputs) -> ResolverStack {
 pub mod lockfile;
 
 pub mod runtime;
+
+#[cfg(test)]
+extern crate self as rootbeer_package;
+
+#[cfg(test)]
+#[path = "../tests/support/catalog.rs"]
+mod test_catalog;

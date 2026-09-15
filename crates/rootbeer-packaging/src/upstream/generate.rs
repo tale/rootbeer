@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn source_discovery_hashes_new_archives_and_preserves_retained_versions() {
-        let package = crate::PackageCatalog::embedded().unwrap().packages["xz"].clone();
+        let package = crate::test_catalog::catalog().packages["xz"].clone();
         let previous = package.default_version.clone();
         let mut build = package.versions[&previous].build.clone().unwrap();
         build.url = "https://example.com/xz-{tag}.tar.gz".into();

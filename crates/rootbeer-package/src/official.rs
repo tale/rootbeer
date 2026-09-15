@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
 
-use super::{ArtifactIndex, PackageCatalog, PackageIndexPin, ResolverInput};
+use super::{ArtifactIndex, PackageIndexPin, ResolverInput};
 use crate::store::hash_bytes;
 
 /// A release-configured endpoint and Ed25519 verification key for the official index.
@@ -69,7 +69,7 @@ impl OfficialIndexSource {
     }
 
     /// Fetches and verifies a snapshot, or falls back on availability errors.
-    /// Explicit refreshes never use a stale cache or the embedded catalog.
+    /// Explicit refreshes never use a stale cache.
     pub fn select(&self, state: &Path, should_refresh: bool) -> Result<IndexSelection, String> {
         self.validate()?;
         self.select_with(state, should_refresh, fetch)
@@ -181,18 +181,8 @@ impl OfficialIndexSource {
 pub fn select_default(should_refresh: bool) -> Result<IndexSelection, String> {
     match OfficialIndexSource::configured()? {
         Some(source) => source.select(&crate::state_dir(), should_refresh),
-        None if should_refresh => Err("this build has no official index endpoint and verification key; cannot refresh the catalog".into()),
-        None => embedded("official index is not configured in this build"),
+        None => Err("this build has no official index endpoint and verification key; configure ROOTBEER_INDEX_URL and ROOTBEER_INDEX_PUBLIC_KEY when building, or use rb.package_index()".into()),
     }
-}
-
-fn embedded(reason: &str) -> Result<IndexSelection, String> {
-    Ok(IndexSelection {
-        input: ResolverInput::Catalog {
-            sha256: PackageCatalog::embedded()?.sha256(),
-        },
-        notice: Some(format!("{reason}; using the embedded package catalog")),
-    })
 }
 
 #[derive(Debug)]
@@ -214,7 +204,9 @@ fn fallback(
         return Err(format!("cannot refresh official index: {reason}"));
     }
     let Some(cached) = cached else {
-        return embedded(&reason);
+        return Err(format!(
+            "{reason}; no verified cached index is available; connect to the network and retry"
+        ));
     };
     Ok(IndexSelection {
         input: ResolverInput::OfficialIndex(cached.manifest.index),
@@ -421,13 +413,12 @@ mod tests {
     }
 
     #[test]
-    fn only_unavailability_allows_embedded_fallback() {
+    fn first_fetch_requires_a_verified_snapshot() {
         let root = tempfile::tempdir().unwrap();
         let (source, _, _) = fixture(root.path());
         let state = root.path().join("state");
-        let result = source.select_with(&state, false, unavailable).unwrap();
-        assert!(matches!(result.input, ResolverInput::Catalog { .. }));
-        assert!(result.notice.unwrap().contains("embedded"));
+        let error = source.select_with(&state, false, unavailable).unwrap_err();
+        assert!(error.contains("no verified cached index"));
         assert!(source.select_with(&state, true, unavailable).is_err());
         assert!(source
             .select_with(&state, false, |_, _| Ok(b"invalid JSON".to_vec()))

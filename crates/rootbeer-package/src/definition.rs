@@ -242,7 +242,7 @@ mod tests {
     use crate::PackageCatalog;
 
     fn definition() -> PackageDefinition {
-        let package = PackageCatalog::embedded().unwrap().packages["age"].clone();
+        let package = crate::test_catalog::catalog().packages["age"].clone();
         let mut upstream = GitHubUpstream::new(
             package.name.clone(),
             "FiloSottile/age".into(),

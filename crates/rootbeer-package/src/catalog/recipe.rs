@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn build_recipes_reject_binary_paths_checksums_and_mirroring() {
-        let catalog = crate::PackageCatalog::embedded().unwrap();
+        let catalog = crate::test_catalog::catalog();
         let package = &catalog.packages["xz"];
         let original = &package.versions[&package.default_version];
         for field in ["bin_paths", "checksums", "mirror"] {

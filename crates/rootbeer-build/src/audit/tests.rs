@@ -184,7 +184,7 @@ fn universal_macho_checks_every_architecture() {
 #[test]
 fn source_build_rejects_unsafe_binary_before_checks_or_cache_publication() {
     use crate::{build_package, BuildCache, BuildOptions};
-    use rootbeer_package::{CatalogPackage, PackageCatalog, ResolveContext};
+    use rootbeer_package::{CatalogPackage, ResolveContext};
     let directory = tempfile::tempdir().unwrap();
     let package = fixture(directory.path(), true);
     let source = directory.path().join("source.tar.gz");
@@ -196,7 +196,7 @@ fn source_build_rejects_unsafe_binary_before_checks_or_cache_publication() {
     let downloaded = rootbeer_package::download::DownloadCache::new(&downloads)
         .materialize(&format!("file://{}", source.display()), None)
         .unwrap();
-    let mut catalog = PackageCatalog::embedded().unwrap().clone();
+    let mut catalog = crate::test_catalog::catalog().clone();
     let template = catalog.packages["xz"].clone();
     let mut recipe = template.versions[&template.default_version].clone();
     recipe.bins = vec!["main".into()];

@@ -44,7 +44,7 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
     let cached = DownloadCache::new(&downloads)
         .materialize(&format!("file://{}", archive.display()), None)
         .unwrap();
-    let mut catalog = PackageCatalog::embedded().unwrap().clone();
+    let mut catalog = crate::test_catalog::catalog().clone();
     let template = catalog.packages["xz"].clone();
     catalog.packages.clear();
     for (name, dependency) in [

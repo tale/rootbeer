@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn runtime_edges_are_separate_from_build_and_link_exports() {
-        let template = PackageCatalog::embedded().unwrap().packages["xz"].clone();
+        let template = crate::test_catalog::catalog().packages["xz"].clone();
         let mut catalog = PackageCatalog {
             schema: 1,
             packages: BTreeMap::new(),
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn diamond_dependencies_share_nodes_and_keep_direct_edges() {
-        let template = PackageCatalog::embedded().unwrap().packages["xz"].clone();
+        let template = crate::test_catalog::catalog().packages["xz"].clone();
         let version = template.default_version.clone();
         let mut catalog = PackageCatalog {
             schema: 1,

@@ -382,13 +382,11 @@ fn export_recipe(
     } = *environment;
     let context = ResolveContext::current();
     let mut resolver = rootbeer_package::backend_stack(inputs).with_implicit_resolver("rootbeer");
-    resolver.push(
-        rootbeer_package::catalog::CatalogResolver::new(
-            inputs,
-            rootbeer_package::backend_stack(inputs),
-        )
-        .with_catalog(catalog),
-    );
+    resolver.push(rootbeer_package::catalog::CatalogResolver::new(
+        catalog,
+        inputs,
+        rootbeer_package::backend_stack(inputs),
+    ));
     let downloads = root.join("downloads");
     let realizer = PackageRealizer::with_dirs(
         Store::new(root.join("store")),
@@ -685,7 +683,7 @@ MAKE
         let downloaded = DownloadCache::new(root.path().join("cache/builds/downloads"))
             .materialize(&format!("file://{}", archive.display()), None)
             .unwrap();
-        let mut catalog = PackageCatalog::embedded().unwrap().clone();
+        let mut catalog = crate::test_catalog::catalog().clone();
         catalog.packages.retain(|name, _| name == "xz");
         let package = catalog.packages.get_mut("xz").unwrap();
         let recipe = package.versions.get_mut(&package.default_version).unwrap();
@@ -892,7 +890,7 @@ MAKE
 
     #[test]
     fn shards_cover_each_recipe_exactly_once() {
-        let catalog = PackageCatalog::embedded().unwrap();
+        let catalog = crate::test_catalog::catalog();
         for count in [1, 2, 8, 256] {
             for package in catalog.packages.values() {
                 for version in package.versions.keys() {
@@ -908,7 +906,7 @@ MAKE
 
     #[test]
     fn rejects_invalid_shards_before_creating_output() {
-        let catalog = PackageCatalog::embedded().unwrap();
+        let catalog = crate::test_catalog::catalog();
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("output");
         for (index, count) in [(0, 0), (1, 1), (8, 8)] {

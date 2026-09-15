@@ -46,14 +46,6 @@ impl PackageResolverInputs {
                 )?,
             }),
         );
-        resolvers.insert(
-            "rootbeer".into(),
-            ResolverInput::Catalog {
-                sha256: super::PackageCatalog::embedded()
-                    .map_err(io::Error::other)?
-                    .sha256(),
-            },
-        );
         Ok(Self { resolvers })
     }
 

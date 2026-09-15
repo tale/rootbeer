@@ -91,12 +91,8 @@ jobs:
 
       - name: Build
         run: |
-          if [ -z "$ROOTBEER_INDEX_URL" ] && [ -z "$ROOTBEER_INDEX_PUBLIC_KEY" ]; then
-            unset ROOTBEER_INDEX_URL ROOTBEER_INDEX_PUBLIC_KEY
-          else
-            [[ "$ROOTBEER_INDEX_URL" == https://* ]]
-            [[ "$ROOTBEER_INDEX_PUBLIC_KEY" =~ ^[0-9a-f]{64}$ ]]
-          fi
+          [[ "$ROOTBEER_INDEX_URL" == https://* ]] || { echo "ROOTBEER_INDEX_URL must configure the official index" >&2; exit 1; }
+          [[ "$ROOTBEER_INDEX_PUBLIC_KEY" =~ ^[0-9a-f]{64}$ ]] || { echo "ROOTBEER_INDEX_PUBLIC_KEY must configure its verification key" >&2; exit 1; }
           cargo build --locked --release --target ${{ matrix.target }}
         env:
           ROOTBEER_INDEX_URL: ${{ vars.ROOTBEER_INDEX_URL }}

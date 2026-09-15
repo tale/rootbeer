@@ -403,7 +403,6 @@ impl PackageResolver for IndexResolver {
 mod tests {
     use super::*;
     use crate::store::hash_bytes;
-    use crate::PackageCatalog;
     use std::{fs, path::Path};
 
     fn fixture(root: &Path) -> (ArtifactIndex, PackageIndexPin) {
@@ -522,10 +521,7 @@ mod tests {
     fn resolves_new_names_and_aliases_from_verified_cached_index() {
         let root = tempfile::tempdir().unwrap();
         let (_, pin) = fixture(root.path());
-        assert!(PackageCatalog::embedded()
-            .unwrap()
-            .find("new-tool")
-            .is_none());
+        assert!(crate::test_catalog::catalog().find("new-tool").is_none());
         let resolver = resolver(&pin, root.path());
         let context = ResolveContext::new("aarch64-linux");
         let package = resolver

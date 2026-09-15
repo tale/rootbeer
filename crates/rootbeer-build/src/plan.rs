@@ -78,7 +78,7 @@ impl BuildPlan {
         }
         let context = ResolveContext::new(&graph.system);
         let mut resolver = backend_stack(inputs).with_implicit_resolver("rootbeer");
-        resolver.push(CatalogResolver::new(inputs, backend_stack(inputs)).with_catalog(catalog));
+        resolver.push(CatalogResolver::new(catalog, inputs, backend_stack(inputs)));
         let mut binaries = BTreeMap::new();
         let mut recipes = BTreeMap::new();
         for key in &graph.order {

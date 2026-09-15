@@ -8,7 +8,7 @@ mod import;
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
-    /// Read package definitions from a directory instead of the embedded catalog
+    /// Read package definitions from an index checkout
     #[arg(long, global = true)]
     catalog: Option<PathBuf>,
     #[command(subcommand)]
@@ -191,14 +191,15 @@ fn execute(args: Args) -> Result<(), String> {
         .as_ref()
         .map(PackageCatalog::from_definitions)
         .transpose()?;
-    let catalog = match &local_catalog {
-        Some(catalog) => catalog,
-        None => PackageCatalog::embedded()?,
+    let catalog = || {
+        local_catalog.as_ref().ok_or_else(|| {
+            "this command requires --catalog pointing to an index recipe directory".to_string()
+        })
     };
     let mut output = io::stdout().lock();
     match args.command {
         Command::SeedUpstreams { output } => {
-            let count = rootbeer_packaging::seed_upstreams(catalog, &output)?;
+            let count = rootbeer_packaging::seed_upstreams(catalog()?, &output)?;
             writeln!(io::stdout(), "Seeded {count} GitHub upstream definitions")
                 .map_err(|e| e.to_string())?;
         }
@@ -211,7 +212,7 @@ fn execute(args: Args) -> Result<(), String> {
                 .as_ref()
                 .ok_or("updates requires --catalog pointing to package definitions")?;
             let report = rootbeer_packaging::discover_definition_updates(
-                catalog,
+                catalog()?,
                 definitions,
                 &cache,
                 &output,
@@ -229,7 +230,7 @@ fn execute(args: Args) -> Result<(), String> {
             }
         }
         Command::Import(args) => {
-            let candidates = import::run(*args, catalog)?;
+            let candidates = import::run(*args, catalog()?)?;
             for package in candidates.packages.values() {
                 writeln!(
                     output,
@@ -248,7 +249,7 @@ fn execute(args: Args) -> Result<(), String> {
         }
         Command::List => {
             let system = rootbeer_packaging::ResolveContext::current().system;
-            for package in catalog.packages.values() {
+            for package in catalog()?.packages.values() {
                 let version = package.default_version_for(&system);
                 writeln!(
                     output,
@@ -266,7 +267,7 @@ fn execute(args: Args) -> Result<(), String> {
             }
         }
         Command::Show { name } => {
-            let package = catalog
+            let package = catalog()?
                 .find(&name)
                 .ok_or_else(|| format!("unknown catalog package `{name}`"))?;
             writeln!(
@@ -298,6 +299,7 @@ fn execute(args: Args) -> Result<(), String> {
             }
         }
         Command::Check => {
+            let catalog = catalog()?;
             catalog.validate()?;
             writeln!(
                 output,
@@ -307,14 +309,20 @@ fn execute(args: Args) -> Result<(), String> {
             )
             .map_err(|e| e.to_string())?;
         }
-        Command::Index => writeln!(output, "{}", catalog.to_json()?).map_err(|e| e.to_string())?,
+        Command::Index => {
+            writeln!(output, "{}", catalog()?.to_json()?).map_err(|e| e.to_string())?
+        }
         Command::Bundle {
             receipt,
             base_url,
             output: destination,
         } => {
-            let digest =
-                rootbeer_packaging::bundle_artifacts(catalog, &receipt, &base_url, &destination)?;
+            let digest = rootbeer_packaging::bundle_artifacts(
+                catalog()?,
+                &receipt,
+                &base_url,
+                &destination,
+            )?;
             writeln!(
                 output,
                 "index: {}\nsha256:{digest}",
@@ -341,7 +349,7 @@ fn execute(args: Args) -> Result<(), String> {
                 recheck,
             });
             rootbeer_packaging::export_catalog_with_workers(
-                catalog,
+                catalog()?,
                 &registry,
                 &output,
                 &rootbeer_packaging::BuildOptions {
@@ -457,9 +465,9 @@ fn execute(args: Args) -> Result<(), String> {
             report.validate()?;
         }
         Command::Plan { name } => {
-            catalog.validate()?;
+            catalog()?.validate()?;
             let graph = rootbeer_packaging::graph::DependencyGraph::new(
-                catalog,
+                catalog()?,
                 &[name],
                 &rootbeer_packaging::ResolveContext::current().system,
             )?;
@@ -487,7 +495,7 @@ fn execute(args: Args) -> Result<(), String> {
                 recheck,
             });
             let artifact = rootbeer_packaging::build_package(
-                catalog,
+                catalog()?,
                 &name,
                 &destination,
                 &rootbeer_packaging::BuildOptions {

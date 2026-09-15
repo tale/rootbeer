@@ -521,10 +521,10 @@ mod tests {
         let mut backends = crate::ResolverStack::new();
         backends.push(resolver);
         super::super::catalog::CatalogResolver::new(
+            &catalog,
             &crate::PackageResolverInputs::default(),
             backends,
         )
-        .with_catalog(&catalog)
     }
 
     #[test]

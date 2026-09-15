@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use super::*;
 
 fn source_catalog() -> PackageCatalog {
-    let catalog = PackageCatalog::embedded().unwrap();
+    let catalog = crate::test_catalog::catalog();
     PackageCatalog {
         schema: 1,
         packages: BTreeMap::from([("xz".into(), catalog.packages["xz"].clone())]),
@@ -162,9 +162,18 @@ fn pinned_build_rejects_missing_catalog_and_dependency_inputs_before_io() {
 
 #[test]
 fn source_packages_do_not_implicitly_compile_during_resolution() {
-    let error = rootbeer_package::default_resolver_stack()
-        .resolve(&PackageRequest::parse("xz"), &ResolveContext::current())
-        .unwrap_err();
+    let inputs = PackageResolverInputs::default();
+    let resolver = rootbeer_package::catalog::CatalogResolver::new(
+        &source_catalog(),
+        &inputs,
+        rootbeer_package::backend_stack(&inputs),
+    );
+    let error = rootbeer_package::PackageResolver::resolve(
+        &resolver,
+        &PackageRequest::parse("xz"),
+        &ResolveContext::current(),
+    )
+    .unwrap_err();
     assert!(error.to_string().contains("rootbeer-forge build"));
 }
 
