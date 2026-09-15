@@ -198,6 +198,12 @@ a receipt, only the package itself and the OS baseline are allowed.
 
 ### Dependency roles
 
+An explicit source build compiles the requested package. Its dependencies prefer
+matching prebuilts and fall back to source when none is declared for the platform.
+Selecting a prebuilt skips its source-only inputs, while preserving explicit
+runtime dependencies and transitive link inputs for packages exporting libraries. Failed binary resolution or verification remains
+an error; it does not silently switch to source.
+
 New recipes can scope dependencies explicitly:
 
 ```lua

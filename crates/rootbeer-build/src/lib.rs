@@ -159,7 +159,15 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
         } else {
             output.join(format!("dependency-{key}"))
         };
-        let locked = if let Some(build) = &recipe.build {
+        let locked = if let Some(binary) = plan.binaries.get(key) {
+            let mut package = binary.clone();
+            if let Some(build) = &recipe.build {
+                package
+                    .runtime_dependencies
+                    .extend(runtime_dependencies(build, &resolved));
+            }
+            package
+        } else if let Some(build) = &recipe.build {
             if !is_root {
                 fs::create_dir(&destination).map_err(|e| e.to_string())?;
             }
@@ -240,7 +248,9 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
             built = Some(artifact);
             locked
         } else {
-            plan.binaries[key].clone()
+            return Err(format!(
+                "{key}: build plan has neither source nor a resolved binary"
+            ));
         };
         let realized = realizer.realize(&locked).map_err(|e| e.to_string())?;
         if let Some(artifact) = built.as_mut() {
