@@ -328,6 +328,7 @@ mod tests {
                 apps: Default::default(),
                 bins: BTreeMap::new(),
             },
+            runtime_dependencies: Default::default(),
             output_sha256: None,
         }
     }

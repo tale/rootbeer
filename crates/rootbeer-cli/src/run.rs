@@ -233,6 +233,7 @@ mod tests {
                     apps: Default::default(),
                     bins: bins.clone(),
                 },
+                runtime_dependencies: Default::default(),
                 output_sha256: None,
             },
             store_entry: StoreEntry {

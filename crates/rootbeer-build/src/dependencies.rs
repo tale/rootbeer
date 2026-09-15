@@ -5,15 +5,24 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 pub fn validate(root: &Path, libraries: &[PathBuf]) -> Result<(), String> {
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
     for library in libraries {
-        let path = contained_file(root, library)?;
+        let path = contained_file(&root, library)?;
         let mut magic = [0; 8];
         fs::File::open(&path)
             .and_then(|mut file| file.read_exact(&mut magic))
             .map_err(|error| format!("{}: {error}", path.display()))?;
-        if &magic != b"!<arch>\n" {
+        if &magic == b"!<arch>\n" {
+            continue;
+        }
+        let report = crate::audit::audit(&root)?;
+        if !report
+            .binaries
+            .iter()
+            .any(|binary| root.join(&binary.path) == path && !binary.is_executable)
+        {
             return Err(format!(
-                "{} is not a self-contained static archive",
+                "{} is not a static archive or shared library",
                 path.display()
             ));
         }
@@ -44,11 +53,12 @@ pub(crate) fn stage(root: &Path, libraries: &[PathBuf], output: &Path) -> Result
 }
 
 fn contained_file(root: &Path, relative: &Path) -> Result<PathBuf, String> {
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
     let path = root
         .join(relative)
         .canonicalize()
         .map_err(|error| format!("missing dependency export {}: {error}", relative.display()))?;
-    if !path.starts_with(root) || !path.is_file() {
+    if !path.starts_with(&root) || !path.is_file() {
         return Err(format!(
             "dependency export {} escapes its package or is not a file",
             relative.display()

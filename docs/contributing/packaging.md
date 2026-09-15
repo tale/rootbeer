@@ -62,7 +62,9 @@ List other utilities required by the recipe, such as `ar`, `ranlib`, `sed`,
 (for example `/bin/sh` for a `#!/bin/sh` script). On macOS, declare the actual compiler and its
 resource directory, include the SDK directory in `inputs`, and set `SDKROOT`
 in `variables`. Hashing an SDK directory can take time; it reads the full tree.
-Directory symlinks must resolve within their declared input root.
+Directory symlinks must resolve within their declared input root. Use
+`xcrun --find make` and `xcrun --find libtool` to locate the actual macOS tools;
+`/usr/bin` may contain developer-directory launchers.
 
 ```sh
 rootbeer-forge pin-environment environment.json > environment.lock.json
@@ -134,10 +136,17 @@ cache hits verify archive and output hashes and rerun package checks. Export's
 pass through this executor; only binary qualification uses the outer export
 cache directly.
 
+Build environments set `SOURCE_DATE_EPOCH=1` and `ZERO_AR_DATE=1`; the latter
+prevents Apple archive-member timestamps from changing otherwise identical outputs.
+Failed command phases retain their scratch directory, including upstream diagnostic
+files such as `config.log`. The error reports its path; remove the failed output
+directory when it is no longer needed.
+
 ### Auditing native outputs
 
 ```sh
 rootbeer-forge audit /path/to/installed/package
+rootbeer-forge audit /path/to/store/package --receipt /path/to/receipt.json
 ```
 
 The command emits a JSON report and exits unsuccessfully when native loader
@@ -150,11 +159,13 @@ source receipts reruns the audit too. `runtime-audit.json` contains relative
 file paths, architectures, library identities, interpreters, search paths, and
 violations; receipts record `runtime_audit_sha256`.
 
-Bundled libraries must resolve inside the package through loader-relative paths:
+Libraries must resolve inside the package or its pinned runtime closure through loader-relative paths:
 ELF `$ORIGIN`/`${ORIGIN}` or Mach-O `@loader_path`, `@executable_path`, and
 `@rpath`. Resolution checks architecture, word size, and byte order. Mach-O
 inherited rpaths and ELF RPATH/RUNPATH inheritance are followed along dependency
-chains. Symlinks may stay inside the package; escaping targets fail. Absolute
+chains. Declared runtime references may reach sibling content-addressed store
+entries; other escaping targets fail. Symlinks must stay inside their owning
+package. Absolute
 library identities, working-directory searches, undeclared host prefixes, and
 missing bundled libraries fail even if the current machine could load them.
 
@@ -171,9 +182,9 @@ embedded loader environment settings are rejected. Weak dependencies are
 required to resolve too. A shared library using `@executable_path` without a
 known executable context cannot be qualified by this pass.
 
-Separate runtime packages are not installed yet. External dependencies must
-currently be bundled or linked statically; the audit reports missing runtime
-inputs rather than guessing a host location or rewriting binaries.
+With `--receipt`, the audit verifies installed output hashes and reads runtime
+entries beside the installed package. It does not fetch missing inputs. Without
+a receipt, only the package itself and the OS baseline are allowed.
 
 ### Dependency roles
 
@@ -190,8 +201,14 @@ These are syntax examples; use versions available in your selected catalog.
 `build` exposes the dependency’s commands. `link` exposes its libraries and
 headers, including transitive link inputs, without leaking its build tools onto
 `PATH`. String entries retain their previous combined behavior, also available
-as `kind = "all"`. Scoped entries require artifact index schema 5 when published;
-existing catalogs retain their current schema and digest.
+as `kind = "all"`. These existing roles do not imply runtime installation.
+`runtime` installs a dependency without exposing build commands or headers.
+`link_runtime` exposes link inputs and installs the dependency. Runtime edges
+propagate only through other runtime edges; a compiler's own runtime dependencies
+remain build inputs for its consumer.
+
+Runtime closures require lock schema 3, build receipt schema 2, and artifact index
+schema 6. Older dependency roles retain their existing schemas and catalog digests.
 
 `custom` is the authoring name for explicit build phases. The serialized catalog
 continues to use `commands` for compatibility with existing pinned catalog
@@ -301,15 +318,16 @@ commit and use an exact snapshot version, retaining the original source checksum
 
 ### Library dependencies
 
-Declare static archives in `build.libraries`, for example
+Declare static or shared libraries in `build.libraries`, for example
 `libraries = { "lib/libssl.a", "lib/libcrypto.a" }`. Library-only packages use
 `bins = {}` and `checks = {}`; their build must still run the upstream test suite.
-Rootbeer validates declared archives before export and after offline reconstruction.
-Archives must be self-contained `.a` files under `lib/` or `lib64/`.
+Rootbeer validates declared libraries before export and after offline reconstruction.
+Use self-contained `.a` archives, `.dylib`, `.so`, or versioned `.so.*` files
+under `lib/` or `lib64/`.
 
 Add exact packages to `build.dependencies`. Rootbeer makes the complete transitive
 dependency set available during the build: commands on `PATH`, headers under
-`include/`, declared archives under `lib/` and `lib64/`, and package metadata from
+`include/`, declared libraries under `lib/` and `lib64/`, and package metadata from
 `lib/pkgconfig`, `lib64/pkgconfig`, and `share/pkgconfig`. Conflicting exports fail
 the build. Dependency store entries remain unchanged.
 
@@ -320,11 +338,38 @@ flags can use `{dependencies}`, such as `--with-openssl={dependencies}`.
 Metadata should use the installation prefix `/`; `pkg-config` applies the build
 sysroot to header and library flags.
 
-Static dependencies become part of the consuming binary. Shared-library runtime
-dependencies are not resolved by this mechanism. Recipes must select static
-dependencies explicitly and verify the installed program after relocation. The
-host C toolchain and operating-system libraries remain build inputs; this is not
-a complete compiler sysroot.
+Static dependencies become part of the consuming binary. Shared libraries need
+explicit `link_runtime` edges and loader-relative references to their installed
+store entries. Rootbeer does not rewrite binaries or set global loader variables.
+
+### Runtime layout
+
+Runtime packages occupy separate content-addressed store entries. The build
+placeholder `{runtime:name@version}` expands to the dependency's pinned directory
+name, such as `sha256-<hash>-name-version`. It is available for the runtime closure.
+For a binary in `bin/` or a library in `lib/`, a custom ELF linker argument can be:
+
+```lua
+"-Wl,-rpath,$ORIGIN/../../{runtime:example-library@1}/lib"
+```
+
+On macOS use `@loader_path` in place of `$ORIGIN`, and give shared libraries an
+`@rpath/libname.dylib` install name. These are literal command-array arguments;
+shell commands and Makefiles need their own dollar-sign escaping. Outputs in
+other subdirectories must adjust the number of parent components.
+
+Each package pins its direct runtime packages, including their transitive facts.
+Installation verifies and realizes the closure before the requested output,
+including on cache hits. Runtime commands are not automatically added to the
+user profile. Locks expose the full set of store paths for retention; a garbage
+collector has not been implemented yet.
+
+Build output includes `runtime/` archives alongside the root archive and receipt.
+Keep them together when moving builds. Generated installation files include the
+runtime closure, and bundling verifies and exports every runtime archive. Moving
+the whole store preserves relative library references. Host C toolchains and
+OS libraries still belong to the pinned build environment; this is not a complete
+compiler sysroot or an ABI compatibility check.
 
 ### Command build phases
 

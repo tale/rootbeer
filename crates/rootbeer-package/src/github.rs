@@ -97,6 +97,7 @@ impl GitHubResolver {
                 apps: Default::default(),
                 bins,
             },
+            runtime_dependencies: Default::default(),
             output_sha256: None,
         };
         let proof = ResolutionProof::GitRelease(GitReleaseProof {

@@ -83,7 +83,10 @@ pub fn audit(root: &Path) -> Result<AuditReport, String> {
     let mut binaries = Vec::new();
     visit(&root, &root, &mut binaries)?;
     binaries.sort_by(|a, b| (&a.path, a.architecture).cmp(&(&b.path, b.architecture)));
-    let violations = policy::check(&root, &binaries);
+    let violations = policy::check(
+        &std::collections::BTreeMap::from([(PathBuf::new(), root)]),
+        &binaries,
+    );
     Ok(AuditReport {
         schema: 1,
         binaries,
@@ -121,4 +124,74 @@ fn visit(root: &Path, directory: &Path, binaries: &mut Vec<Binary>) -> Result<()
         })?);
     }
     Ok(())
+}
+
+/// Audits a package and its declared runtime closure in the store's sibling layout.
+/// Keys are content-addressed store directory names; values are realized package roots.
+pub fn audit_with_runtime(
+    root: &Path,
+    runtime: &std::collections::BTreeMap<PathBuf, PathBuf>,
+) -> Result<AuditReport, String> {
+    if runtime.is_empty() {
+        return audit(root);
+    }
+    let mut roots = std::collections::BTreeMap::from([(
+        PathBuf::from("package"),
+        root.canonicalize().map_err(|e| e.to_string())?,
+    )]);
+    for (directory, path) in runtime {
+        rootbeer_package::realize::validate_relative_path("runtime store directory", directory)
+            .map_err(|e| e.to_string())?;
+        if directory.components().count() != 1 || directory == Path::new("package") {
+            return Err("runtime roots must use distinct sibling store directories".into());
+        }
+        roots.insert(
+            directory.clone(),
+            path.canonicalize().map_err(|e| e.to_string())?,
+        );
+    }
+    let mut binaries = Vec::new();
+    for (directory, path) in &roots {
+        let mut entries = Vec::new();
+        visit(path, path, &mut entries)?;
+        for binary in &mut entries {
+            binary.path = directory.join(&binary.path);
+        }
+        binaries.extend(entries);
+    }
+    binaries.sort_by(|a, b| (&a.path, a.architecture).cmp(&(&b.path, b.architecture)));
+    let violations = policy::check(&roots, &binaries);
+    Ok(AuditReport {
+        schema: 1,
+        binaries,
+        violations,
+    })
+}
+
+/// Verifies installed output hashes and audits the pinned sibling runtime entries.
+pub fn audit_installed(
+    root: &Path,
+    package: &rootbeer_package::LockedPackage,
+) -> Result<AuditReport, String> {
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let parent = root
+        .parent()
+        .ok_or("installed package has no store parent")?;
+    let mut runtime = std::collections::BTreeMap::new();
+    for dependency in rootbeer_package::runtime::closure(package)? {
+        let directory = rootbeer_package::runtime::store_directory(dependency)?;
+        let path = parent.join(&directory);
+        if rootbeer_store::hash_tree(&path).map_err(|e| e.to_string())?
+            != dependency.output_sha256.as_deref().unwrap()
+        {
+            return Err(format!("{}: runtime output hash mismatch", dependency.id()));
+        }
+        runtime.insert(directory, path);
+    }
+    if package.output_sha256.as_deref()
+        != Some(&rootbeer_store::hash_tree(&root).map_err(|e| e.to_string())?)
+    {
+        return Err("installed package output hash mismatch".into());
+    }
+    audit_with_runtime(&root, &runtime)
 }

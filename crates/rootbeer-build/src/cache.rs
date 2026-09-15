@@ -91,6 +91,8 @@ pub(crate) fn key(
             include_str!("backend/zig.rs"),
             include_str!("../../rootbeer-package/src/build_spec.rs"),
             include_str!("../../rootbeer-package/src/realize.rs"),
+            include_str!("../../rootbeer-package/src/runtime.rs"),
+            include_str!("../../rootbeer-package/src/spec.rs"),
             include_str!("../../rootbeer-package/src/graph.rs"),
             include_str!("../../rootbeer-store/src/lib.rs"),
             include_str!("../../../Cargo.lock")
@@ -190,6 +192,7 @@ mod tests {
                 },
                 install: LockedInstall::Directory { strip_prefix: None },
                 provides: Provides::default(),
+                runtime_dependencies: Default::default(),
                 output_sha256: Some("b".repeat(64)),
             },
         )]);

@@ -27,20 +27,28 @@ closure selection share the same dependency model.
 
 Dependency edges distinguish build tools from link libraries. A library’s build
 tools stay out of its consumers’ environments; link dependencies propagate
-headers and static libraries. Existing string dependencies retain their combined
-transitive exports.
+headers and libraries. Explicit runtime edges pin the installed dependency closure;
+`link_runtime` contributes both link inputs and runtime installation. Existing
+string dependencies retain their combined transitive exports.
 
 Release discovery currently handles GitHub binary assets; source builds still
 require explicit versions and source hashes.
 
 Source output qualification statically audits ELF and Mach-O loader references.
 Bundled libraries resolve through package-relative search paths, while external
-runtime references fail unless covered by the OS-runtime baseline. The audit
-runs before package checks, on cache hits, and when bundling source receipts.
+runtime references must resolve within the declared closure or the OS-runtime
+baseline. The audit runs before package checks, on cache hits, and when bundling
+source receipts.
 
-The current executor builds for its own host. Runtime dependency closures,
-isolated pinned toolchains, cross-compilation, and a resource-aware graph
-scheduler are follow-up work. Build environment locks pin declared executable
+Runtime dependencies live in separate content-addressed store entries. Receipts
+and package locks carry exact recursive runtime facts; realization verifies the
+whole closure even when the requested output is cached. Loader-relative sibling
+references survive store relocation. Lockfiles expose all retained store paths
+for future garbage collection. The build audit checks declared sibling entries
+without consulting the host's library search paths.
+
+The current executor builds for its own host. Cross-compilation and a resource-aware
+graph scheduler are follow-up work. Build environment locks pin declared executable
 bytes, SDK/toolchain trees, and variables, and verification precedes cache
 lookup. Pinned builds use a declared tool path. They still require a host image
 identity for OS runtime inputs. Optional isolation uses macOS Seatbelt or Linux

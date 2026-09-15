@@ -155,7 +155,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
         } else {
             output.join(format!("dependency-{key}"))
         };
-        let locked = if recipe.build.is_some() {
+        let locked = if let Some(build) = &recipe.build {
             if !is_root {
                 fs::create_dir(&destination).map_err(|e| e.to_string())?;
             }
@@ -211,6 +211,8 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
             let mut artifact = match restored {
                 Some(mut artifact) => {
                     artifact.catalog_sha256 = plan.catalog_sha256.clone();
+                    artifact.package.runtime_dependencies =
+                        runtime_dependencies(build, &dependencies);
                     artifact.dependencies = dependencies;
                     artifact
                 }
@@ -229,6 +231,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
             artifact.resolver_inputs = plan.inputs.clone();
             artifact.build_key = cache_entry.as_ref().map(|entry| entry.key().to_string());
             artifact.build_environment = cache.map(|cache| cache.context.clone());
+            pack_runtime(&mut artifact.package, &dependency_roots, &destination)?;
             let locked = artifact.package.clone();
             built = Some(artifact);
             locked
@@ -237,18 +240,24 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
         };
         let realized = realizer.realize(&locked).map_err(|e| e.to_string())?;
         if let Some(artifact) = built.as_mut() {
-            artifact.runtime_audit_sha256 =
-                Some(audit_output(&realized.store_entry.path, &destination)?);
+            artifact.runtime_audit_sha256 = Some(audit_output(
+                &realized.store_entry.path,
+                &destination,
+                &runtime_roots(&artifact.package.runtime_dependencies, &dependency_roots)?,
+            )?);
         }
         let check_workspace = tempfile::tempdir_in(&output).map_err(|error| error.to_string())?;
         let check_environment =
             environment.variables(&host_tools, &host_tools, check_workspace.path());
+        let runtime_paths = runtime_roots(&locked.runtime_dependencies, &dependency_roots)?;
         let check_sandbox = opts
             .is_isolated
             .then(|| {
                 Sandbox::new(
                     &environment.lock,
-                    [host_tools.clone(), realized.store_entry.path.clone()],
+                    std::iter::once(host_tools.clone())
+                        .chain(std::iter::once(realized.store_entry.path.clone()))
+                        .chain(runtime_paths.values().cloned()),
                     check_workspace.path(),
                 )
             })
@@ -398,6 +407,17 @@ fn compile(
         )?;
     }
     fs::create_dir_all(workspace_path.join("zig-global-cache/tmp")).map_err(|e| e.to_string())?;
+    let runtime_dependencies = runtime_dependencies(build, &dependencies);
+    let runtime = plan.graph.nodes[key]
+        .runtime_closure
+        .iter()
+        .map(|key| {
+            Ok((
+                key.clone(),
+                rootbeer_package::runtime::store_directory(&dependencies[key])?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
     let phases = backend::plan(
         build,
         &backend::Context {
@@ -406,19 +426,26 @@ fn compile(
             tools,
             workspace: &workspace_path,
             jobs: opts.jobs,
+            runtime: &runtime,
         },
     )?;
     for phase in phases {
         for command in phase.commands {
-            run_with_sandbox(
+            if let Err(error) = run_with_sandbox(
                 &command,
                 &source,
                 &environment,
                 &log,
                 opts.phase_timeout,
                 sandbox.as_ref(),
-            )
-            .map_err(|error| format!("{}: {error}", phase.name))?;
+            ) {
+                let retained = workspace.keep();
+                return Err(format!(
+                    "{}: {error}; build workspace retained at {}",
+                    phase.name,
+                    retained.display()
+                ));
+            }
         }
     }
     let bins: BTreeMap<String, PathBuf> = recipe
@@ -436,11 +463,19 @@ fn compile(
         }
     }
     dependencies::validate(&prefix, &build.libraries)?;
-    let runtime_audit = audit_output(&prefix, output)?;
+    let runtime_audit = audit_output(
+        &prefix,
+        output,
+        &runtime_roots(&runtime_dependencies, dependency_roots)?,
+    )?;
     let artifact_path = output.join("package.tar.gz");
     pack(&prefix, &artifact_path).map_err(|e| e.to_string())?;
     let artifact = BuildArtifact {
-        schema: 1,
+        schema: if runtime_dependencies.is_empty() {
+            1
+        } else {
+            2
+        },
         build_key: None,
         build_environment: None,
         environment: None,
@@ -468,26 +503,116 @@ fn compile(
                 apps: recipe.apps.clone(),
                 bins: bins.clone(),
             },
+            runtime_dependencies,
             output_sha256: Some(hash_tree(&prefix).map_err(|e| e.to_string())?),
         },
     };
     Ok(artifact)
 }
 
-fn audit_output(root: &Path, output: &Path) -> Result<String, String> {
-    let report = audit::audit(root)?;
+fn pack_runtime(
+    package: &mut LockedPackage,
+    roots: &BTreeMap<String, PathBuf>,
+    output: &Path,
+) -> Result<(), String> {
+    for dependency in package.runtime_dependencies.values_mut() {
+        pack_runtime(dependency, roots, output)?;
+        let root = roots
+            .get(&dependency.id())
+            .ok_or("missing runtime output")?;
+        let directory = output.join("runtime");
+        fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        let archive = directory.join(format!(
+            "{}.tar.gz",
+            rootbeer_package::runtime::store_directory(dependency)?.display()
+        ));
+        pack(root, &archive).map_err(|e| e.to_string())?;
+        dependency.source = LockedSource::File {
+            sha256: hash_file(&archive).map_err(|e| e.to_string())?,
+            path: archive,
+        };
+        dependency.install = LockedInstall::Archive {
+            format: ArchiveFormat::TarGz,
+            strip_prefix: None,
+        };
+    }
+    Ok(())
+}
+
+fn runtime_dependencies(
+    build: &SourceBuild,
+    dependencies: &BTreeMap<String, LockedPackage>,
+) -> BTreeMap<String, LockedPackage> {
+    build
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.kind().is_runtime())
+        .map(|dependency| {
+            (
+                dependency.package().to_owned(),
+                dependencies[dependency.package()].clone(),
+            )
+        })
+        .collect()
+}
+
+fn runtime_roots(
+    dependencies: &BTreeMap<String, LockedPackage>,
+    roots: &BTreeMap<String, PathBuf>,
+) -> Result<BTreeMap<PathBuf, PathBuf>, String> {
+    let mut result = BTreeMap::new();
+    for dependency in dependencies.values() {
+        for package in rootbeer_package::runtime::closure(dependency)?
+            .into_iter()
+            .chain(std::iter::once(dependency))
+        {
+            let root = roots
+                .get(&package.id())
+                .ok_or_else(|| format!("{}: runtime root is missing", package.id()))?;
+            result.insert(
+                rootbeer_package::runtime::store_directory(package)?,
+                root.clone(),
+            );
+        }
+    }
+    Ok(result)
+}
+
+fn audit_output(
+    root: &Path,
+    output: &Path,
+    runtime: &BTreeMap<PathBuf, PathBuf>,
+) -> Result<String, String> {
+    let report = audit::audit_with_runtime(root, runtime)?;
     let bytes = serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?;
     fs::write(output.join("runtime-audit.json"), &bytes).map_err(|error| error.to_string())?;
     report.validate()?;
     Ok(rootbeer_store::hash_bytes(&bytes))
 }
 
-fn write_install_files(artifact: &BuildArtifact, output: &Path) -> Result<(), String> {
-    let LockedSource::File { sha256, .. } = &artifact.package.source else {
-        unreachable!()
+fn install_spec(package: &LockedPackage, output: &Path) -> Result<serde_json::Value, String> {
+    let LockedSource::File { path, sha256 } = &package.source else {
+        return Err("build install files require local archives".into());
     };
-    let spec = serde_json::json!({"name": artifact.package.name, "version": artifact.package.version,
-        "source": {"file": "package.tar.gz", "sha256": sha256}, "install": {"archive": "tar.gz"}, "bins": artifact.package.provides.bins});
+    let runtime = package
+        .runtime_dependencies
+        .iter()
+        .map(|(key, package)| Ok((key.clone(), install_spec(package, output)?)))
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
+    let mut spec = serde_json::json!({"name": package.name, "version": package.version,
+        "source": {"file": path.strip_prefix(output).map_err(|e| e.to_string())?, "sha256": sha256},
+        "install": {"archive": "tar.gz"}, "bins": package.provides.bins, "output_sha256": package.output_sha256});
+    if !package.provides.apps.is_empty() {
+        spec["apps"] = serde_json::to_value(&package.provides.apps).map_err(|e| e.to_string())?;
+    }
+    if !runtime.is_empty() {
+        spec["runtime_dependencies"] = serde_json::to_value(runtime).map_err(|e| e.to_string())?;
+    }
+    Ok(spec)
+}
+
+fn write_install_files(artifact: &BuildArtifact, output: &Path) -> Result<(), String> {
+    let spec = install_spec(&artifact.package, output)?;
     fs::write(
         output.join("package.json"),
         serde_json::to_vec_pretty(&spec).map_err(|e| e.to_string())?,
@@ -503,3 +628,6 @@ fn write_install_files(artifact: &BuildArtifact, output: &Path) -> Result<(), St
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod runtime_test;

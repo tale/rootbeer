@@ -93,6 +93,7 @@ pub struct DependencyGraph {
 pub struct DependencyNode {
     pub dependencies: Vec<BuildDependency>,
     pub closure: Vec<String>,
+    pub runtime_closure: Vec<String>,
     pub exports: BTreeMap<String, DependencyExports>,
 }
 
@@ -111,20 +112,23 @@ fn exports(
     visible: &mut BTreeMap<String, DependencyExports>,
     visited: &mut BTreeSet<(String, DependencyKind)>,
 ) {
-    if !visited.insert((package.into(), kind)) {
+    if kind == DependencyKind::Runtime || !visited.insert((package.into(), kind)) {
         return;
     }
     let entry = visible.entry(package.into()).or_default();
-    entry.has_bins |= kind != DependencyKind::Link;
+    entry.has_bins |= matches!(kind, DependencyKind::All | DependencyKind::Build);
     entry.has_libraries |= kind != DependencyKind::Build;
     if kind == DependencyKind::Build {
         return;
     }
     for dependency in &nodes[package].dependencies {
-        if kind == DependencyKind::Link && dependency.kind() == DependencyKind::Build {
+        if dependency.kind() == DependencyKind::Runtime
+            || (matches!(kind, DependencyKind::Link | DependencyKind::LinkRuntime)
+                && dependency.kind() == DependencyKind::Build)
+        {
             continue;
         }
-        let kind = if kind == DependencyKind::Link {
+        let kind = if matches!(kind, DependencyKind::Link | DependencyKind::LinkRuntime) {
             DependencyKind::Link
         } else {
             dependency.kind()
@@ -178,10 +182,15 @@ impl DependencyGraph {
                 .map(|build| build.dependencies.clone())
                 .unwrap_or_default();
             let mut closure = BTreeSet::new();
+            let mut runtime_closure = BTreeSet::new();
             let mut visible = BTreeMap::new();
             let mut visited = BTreeSet::new();
             for dependency in &dependencies {
                 let package = dependency.package();
+                if dependency.kind().is_runtime() {
+                    runtime_closure.insert(package.to_string());
+                    runtime_closure.extend(nodes[package].runtime_closure.iter().cloned());
+                }
                 closure.insert(package.to_string());
                 closure.extend(nodes[package].closure.iter().cloned());
                 exports(
@@ -206,6 +215,11 @@ impl DependencyGraph {
                 key.clone(),
                 DependencyNode {
                     dependencies,
+                    runtime_closure: order
+                        .iter()
+                        .filter(|key| runtime_closure.contains(*key))
+                        .cloned()
+                        .collect(),
                     exports: visible,
                     closure: order
                         .iter()
@@ -226,6 +240,68 @@ impl DependencyGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_edges_are_separate_from_build_and_link_exports() {
+        let template = PackageCatalog::embedded().unwrap().packages["xz"].clone();
+        let mut catalog = PackageCatalog {
+            schema: 1,
+            packages: BTreeMap::new(),
+        };
+        for (name, edges) in [
+            ("data", vec![]),
+            ("base", vec![]),
+            ("tool", vec![("data", DependencyKind::Runtime)]),
+            ("static", vec![]),
+            ("shared", vec![("base", DependencyKind::LinkRuntime)]),
+            (
+                "root",
+                vec![
+                    ("tool", DependencyKind::Build),
+                    ("static", DependencyKind::Link),
+                    ("shared", DependencyKind::LinkRuntime),
+                    ("data", DependencyKind::Runtime),
+                ],
+            ),
+        ] {
+            let mut package = template.clone();
+            package.name = name.into();
+            package.aliases.clear();
+            package.default_version = "1".into();
+            package.default_versions.clear();
+            let mut recipe = package.versions.values().next().unwrap().clone();
+            recipe.build.as_mut().unwrap().dependencies = edges
+                .into_iter()
+                .map(|(name, kind)| BuildDependency::Scoped {
+                    package: format!("{name}@1"),
+                    kind,
+                })
+                .collect();
+            package.versions = BTreeMap::from([("1".into(), recipe)]);
+            catalog.packages.insert(name.into(), package);
+        }
+        let graph = DependencyGraph::new(
+            &catalog,
+            &["root".into()],
+            &ResolveContext::current().system,
+        )
+        .unwrap();
+        let root = &graph.nodes["root@1"];
+        assert_eq!(
+            root.runtime_closure
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["base@1".into(), "shared@1".into(), "data@1".into()])
+        );
+        assert!(!root.exports.contains_key("data@1"));
+        assert!(root.exports["tool@1"].has_bins);
+        assert!(!root.exports["tool@1"].has_libraries);
+        for name in ["static@1", "shared@1", "base@1"] {
+            assert!(root.exports[name].has_libraries);
+            assert!(!root.exports[name].has_bins);
+        }
+    }
 
     #[test]
     fn diamond_dependencies_share_nodes_and_keep_direct_edges() {

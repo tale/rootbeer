@@ -276,6 +276,7 @@ mod tests {
                 strip_prefix: Some(PathBuf::from("demo")),
             },
             provides: Provides::default(),
+            runtime_dependencies: Default::default(),
             output_sha256: None,
         }
     }

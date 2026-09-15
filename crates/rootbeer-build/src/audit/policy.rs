@@ -1,10 +1,10 @@
 use super::{Binary, Format, Violation};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
-pub(super) fn check(root: &Path, binaries: &[Binary]) -> Vec<Violation> {
+pub(super) fn check(roots: &BTreeMap<PathBuf, PathBuf>, binaries: &[Binary]) -> Vec<Violation> {
     let mut audit = Checker {
-        root,
+        roots,
         binaries,
         violations: Vec::new(),
         reached: BTreeSet::new(),
@@ -35,7 +35,7 @@ pub(super) fn check(root: &Path, binaries: &[Binary]) -> Vec<Violation> {
 }
 
 struct Checker<'a> {
-    root: &'a Path,
+    roots: &'a BTreeMap<PathBuf, PathBuf>,
     binaries: &'a [Binary],
     violations: Vec<Violation>,
     reached: BTreeSet<(&'a PathBuf, u32)>,
@@ -49,6 +49,18 @@ impl<'a> Checker<'a> {
             reference: reference.into(),
             reason: reason.into(),
         });
+    }
+
+    fn resolve(&self, candidate: &Path) -> Option<PathBuf> {
+        for (directory, root) in self.roots {
+            let Ok(relative) = candidate.strip_prefix(directory) else {
+                continue;
+            };
+            let path = root.join(relative).canonicalize().ok()?;
+            let relative = path.strip_prefix(root).ok()?;
+            return Some(directory.join(relative));
+        }
+        None
     }
 
     fn visit(
@@ -155,10 +167,7 @@ impl<'a> Checker<'a> {
                 let Ok(candidate) = normalize(&candidate) else {
                     continue;
                 };
-                let Ok(path) = self.root.join(candidate).canonicalize() else {
-                    continue;
-                };
-                let Ok(relative) = path.strip_prefix(self.root) else {
+                let Some(relative) = self.resolve(&candidate) else {
                     continue;
                 };
                 target = self.binaries.iter().find(|other| {

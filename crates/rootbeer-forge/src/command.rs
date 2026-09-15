@@ -138,7 +138,12 @@ enum Command {
     /// Hash a build environment specification and write its lock to stdout
     PinEnvironment { specification: PathBuf },
     /// Audit native loader references in an installed package directory
-    Audit { directory: PathBuf },
+    Audit {
+        directory: PathBuf,
+        /// Build receipt declaring the installed package's runtime closure
+        #[arg(long)]
+        receipt: Option<PathBuf>,
+    },
     /// Inspect the dependency graph without executing builds
     Plan { name: String },
     /// Compile a trusted source recipe into an installable local artifact
@@ -434,8 +439,15 @@ fn execute(args: Args) -> Result<(), String> {
             )
             .map_err(|error| error.to_string())?;
         }
-        Command::Audit { directory } => {
-            let report = rootbeer_packaging::audit::audit(&directory)?;
+        Command::Audit { directory, receipt } => {
+            let report = if let Some(receipt) = receipt {
+                let artifact: rootbeer_packaging::BuildArtifact =
+                    serde_json::from_slice(&std::fs::read(receipt).map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?;
+                rootbeer_packaging::audit::audit_installed(&directory, &artifact.package)?
+            } else {
+                rootbeer_packaging::audit::audit(&directory)?
+            };
             writeln!(
                 output,
                 "{}",

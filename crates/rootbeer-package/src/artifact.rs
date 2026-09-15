@@ -46,6 +46,7 @@ pub(crate) fn fixture() -> ArtifactIndex {
                 .collect(),
             apps: Default::default(),
         },
+        runtime_dependencies: Default::default(),
         output_sha256: Some("b".repeat(64)),
     };
     ArtifactIndex {

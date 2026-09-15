@@ -301,3 +301,30 @@ fn profile_path_helpers_work_before_any_package_is_declared() {
         .is_none());
     assert!(super::super::test_support::drain(vm).is_empty());
 }
+
+#[test]
+fn package_specs_preserve_pinned_runtime_dependencies() {
+    let ops = run(r#"
+        rb.package({ name = "demo", version = "1", source = { file = "package.tar.gz", sha256 = "source" },
+            install = { archive = "tar.gz" }, bins = { demo = "bin/demo" },
+            runtime_dependencies = { ["library@1"] = {
+                name = "library", version = "1", source = { file = "runtime/library.tar.gz", sha256 = "source" },
+                install = { archive = "tar.gz" }, bins = {}, output_sha256 = string.rep("a", 64),
+            } },
+        })
+    "#);
+    let [Op::Package {
+        intent: PackageIntent::Locked(package),
+    }] = ops.as_slice()
+    else {
+        panic!("expected locked package")
+    };
+    let dependency = &package.runtime_dependencies["library@1"];
+    assert_eq!(
+        dependency.output_sha256.as_deref(),
+        Some("a".repeat(64).as_str())
+    );
+    assert!(
+        matches!(&dependency.source, LockedSource::File { path, .. } if path.is_absolute() && path.ends_with("runtime/library.tar.gz"))
+    );
+}

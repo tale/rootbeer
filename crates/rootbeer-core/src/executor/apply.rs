@@ -637,6 +637,7 @@ mod tests {
                 apps: BTreeMap::new(),
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
+            runtime_dependencies: Default::default(),
             output_sha256: None,
         }
     }

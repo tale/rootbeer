@@ -94,6 +94,18 @@ impl ArtifactIndex {
         if catalog.packages.values().any(|package| {
             package.versions.values().any(|recipe| {
                 recipe.build.as_ref().is_some_and(|build| {
+                    build
+                        .dependencies
+                        .iter()
+                        .any(|dependency| dependency.kind().is_runtime())
+                })
+            })
+        }) {
+            return 6;
+        }
+        if catalog.packages.values().any(|package| {
+            package.versions.values().any(|recipe| {
+                recipe.build.as_ref().is_some_and(|build| {
                     build.dependencies.iter().any(|dependency| {
                         matches!(dependency, super::BuildDependency::Scoped { .. })
                     })
@@ -126,8 +138,11 @@ impl ArtifactIndex {
 
     pub fn validate_fragment(&self) -> Result<(), String> {
         self.catalog.validate()?;
-        if !matches!(self.schema, 1..=5) || self.catalog_sha256 != self.catalog.sha256() {
+        if !matches!(self.schema, 1..=6) || self.catalog_sha256 != self.catalog.sha256() {
             return Err("invalid artifact index schema or catalog digest".into());
+        }
+        if self.schema < 6 && Self::schema_for(&self.catalog) == 6 {
+            return Err("runtime dependencies require artifact index schema 6".into());
         }
         if self.schema < 5 && Self::schema_for(&self.catalog) == 5 {
             return Err("scoped build dependencies require artifact index schema 5".into());
@@ -177,6 +192,19 @@ impl ArtifactIndex {
             }
             for (system, artifact) in systems {
                 artifact.validate(key, system, recipe)?;
+                for dependency in super::runtime::closure(&artifact.package)? {
+                    if self.schema < 6 {
+                        return Err("runtime dependencies require artifact index schema 6".into());
+                    }
+                    let (_, _, recipe) =
+                        super::graph::find_recipe(&self.catalog, &dependency.id())?;
+                    super::PublishedArtifact {
+                        revision: recipe.revision,
+                        receipt_sha256: artifact.receipt_sha256.clone(),
+                        package: dependency.clone(),
+                    }
+                    .validate(&dependency.id(), system, recipe)?;
+                }
             }
         }
         Ok(())
@@ -191,6 +219,22 @@ impl super::PublishedArtifact {
         recipe: &super::CatalogRecipe,
     ) -> Result<(), String> {
         let package = &self.package;
+        let runtime: std::collections::BTreeSet<_> = recipe
+            .build
+            .iter()
+            .flat_map(|build| &build.dependencies)
+            .filter(|dependency| dependency.kind().is_runtime())
+            .map(|dependency| dependency.package())
+            .collect();
+        if runtime
+            != package
+                .runtime_dependencies
+                .keys()
+                .map(String::as_str)
+                .collect()
+        {
+            return Err(format!("{key}: runtime dependencies differ from recipe"));
+        }
         if package.id() != key
             || self.revision != recipe.revision
             || !recipe.systems.iter().any(|target| target == system)
@@ -693,7 +737,7 @@ mod tests {
             index.validate_fragment().unwrap();
         }
 
-        for schema in [0, 6] {
+        for schema in [0, 7] {
             index.schema = schema;
             assert!(index.validate().unwrap_err().contains("schema"));
         }

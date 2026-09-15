@@ -793,3 +793,48 @@ fn isolated_builds_and_cache_hits_use_distinct_policy_keys() {
         "isolated"
     );
 }
+
+#[test]
+fn failed_configure_retains_diagnostics_without_publishing_a_result() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source");
+    fs::create_dir_all(source.join("project")).unwrap();
+    let archive = directory.path().join("source.tar.gz");
+    pack(&source, &archive).unwrap();
+    let downloads = directory.path().join("downloads");
+    let cached = DownloadCache::new(&downloads)
+        .materialize(&format!("file://{}", archive.display()), None)
+        .unwrap();
+    let mut catalog = source_catalog();
+    catalog.packages.get_mut("xz").unwrap().versions.get_mut("5.8.3").unwrap().build = Some(serde_json::from_value(serde_json::json!({
+        "backend": "custom", "url": "https://source.invalid/diagnostics.tar.gz", "sha256": cached.sha256,
+        "archive": "tar.gz", "strip_prefix": "project", "steps": {
+            "configure": [["sh", "-c", "printf compiler-diagnostics > config.log; exit 7"]],
+            "build": [["sh", "-c", "exit 0"]], "check": [["sh", "-c", "exit 0"]], "install": [["sh", "-c", "exit 0"]]
+        }
+    })).unwrap());
+    let output = directory.path().join("output");
+    let cache = directory.path().join("cache");
+    let error = build_package(
+        &catalog,
+        "xz",
+        &output,
+        &BuildOptions {
+            downloads,
+            cache: Some(BuildCache {
+                directory: cache.clone(),
+                context: "retained-diagnostics-test".into(),
+                recheck: false,
+            }),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    let retained = Path::new(error.split("build workspace retained at ").nth(1).unwrap());
+    assert_eq!(
+        fs::read_to_string(retained.join("project/config.log")).unwrap(),
+        "compiler-diagnostics"
+    );
+    assert!(!output.join("receipt.json").exists());
+    assert!(!cache.join("results").exists());
+}

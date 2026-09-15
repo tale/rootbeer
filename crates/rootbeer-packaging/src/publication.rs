@@ -65,14 +65,18 @@ pub(super) fn copy_verified(source: &Path, destination: &Path, suffix: &str) -> 
 fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), String> {
     for systems in index.artifacts.values() {
         for (system, artifact) in systems {
+            let packages = rootbeer_package::runtime::closure(&artifact.package)?;
             for (digest, folder, suffix) in
                 std::iter::once((artifact.receipt_sha256.as_str(), "receipts", ".json")).chain(
-                    match &artifact.package.source {
-                        LockedSource::Url { url, sha256 } if url.starts_with("ghcr://") => {
-                            Some((sha256.as_str(), "artifacts", ".tar.gz"))
-                        }
-                        _ => None,
-                    },
+                    packages
+                        .into_iter()
+                        .chain(std::iter::once(&artifact.package))
+                        .filter_map(|package| match &package.source {
+                            LockedSource::Url { url, sha256 } if url.starts_with("ghcr://") => {
+                                Some((sha256.as_str(), "artifacts", ".tar.gz"))
+                            }
+                            _ => None,
+                        }),
                 )
             {
                 let file = bundle.join(folder).join(format!("{digest}{suffix}"));
@@ -277,17 +281,22 @@ pub fn publish_index(opts: &PublishOptions<'_>) -> Result<(), String> {
     let mut blobs = BTreeSet::new();
     for systems in index.artifacts.values() {
         for artifact in systems.values() {
-            let LockedSource::Url { url, .. } = &artifact.package.source else {
-                unreachable!()
-            };
-            if !url.starts_with("ghcr://") {
-                continue;
+            for package in rootbeer_package::runtime::closure(&artifact.package)?
+                .into_iter()
+                .chain(std::iter::once(&artifact.package))
+            {
+                let LockedSource::Url { url, .. } = &package.source else {
+                    unreachable!()
+                };
+                if !url.starts_with("ghcr://") {
+                    continue;
+                }
+                let blob = rootbeer_package::ghcr::GhcrBlob::parse(url)?;
+                if !blob.repository.starts_with(&format!("{}/", opts.registry)) {
+                    return Err("artifact is outside the publication namespace".into());
+                }
+                blobs.insert((blob.repository, blob.sha256));
             }
-            let blob = rootbeer_package::ghcr::GhcrBlob::parse(url)?;
-            if !blob.repository.starts_with(&format!("{}/", opts.registry)) {
-                return Err("artifact is outside the publication namespace".into());
-            }
-            blobs.insert((blob.repository, blob.sha256));
         }
     }
     for (repository, digest) in blobs {

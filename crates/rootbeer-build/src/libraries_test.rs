@@ -166,6 +166,17 @@ fn library_exports_reject_collisions_escapes_and_thin_archives() {
     assert!(dependencies::validate(&package, &libraries).is_err());
     fs::write(&archive, "!<arch>\n").unwrap();
     dependencies::stage(&package, &libraries, &root.join("merged")).unwrap();
+    symlink(&package, root.join("package-alias")).unwrap();
+    dependencies::stage(
+        &root.join("package-alias"),
+        &libraries,
+        &root.join("alias-exports"),
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_link(root.join("alias-exports/lib/libtest.a")).unwrap(),
+        archive
+    );
     let other = root.join("other");
     fs::create_dir_all(other.join("lib")).unwrap();
     fs::write(other.join("lib/libtest.a"), "!<arch>\n").unwrap();
@@ -230,7 +241,7 @@ fn compact_library_recipes_require_checks_and_new_index_schema() {
         source.replace("check = {{ \"make\", \"test\" }}", "check = {}"),
         source.replace("backend = \"commands\"", "backend = \"autotools\""),
         source.replace("lib/libtest.a", "../libtest.a"),
-        source.replace("lib/libtest.a", "lib/libtest.so"),
+        source.replace("lib/libtest.a", "lib/libtest.txt"),
         source.replace("libraries = { \"lib/libtest.a\" }", "libraries = {}"),
     ] {
         assert!(load(&invalid).is_err());

@@ -133,6 +133,7 @@ impl Environment {
             ("LC_ALL", "C".into()),
             ("TZ", "UTC".into()),
             ("SOURCE_DATE_EPOCH", "1".into()),
+            ("ZERO_AR_DATE", "1".into()),
             (
                 "CONFIG_SHELL",
                 self.lock.tools["sh"].path.to_string_lossy().into_owned(),
@@ -193,6 +194,7 @@ fn reserved(name: &str) -> bool {
             | "LC_ALL"
             | "TZ"
             | "SOURCE_DATE_EPOCH"
+            | "ZERO_AR_DATE"
             | "CONFIG_SHELL"
             | "CC"
             | "CXX"
@@ -388,5 +390,44 @@ mod tests {
         spec.inputs.clear();
         spec.variables.insert("PATH".into(), "/usr/bin".into());
         assert!(spec.pin().unwrap_err().contains("cannot set"));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod archive_tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn apple_archives_ignore_member_timestamps_in_build_environments() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        fs::write(root.join("member.c"), "int member(void) { return 42; }\n").unwrap();
+        let environment = Environment::resolve(None).unwrap();
+        let variables = environment.variables(root, root, root);
+        let run = |args: &[&str]| {
+            crate::run(
+                &args.iter().map(|arg| (*arg).into()).collect::<Vec<_>>(),
+                root,
+                &variables,
+                &root.join("archive.log"),
+                Duration::from_secs(30),
+            )
+            .unwrap();
+        };
+        run(&["/usr/bin/cc", "-c", "member.c", "-o", "member.o"]);
+        let object = fs::File::open(root.join("member.o")).unwrap();
+        object
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(3600))
+            .unwrap();
+        run(&["/usr/bin/ar", "crs", "first.a", "member.o"]);
+        object
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(7200))
+            .unwrap();
+        run(&["/usr/bin/ar", "crs", "second.a", "member.o"]);
+        assert_eq!(
+            fs::read(root.join("first.a")).unwrap(),
+            fs::read(root.join("second.a")).unwrap()
+        );
     }
 }

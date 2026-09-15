@@ -490,6 +490,7 @@ mod tests {
                         apps: Default::default(),
                         bins: BTreeMap::from([("rg".into(), "rg".into())]),
                     },
+                    runtime_dependencies: Default::default(),
                     output_sha256: None,
                 },
                 ResolutionProof::GitRelease(GitReleaseProof {

@@ -491,13 +491,25 @@ fn export_recipe(
             check_workspace.path().to_string_lossy().into_owned(),
         ),
     ]);
+    let mut runtime_roots = Vec::new();
+    for dependency in rootbeer_package::runtime::closure(&artifact.package)? {
+        runtime_roots.push(
+            realizer
+                .realize(dependency)
+                .map_err(|e| e.to_string())?
+                .store_entry
+                .path,
+        );
+    }
     let sandbox = if build_options.is_isolated {
         Some(rootbeer_build::Sandbox::new(
             build_options
                 .environment
                 .as_ref()
                 .ok_or("missing build environment")?,
-            [profile.clone(), realized.store_entry.path.clone()],
+            [profile.clone(), realized.store_entry.path.clone()]
+                .into_iter()
+                .chain(runtime_roots),
             check_workspace.path(),
         )?)
     } else {
@@ -802,6 +814,7 @@ MAKE
                 apps: Default::default(),
                 bins: BTreeMap::from([("app".into(), command.into())]),
             },
+            runtime_dependencies: Default::default(),
             output_sha256: None,
         };
         if cfg!(target_os = "macos") {

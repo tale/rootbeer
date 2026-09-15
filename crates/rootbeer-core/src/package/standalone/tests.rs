@@ -28,6 +28,7 @@ fn package(root: &Path, name: &str, version: &str, bin: &str) -> RealizedPackage
             apps: BTreeMap::new(),
             bins: BTreeMap::from([(bin.into(), PathBuf::from(bin))]),
         },
+        runtime_dependencies: Default::default(),
         output_sha256: None,
     };
     let mut realized = realizer(root).realize(&package).unwrap();
@@ -246,6 +247,7 @@ fn persistent_apps_update_remove_and_protect_unowned_paths() {
                 bins: BTreeMap::new(),
                 apps: BTreeMap::from([("Example.app".into(), "Example.app".into())]),
             },
+            runtime_dependencies: Default::default(),
             output_sha256: None,
         };
         realizer.realize(&package).unwrap()
@@ -287,4 +289,28 @@ fn persistent_apps_update_remove_and_protect_unowned_paths() {
         .unwrap()
         .packages
         .is_empty());
+}
+
+#[test]
+fn generations_retain_runtime_closures_without_exporting_their_commands() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let dependency = package(root, "library", "1", "internal-tool");
+    let mut consumer = package(root, "consumer", "1", "consumer");
+    consumer
+        .package
+        .runtime_dependencies
+        .insert(dependency.package.id(), dependency.package.clone());
+    let generation = write_environment(root, &[consumer]).unwrap();
+    let lock = RootbeerLock::read(generation.join("packages.json")).unwrap();
+    assert_eq!(lock.schema, 3);
+    assert_eq!(lock.packages.len(), 1);
+    assert_eq!(
+        lock.store_paths(&Store::new(root.join("store")))
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(!generation.join("bin/internal-tool").exists());
+    assert!(generation.join("bin/consumer").exists());
 }

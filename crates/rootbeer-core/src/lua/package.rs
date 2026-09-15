@@ -340,9 +340,27 @@ fn relative_path(path: &str) -> LuaResult<PathBuf> {
 }
 
 fn parse_package(cx: &Ctx<'_>, spec: Table) -> LuaResult<LockedPackage> {
+    parse_package_at_depth(cx, spec, 0)
+}
+
+fn parse_package_at_depth(cx: &Ctx<'_>, spec: Table, depth: usize) -> LuaResult<LockedPackage> {
+    if depth >= 64 {
+        return Err(LuaError::RuntimeError(
+            "runtime dependency depth exceeds 64".into(),
+        ));
+    }
     fields(
         &spec,
-        &["name", "version", "source", "install", "bins", "apps"],
+        &[
+            "name",
+            "version",
+            "source",
+            "install",
+            "bins",
+            "apps",
+            "runtime_dependencies",
+            "output_sha256",
+        ],
     )?;
     let name: String = required(&spec, "name")?;
     validate_command(&name)?;
@@ -368,14 +386,33 @@ fn parse_package(cx: &Ctx<'_>, spec: Table) -> LuaResult<LockedPackage> {
         }
     }
 
-    Ok(LockedPackage {
+    let mut runtime_dependencies = BTreeMap::new();
+    if let Some(runtime) = optional::<Table>(&spec, "runtime_dependencies")? {
+        for pair in runtime.pairs::<String, Table>() {
+            let (key, spec) = pair?;
+            runtime_dependencies.insert(key, parse_package_at_depth(cx, spec, depth + 1)?);
+        }
+    }
+    let output_sha256: Option<String> = optional(&spec, "output_sha256")?;
+    if output_sha256
+        .as_deref()
+        .is_some_and(|hash| !rootbeer_package::index::is_sha256(hash))
+    {
+        return Err(LuaError::RuntimeError(
+            "output_sha256 must be a lowercase SHA-256".into(),
+        ));
+    }
+    let package = LockedPackage {
         name,
         version,
         source,
         install,
         provides,
-        output_sha256: None,
-    })
+        runtime_dependencies,
+        output_sha256,
+    };
+    rootbeer_package::runtime::closure(&package).map_err(LuaError::RuntimeError)?;
+    Ok(package)
 }
 
 fn parse_source(cx: &Ctx<'_>, source: Table) -> LuaResult<LockedSource> {

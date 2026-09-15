@@ -143,7 +143,18 @@ impl RootbeerLock {
             }
         }
 
+        for package in map.values() {
+            crate::runtime::closure(package).map_err(|error| LockError::Fingerprint {
+                kind: "package.runtime",
+                error,
+            })?;
+        }
         let schema = if map
+            .values()
+            .any(|package| !package.runtime_dependencies.is_empty())
+        {
+            3
+        } else if map
             .values()
             .any(|package| !package.provides.apps.is_empty())
         {
@@ -231,13 +242,38 @@ impl RootbeerLock {
         Ok(locked)
     }
 
+    /// Store entries retained by these roots, including their complete runtime closure.
+    pub fn store_paths(
+        &self,
+        store: &rootbeer_store::Store,
+    ) -> Result<std::collections::BTreeSet<std::path::PathBuf>, String> {
+        let mut paths = std::collections::BTreeSet::new();
+        for package in self.packages.values() {
+            for entry in crate::runtime::closure(package)?
+                .into_iter()
+                .chain(std::iter::once(package))
+            {
+                paths.insert(store.root().join(crate::runtime::store_directory(entry)?));
+            }
+        }
+        Ok(paths)
+    }
+
     pub fn read(path: impl AsRef<Path>) -> io::Result<Self> {
         let bytes = fs::read(path)?;
         let lock: Self = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-        if !matches!(lock.schema, 1 | 2) {
+        if !matches!(lock.schema, 1..=3) {
             return Err(io::Error::other(
                 "unsupported package lock schema; update Rootbeer",
             ));
+        }
+        for package in lock.packages.values() {
+            if lock.schema < 3 && !package.runtime_dependencies.is_empty() {
+                return Err(io::Error::other(
+                    "runtime dependencies require package lock schema 3",
+                ));
+            }
+            crate::runtime::closure(package).map_err(io::Error::other)?;
         }
         Ok(lock)
     }

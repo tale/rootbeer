@@ -100,6 +100,11 @@ pub(super) fn prepare_artifact(
         return Err(format!("{key}: artifact hash mismatch"));
     }
     let mut package = receipt.package;
+    copy_runtime(
+        &mut package,
+        receipt_path.parent().unwrap_or(Path::new(".")),
+        destination,
+    )?;
     package.source = LockedSource::File {
         path: target,
         sha256: sha256.clone(),
@@ -107,7 +112,15 @@ pub(super) fn prepare_artifact(
     let realized = realizer
         .realize(&package)
         .map_err(|e| format!("{key}: {e}"))?;
-    let report = rootbeer_build::audit::audit(&realized.store_entry.path)?;
+    let mut runtime = BTreeMap::new();
+    for dependency in rootbeer_package::runtime::closure(&package)? {
+        let realized = realizer.realize(dependency).map_err(|e| e.to_string())?;
+        runtime.insert(
+            rootbeer_package::runtime::store_directory(dependency)?,
+            realized.store_entry.path,
+        );
+    }
+    let report = rootbeer_build::audit::audit_with_runtime(&realized.store_entry.path, &runtime)?;
     report.validate()?;
     if let Some(expected) = &receipt.runtime_audit_sha256 {
         let report = serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?;
@@ -126,6 +139,7 @@ pub(super) fn prepare_artifact(
         },
         sha256: sha256.clone(),
     };
+    publish_runtime(&mut package, base_url)?;
     let receipt_sha256 = hash_bytes(&bytes);
     Ok((
         receipt.system,
@@ -136,6 +150,62 @@ pub(super) fn prepare_artifact(
         },
         bytes,
     ))
+}
+
+fn copy_runtime(
+    package: &mut rootbeer_package::LockedPackage,
+    source: &Path,
+    destination: &Path,
+) -> Result<(), String> {
+    for dependency in package.runtime_dependencies.values_mut() {
+        copy_runtime(dependency, source, destination)?;
+        let LockedSource::File { sha256, .. } = &dependency.source else {
+            return Err("runtime receipts require local archives".into());
+        };
+        let archive = source.join("runtime").join(format!(
+            "{}.tar.gz",
+            rootbeer_package::runtime::store_directory(dependency)?.display()
+        ));
+        let target = destination
+            .join("artifacts")
+            .join(format!("{sha256}.tar.gz"));
+        fs::copy(archive, &target).map_err(|e| e.to_string())?;
+        if hash_file(&target).map_err(|e| e.to_string())? != *sha256 {
+            return Err(format!(
+                "{}: runtime archive hash mismatch",
+                dependency.id()
+            ));
+        }
+        dependency.source = LockedSource::File {
+            path: target,
+            sha256: sha256.clone(),
+        };
+    }
+    Ok(())
+}
+
+fn publish_runtime(
+    package: &mut rootbeer_package::LockedPackage,
+    base_url: &str,
+) -> Result<(), String> {
+    for dependency in package.runtime_dependencies.values_mut() {
+        publish_runtime(dependency, base_url)?;
+        let LockedSource::File { sha256, .. } = &dependency.source else {
+            return Err("runtime bundle requires local archives".into());
+        };
+        dependency.source = LockedSource::Url {
+            url: if base_url.starts_with("ghcr://") {
+                format!("{base_url}@sha256:{sha256}")
+            } else {
+                format!(
+                    "{}/artifacts/{sha256}.tar.gz",
+                    base_url.trim_end_matches('/')
+                )
+            },
+            sha256: sha256.clone(),
+        };
+    }
+    Ok(())
 }
 
 fn validate_base_url(url: &str) -> Result<(), String> {
@@ -169,7 +239,8 @@ fn validate_receipt(catalog: &PackageCatalog, receipt: &BuildArtifact) -> Result
     let Some(build) = &recipe.build else {
         return Err(format!("{}: not a source recipe", package.id()));
     };
-    if receipt.schema != 1
+    if !matches!(receipt.schema, 1 | 2)
+        || (receipt.schema < 2 && !package.runtime_dependencies.is_empty())
         || receipt.catalog_sha256 != catalog.sha256()
         || receipt.revision != recipe.revision
         || !recipe.systems.contains(&receipt.system)
@@ -218,6 +289,54 @@ fn validate_receipt(catalog: &PackageCatalog, receipt: &BuildArtifact) -> Result
             "{}: build dependency receipts do not match",
             package.id()
         ));
+    }
+    let runtime = rootbeer_package::runtime::closure(package)?;
+    if runtime
+        .iter()
+        .map(|package| package.id())
+        .collect::<std::collections::BTreeSet<_>>()
+        != graph.nodes[&package.id()]
+            .runtime_closure
+            .iter()
+            .cloned()
+            .collect()
+    {
+        return Err("receipt runtime closure does not match dependency roles".into());
+    }
+    for runtime_package in runtime.into_iter().chain(std::iter::once(package)) {
+        let direct: std::collections::BTreeSet<_> = graph.nodes[&runtime_package.id()]
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.kind().is_runtime())
+            .map(|dependency| dependency.package())
+            .collect();
+        if direct
+            != runtime_package
+                .runtime_dependencies
+                .keys()
+                .map(String::as_str)
+                .collect()
+        {
+            return Err("receipt runtime edges do not match dependency roles".into());
+        }
+        if runtime_package.id() == package.id() {
+            continue;
+        }
+        if !matches!(&runtime_package.source, LockedSource::File { sha256, .. } if is_sha256(sha256))
+            || runtime_package.install
+                != (LockedInstall::Archive {
+                    format: ArchiveFormat::TarGz,
+                    strip_prefix: None,
+                })
+        {
+            return Err("runtime receipts require hashed tar.gz archives".into());
+        }
+        let expected = &receipt.dependencies[&runtime_package.id()];
+        if runtime_package.output_sha256 != expected.output_sha256
+            || runtime_package.provides != expected.provides
+        {
+            return Err("receipt runtime output differs from build dependency".into());
+        }
     }
     Ok(())
 }
@@ -283,6 +402,7 @@ pub(crate) mod tests {
                         .map(|bin| (bin.clone(), PathBuf::from("bin").join(bin)))
                         .collect(),
                 },
+                runtime_dependencies: Default::default(),
                 output_sha256: Some(hash_tree(&tree).unwrap()),
             },
         };
@@ -366,6 +486,101 @@ pub(crate) mod tests {
         assert_eq!(url, &format!("ghcr://tale/rootbeer/xz@sha256:{sha256}"));
         *url = format!("ghcr://tale/rootbeer/xz@sha256:{}", "0".repeat(64));
         assert!(index.validate().unwrap_err().contains("does not match"));
+    }
+
+    #[test]
+    fn bundles_runtime_archives_and_rejects_missing_or_tampered_inputs() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut catalog, path) = fixture(root.path());
+        let mut receipt: BuildArtifact = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let version = receipt.package.version.clone();
+        let mut definition = catalog.packages["xz"].clone();
+        definition.name = "runtime-base".into();
+        definition.aliases.clear();
+        catalog.packages.insert(definition.name.clone(), definition);
+        let dependency_id = format!("runtime-base@{version}");
+        let recipe = catalog
+            .packages
+            .get_mut("xz")
+            .unwrap()
+            .versions
+            .get_mut(&version)
+            .unwrap();
+        recipe.build.as_mut().unwrap().dependencies =
+            vec![rootbeer_package::BuildDependency::Scoped {
+                package: dependency_id.clone(),
+                kind: rootbeer_package::DependencyKind::Runtime,
+            }];
+        receipt.build = recipe.build.clone().unwrap();
+        receipt.schema = 2;
+        receipt.catalog_sha256 = catalog.sha256();
+        let tree = root.path().join("tree");
+        fs::write(tree.join("runtime-data"), b"runtime fixture").unwrap();
+        let mut dependency = receipt.package.clone();
+        dependency.name = "runtime-base".into();
+        dependency.output_sha256 = Some(hash_tree(&tree).unwrap());
+        let runtime = path.parent().unwrap().join("runtime");
+        fs::create_dir(&runtime).unwrap();
+        let archive = runtime.join(format!(
+            "{}.tar.gz",
+            rootbeer_package::runtime::store_directory(&dependency)
+                .unwrap()
+                .display()
+        ));
+        rootbeer_build::pack(&tree, &archive).unwrap();
+        let original = fs::read(&archive).unwrap();
+        dependency.source = LockedSource::File {
+            path: "/unavailable/runtime.tar.gz".into(),
+            sha256: hash_file(&archive).unwrap(),
+        };
+        receipt
+            .dependencies
+            .insert(dependency_id.clone(), dependency.clone());
+        receipt
+            .package
+            .runtime_dependencies
+            .insert(dependency_id.clone(), dependency);
+        fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        let output = root.path().join("bundle");
+        fs::write(&archive, b"tampered").unwrap();
+        assert!(bundle_artifacts(
+            &catalog,
+            std::slice::from_ref(&path),
+            "ghcr://owner/index/xz",
+            &output
+        )
+        .unwrap_err()
+        .contains("runtime archive hash mismatch"));
+        assert!(!output.exists());
+        fs::remove_file(&archive).unwrap();
+        assert!(bundle_artifacts(
+            &catalog,
+            std::slice::from_ref(&path),
+            "ghcr://owner/index/xz",
+            &output
+        )
+        .is_err());
+        fs::write(&archive, original).unwrap();
+        bundle_artifacts(&catalog, &[path], "ghcr://owner/index/xz", &output).unwrap();
+        let index: ArtifactIndex =
+            serde_json::from_slice(&fs::read(output.join("index.json")).unwrap()).unwrap();
+        assert_eq!(index.schema, 6);
+        let package = &index.artifacts[&receipt.package.id()][&receipt.system].package;
+        let dependency = &package.runtime_dependencies[&dependency_id];
+        let LockedSource::Url { url, sha256 } = &dependency.source else {
+            panic!("expected published runtime archive")
+        };
+        assert_eq!(url, &format!("ghcr://owner/index/xz@sha256:{sha256}"));
+        assert_eq!(
+            hash_file(output.join("artifacts").join(format!("{sha256}.tar.gz"))).unwrap(),
+            *sha256
+        );
+        let mut downgraded = index;
+        downgraded.schema = 5;
+        assert!(downgraded
+            .validate_fragment()
+            .unwrap_err()
+            .contains("schema 6"));
     }
 
     #[test]

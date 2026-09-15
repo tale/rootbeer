@@ -28,6 +28,7 @@ fn seed(root: &Path, name: &str, bin: &str, contents: &str) {
             apps: Default::default(),
             bins: BTreeMap::from([(bin.into(), "payload".into())]),
         },
+        runtime_dependencies: Default::default(),
         output_sha256: None,
     };
     let realizer = PackageRealizer::with_dirs(

@@ -71,6 +71,13 @@ impl PackageRealizer {
     }
 
     pub fn realize(&self, package: &LockedPackage) -> io::Result<RealizedPackage> {
+        for dependency in crate::runtime::closure(package).map_err(io::Error::other)? {
+            self.realize_one(dependency)?;
+        }
+        self.realize_one(package)
+    }
+
+    fn realize_one(&self, package: &LockedPackage) -> io::Result<RealizedPackage> {
         if let Some(realized) = self.realized_from_store(package)? {
             return Ok(realized);
         }
@@ -465,6 +472,7 @@ mod tests {
                 apps: Default::default(),
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
+            runtime_dependencies: Default::default(),
             output_sha256: None,
         }
     }
@@ -526,6 +534,7 @@ mod tests {
                 apps: Default::default(),
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
+            runtime_dependencies: Default::default(),
             output_sha256: None,
         }
     }

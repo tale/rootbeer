@@ -136,6 +136,7 @@ mod tests {
                 apps: Default::default(),
                 bins: BTreeMap::new(),
             },
+            runtime_dependencies: Default::default(),
             output_sha256: output_sha256.map(str::to_string),
         }
     }

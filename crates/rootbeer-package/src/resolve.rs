@@ -503,6 +503,7 @@ mod tests {
                 apps: Default::default(),
                 bins: BTreeMap::from([(name.to_string(), PathBuf::from(format!("bin/{name}")))]),
             },
+            runtime_dependencies: Default::default(),
             output_sha256: None,
         }
     }

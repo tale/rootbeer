@@ -18,14 +18,22 @@ pub struct Context<'a> {
     pub tools: &'a Path,
     pub workspace: &'a Path,
     pub jobs: usize,
+    pub runtime: &'a std::collections::BTreeMap<String, std::path::PathBuf>,
 }
 
 impl Context<'_> {
     pub fn expand(&self, argument: &str) -> String {
-        argument
+        let mut expanded = argument
             .replace("{prefix}", &self.prefix.to_string_lossy())
             .replace("{dependencies}", &self.dependencies.to_string_lossy())
-            .replace("{jobs}", &self.jobs.to_string())
+            .replace("{jobs}", &self.jobs.to_string());
+        for (package, directory) in self.runtime {
+            expanded = expanded.replace(
+                &format!("{{runtime:{package}}}"),
+                &directory.to_string_lossy(),
+            );
+        }
+        expanded
     }
 }
 

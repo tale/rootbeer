@@ -14,6 +14,8 @@ pub struct LockedPackage {
     pub provides: Provides,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub runtime_dependencies: BTreeMap<String, LockedPackage>,
 }
 
 impl LockedPackage {
@@ -28,6 +30,7 @@ impl LockedPackage {
             source: &self.source,
             install: &self.install,
             provides: &self.provides,
+            runtime_dependencies: &self.runtime_dependencies,
         }
     }
 
@@ -43,6 +46,8 @@ pub struct PackageRealizationInput<'a> {
     pub source: &'a LockedSource,
     pub install: &'a LockedInstall,
     pub provides: &'a Provides,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub runtime_dependencies: &'a BTreeMap<String, LockedPackage>,
 }
 
 impl DeterministicInput for PackageRealizationInput<'_> {
@@ -115,6 +120,7 @@ mod tests {
                 apps: Default::default(),
                 bins: BTreeMap::from([("demo".to_string(), PathBuf::from("bin/demo"))]),
             },
+            runtime_dependencies: Default::default(),
             output_sha256: output_sha256.map(str::to_string),
         }
     }

@@ -20,6 +20,25 @@ pub enum DependencyKind {
     All,
     Build,
     Link,
+    Runtime,
+    LinkRuntime,
+}
+
+impl DependencyKind {
+    pub fn is_runtime(self) -> bool {
+        matches!(self, Self::Runtime | Self::LinkRuntime)
+    }
+}
+
+pub fn is_library_path(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.ends_with(".a")
+                || name.ends_with(".dylib")
+                || name.ends_with(".so")
+                || name.contains(".so.")
+        })
 }
 
 /// Exact package input; strings retain the original combined export behavior.
@@ -81,7 +100,7 @@ pub struct SourceBuild {
     pub patches: Vec<String>,
     #[serde(default)]
     pub dependencies: Vec<BuildDependency>,
-    /// Static archives exported for other source packages to link against.
+    /// Static or shared libraries exported for other source packages to link against.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -200,13 +219,15 @@ impl SourceBuild {
         }
         let mut libraries = BTreeSet::new();
         for path in &self.libraries {
-            crate::realize::validate_relative_path("static library", path)
-                .map_err(|e| e.to_string())?;
+            crate::realize::validate_relative_path("library", path).map_err(|e| e.to_string())?;
             if !matches!(path.components().next(), Some(Component::Normal(name)) if name == "lib" || name == "lib64")
-                || path.extension().is_none_or(|extension| extension != "a")
+                || !is_library_path(path)
                 || !libraries.insert(path)
             {
-                return Err("libraries must name unique static archives under lib or lib64".into());
+                return Err(
+                    "libraries must name unique static or shared libraries under lib or lib64"
+                        .into(),
+                );
             }
         }
         let mut dependencies = BTreeSet::new();
@@ -288,7 +309,7 @@ mod tests {
         assert_eq!(dependency.kind(), DependencyKind::Build);
         assert_eq!(serde_json::to_value(dependency).unwrap(), scoped);
         assert!(serde_json::from_value::<BuildDependency>(
-            serde_json::json!({"package": "tool@1", "kind": "runtime"})
+            serde_json::json!({"package": "tool@1", "kind": "unknown"})
         )
         .is_err());
     }

@@ -81,6 +81,8 @@ function rootbeer.exec(cmd, args) end
 --- @field install rootbeer.PackageInstall Package install recipe.
 --- @field bins table<string, string> Binary name → relative path in the installed output tree.
 --- @field apps? table<string, string> macOS application filename → relative .app bundle path. Apply manages links in ~/Applications.
+--- @field output_sha256? string Verified installed-tree hash.
+--- @field runtime_dependencies? table<string, rootbeer.PackageSpec> Exact runtime packages keyed by name@version; each requires output_sha256.
 
 --- @class rootbeer.PackageSource
 --- @field path? string Local directory tree source. The `sha256` is a deterministic tree hash.
