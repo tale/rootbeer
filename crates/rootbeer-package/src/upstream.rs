@@ -33,6 +33,8 @@ pub struct GitHubUpstream {
     /// Exact asset names with optional {tag} and {version} substitutions.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub assets: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<crate::SourceBuild>,
     pub bins: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bin_paths: BTreeMap<String, PathBuf>,
@@ -71,6 +73,7 @@ impl GitHubUpstream {
             exclude_tags: Vec::new(),
             systems: supported_systems(),
             assets: BTreeMap::new(),
+            build: None,
             bins,
             bin_paths: BTreeMap::new(),
             apps: BTreeMap::new(),
@@ -119,7 +122,20 @@ impl GitHubUpstream {
             }
         }
         super::catalog::validate_systems(&self.systems)?;
-        super::catalog::validate_commands(&self.bins, &self.checks)?;
+        if let Some(build) = &self.build {
+            build.validate()?;
+            if !self.assets.is_empty() || self.mirror {
+                return Err("source discovery cannot select prebuilt assets or mirroring".into());
+            }
+        }
+        if !self.bins.is_empty()
+            || self
+                .build
+                .as_ref()
+                .is_none_or(|build| build.libraries.is_empty())
+        {
+            super::catalog::validate_commands(&self.bins, &self.checks)?;
+        }
         super::catalog::validate_bin_paths(&self.bins, &self.bin_paths)?;
         super::catalog::validate_apps(&self.apps)?;
         if !self.apps.is_empty()
@@ -187,7 +203,14 @@ pub fn check_identity(catalog: &PackageCatalog, upstream: &GitHubUpstream) -> Re
                 upstream.repository, package.name
             ));
         }
-        if package.name == upstream.name && !is_same_repository {
+        if package.name == upstream.name
+            && !is_same_repository
+            && !(upstream.build.is_some()
+                && package
+                    .versions
+                    .values()
+                    .all(|recipe| recipe.build.is_some()))
+        {
             return Err(format!(
                 "{}: existing package has a different upstream; resolve identity manually",
                 upstream.name

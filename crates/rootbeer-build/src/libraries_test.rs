@@ -76,7 +76,7 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
         };
         recipe.build = Some(
             serde_json::from_value(serde_json::json!({
-                "backend": "commands", "url": "https://source.invalid/libraries.tar.gz",
+                "backend": "custom", "url": "https://source.invalid/libraries.tar.gz",
                 "sha256": cached.sha256, "archive": "tar.gz", "strip_prefix": name,
                 "dependencies": dependency.into_iter().map(|package| serde_json::json!({"package": package, "kind": if name == "base" { "build" } else { "link" }})).collect::<Vec<_>>(),
                 "libraries": if is_library { vec![format!("lib/lib{name}.a")] } else { vec![] },
@@ -193,17 +193,19 @@ fn library_exports_reject_collisions_escapes_and_thin_archives() {
 }
 
 #[test]
-fn compact_library_recipes_require_checks_and_new_index_schema() {
+fn library_recipes_separate_inputs_builds_and_exports() {
     let source = r#"return {
-        name = "library", description = "A library", homepage = "https://example.org",
-        default_version = "1", systems = { "aarch64-macos" }, bins = {}, checks = {},
+        schema = 2, name = "library", description = "A library", homepage = "https://example.org",
+        default_version = "1", systems = { "aarch64-macos" },
+        inputs = { source = { url = "https://example.org/library-{version}.tar.gz",
+            archive = "tar.gz", strip_prefix = "library-{version}" } },
+        outputs = { bins = {}, checks = {}, libraries = { "lib/libtest.a" } },
         build = {
-            backend = "commands", url = "https://example.org/library-{version}.tar.gz",
-            archive = "tar.gz", strip_prefix = "library-{version}", libraries = { "lib/libtest.a" },
+            backend = "custom",
             steps = { configure = {}, build = {{ "make" }}, check = {{ "make", "test" }},
                       install = {{ "make", "DESTDIR={prefix}", "install" }} },
         },
-        versions = { ["1"] = { sha256 = "0000000000000000000000000000000000000000000000000000000000000000" } },
+        versions = { ["1"] = { inputs = { source = { sha256 = "0000000000000000000000000000000000000000000000000000000000000000" } } } },
     }"#;
     let directory = tempfile::tempdir().unwrap();
     let load = |source: &str| {
@@ -239,7 +241,7 @@ fn compact_library_recipes_require_checks_and_new_index_schema() {
     }
     for invalid in [
         source.replace("check = {{ \"make\", \"test\" }}", "check = {}"),
-        source.replace("backend = \"commands\"", "backend = \"autotools\""),
+        source.replace("backend = \"custom\"", "backend = \"autotools\""),
         source.replace("lib/libtest.a", "../libtest.a"),
         source.replace("lib/libtest.a", "lib/libtest.txt"),
         source.replace("libraries = { \"lib/libtest.a\" }", "libraries = {}"),

@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 pub mod lua;
 use super::{CatalogPackage, GitHubUpstream};
 
-mod compact;
+mod recipe;
+#[cfg(test)]
+mod recipe_test;
 
 /// A package's approved versions and optional update rules, stored in one Lua file.
 #[derive(Debug, Clone)]
@@ -16,7 +18,7 @@ pub struct PackageDefinition {
     pub package: CatalogPackage,
     pub upstream: Option<PackageUpstream>,
     contract: Option<Contract>,
-    authoring: Option<compact::CompactPackage>,
+    authoring: Option<recipe::RecipeDefinition>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,27 +63,9 @@ impl PackageDefinition {
     /// Evaluates a package in the same bounded, I/O-free sandbox as catalog recipes.
     pub fn from_lua(source: &str) -> Result<Self, String> {
         let (lua, value) = lua::evaluate(source)?;
-        let table = value.as_table().ok_or("package must return a table")?;
-        if table.contains_key("source").map_err(|e| e.to_string())?
-            || table.contains_key("build").map_err(|e| e.to_string())?
-        {
-            let package: compact::CompactPackage =
-                lua.from_value(value).map_err(|e| e.to_string())?;
-            return package.expand();
-        }
-        let upstream = lua
-            .from_value(table.raw_get("upstream").map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-        table.raw_remove("upstream").map_err(|e| e.to_string())?;
-        let package = lua.from_value(value).map_err(|e| e.to_string())?;
-        let definition = Self {
-            package,
-            upstream,
-            contract: None,
-            authoring: None,
-        };
-        definition.github_upstream()?;
-        Ok(definition)
+        let recipe: recipe::RecipeDefinition =
+            lua.from_value(value).map_err(|error| error.to_string())?;
+        recipe.expand()
     }
 
     /// Reads canonical package files in deterministic name order.
@@ -112,10 +96,7 @@ impl PackageDefinition {
         upstream: &GitHubUpstream,
     ) -> Result<Self, String> {
         let definition = Self::from_github_upstream(package, upstream)?;
-        match compact::CompactPackage::from_definition(&definition)? {
-            Some(authoring) => authoring.expand(),
-            None => Ok(definition),
-        }
+        recipe::RecipeDefinition::from_definition(&definition)?.expand()
     }
 
     fn from_github_upstream(
@@ -214,6 +195,15 @@ impl PackageDefinition {
             upstream.mirror = contract.mirror;
             upstream.checks = contract.checks.clone();
         }
+        upstream.build = self
+            .authoring
+            .as_ref()
+            .map(recipe::RecipeDefinition::source_template)
+            .transpose()?
+            .flatten();
+        if upstream.build.is_none() {
+            upstream.build = recipe.build.clone();
+        }
         upstream.repository_id = *repository_id;
         upstream.tag_prefix = tag_prefix.clone();
         upstream.exclude_tags = exclude_tags.clone();
@@ -230,29 +220,11 @@ impl PackageDefinition {
     /// Renders one complete package file, including its update rules when configured.
     pub fn to_lua(&self) -> Result<String, String> {
         self.github_upstream()?;
-        if let Some(authoring) = &self.authoring {
-            if let Some(compact) = authoring.updated(self)? {
-                return lua::write(&compact);
-            }
-        }
-        let mut expanded = self.clone();
-        expanded.contract = None;
-        if serde_json::to_value(expanded.github_upstream()?).map_err(|e| e.to_string())?
-            != serde_json::to_value(self.github_upstream()?).map_err(|e| e.to_string())?
-        {
-            return Err(
-                "expanded definition cannot preserve shared discovery command or mirror contract"
-                    .into(),
-            );
-        }
-        let mut value = serde_json::to_value(&self.package).map_err(|e| e.to_string())?;
-        if let Some(upstream) = &self.upstream {
-            value.as_object_mut().unwrap().insert(
-                "upstream".into(),
-                serde_json::to_value(upstream).map_err(|e| e.to_string())?,
-            );
-        }
-        lua::write(&value)
+        let recipe = match &self.authoring {
+            Some(recipe) => recipe.updated(self)?,
+            None => recipe::RecipeDefinition::from_definition(self)?,
+        };
+        lua::write(&recipe)
     }
 }
 
@@ -360,16 +332,12 @@ mod tests {
         ] {
             assert!(PackageDefinition::from_lua(&invalid).is_err(), "{invalid}");
         }
-        let mut legacy = serde_json::to_value(&definition.package).unwrap();
-        legacy["upstream"] = serde_json::to_value(&definition.upstream).unwrap();
-        fs::write(
-            root.path().join("age.lua"),
-            lua::write(&legacy).unwrap().replace(
-                "repository = \"FiloSottile/age\"",
-                "repository = \"other/age\"",
-            ),
-        )
-        .unwrap();
+        let mut mismatched = definition.clone();
+        let Some(PackageUpstream::Github { repository, .. }) = &mut mismatched.upstream else {
+            unreachable!()
+        };
+        *repository = "other/age".into();
+        fs::write(root.path().join("age.lua"), mismatched.to_lua().unwrap()).unwrap();
         assert!(PackageCatalog::from_directory(root.path()).is_err());
 
         fs::write(root.path().join("age.lua"), &source).unwrap();

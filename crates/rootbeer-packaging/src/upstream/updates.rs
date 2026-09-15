@@ -233,7 +233,23 @@ fn discover_with_fetch(
         }
     }
     if !report.updated.is_empty() || !report.rules_changed.is_empty() {
-        PackageCatalog::from_directory(&destination.join("packages"))?;
+        for package in combined.packages.values() {
+            let path = destination
+                .join("packages")
+                .join(format!("{}.lua", package.name));
+            if path.exists() {
+                continue;
+            }
+            let definition = templates
+                .get(&package.name)
+                .cloned()
+                .unwrap_or_else(|| PackageDefinition::new(package.clone()));
+            fs::write(path, definition.to_lua()?).map_err(|error| error.to_string())?;
+        }
+        let candidates = PackageCatalog::from_directory(&destination.join("packages"))?;
+        if candidates.sha256() != combined.sha256() {
+            return Err("candidate catalog differs from resolved updates".into());
+        }
     }
     write_report(&destination, &report)?;
     fs::rename(destination, output).map_err(|e| e.to_string())?;
@@ -338,6 +354,13 @@ mod tests {
         assert_eq!(report.updated, ["tool"]);
         assert_eq!(report.errors["broken"], "rate limited");
         let candidates = PackageCatalog::from_directory(&output.join("packages")).unwrap();
+        assert_eq!(candidates.packages.len(), catalog.packages.len() + 1);
+        for (name, package) in &catalog.packages {
+            assert_eq!(
+                serde_json::to_value(&candidates.packages[name]).unwrap(),
+                serde_json::to_value(package).unwrap()
+            );
+        }
         let definitions = GitHubUpstream::from_directory(&output.join("packages")).unwrap();
         let repeat = root.path().join("repeat");
         let report = discover_with_fetch(
@@ -380,21 +403,19 @@ mod tests {
     #[test]
     fn discovery_preserves_templates_and_retained_version_overrides() {
         let source = r#"return {
-            name = "tool",
-            description = "Tool",
-            default_version = "1",
-            source = {
-                github = "owner/tool",
-                tag = "v{version}",
+            schema = 2, name = "tool", description = "Tool", homepage = "https://example.com",
+            default_version = "1", systems = { "aarch64-macos" },
+            upstream = { github = "owner/tool", tag_prefix = "v" },
+            inputs = { prebuilt = {
+                github = "owner/tool", tag = "v{version}",
                 assets = { ["aarch64-macos"] = "tool-{tag}-darwin-arm64.tar.gz" },
-            },
-            bins = { "tool" },
-            checks = { { "tool", "--version" } },
+            } },
+            outputs = { bins = { "tool" }, checks = { { "tool", "--version" } } },
             versions = {
                 ["1"] = {
                     revision = 3,
-                    assets = { ["aarch64-macos"] = "legacy-tool.tar.gz" },
-                    checks = { { "tool", "--help" } },
+                    inputs = { prebuilt = { assets = { ["aarch64-macos"] = "legacy-tool.tar.gz" } } },
+                    outputs = { checks = { { "tool", "--help" } } },
                 },
             },
         }"#;
@@ -426,14 +447,15 @@ mod tests {
             assert_eq!(report.rules_changed, ["tool"]);
             let saved_source = fs::read_to_string(output.join("packages/tool.lua")).unwrap();
             let mut saved: Value = rootbeer_package::definition::lua::read(&saved_source).unwrap();
-            assert_eq!(saved["source"]["repository_id"], 42);
-            saved["source"]
+            assert_eq!(saved["upstream"]["repository_id"], 42);
+            saved["upstream"]
                 .as_object_mut()
                 .unwrap()
                 .remove("repository_id");
-            assert_eq!(saved["source"], original["source"]);
+            assert_eq!(saved["upstream"], original["upstream"]);
+            assert_eq!(saved["inputs"], original["inputs"]);
             assert_eq!(saved["versions"]["1"], original["versions"]["1"]);
-            assert_eq!(saved["checks"], original["checks"]);
+            assert_eq!(saved["outputs"], original["outputs"]);
             let expanded = PackageDefinition::from_lua(&saved_source).unwrap();
             assert_eq!(expanded.package.default_version, version);
             assert_eq!(

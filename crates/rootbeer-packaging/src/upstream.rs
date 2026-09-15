@@ -117,7 +117,22 @@ fn discover_package(
         }
     }
     let existing = catalog.packages.get(&upstream.name);
-    let package = generate::package(&mut upstream, &repository, &releases, existing)?;
+    let package = if upstream.build.is_some() {
+        let cache = rootbeer_package::download::DownloadCache::default();
+        generate::source_package(
+            &upstream,
+            &releases,
+            existing.ok_or("source discovery requires an existing source recipe")?,
+            |url| {
+                cache
+                    .materialize(url, None)
+                    .map(|file| file.sha256)
+                    .map_err(|error| error.to_string())
+            },
+        )?
+    } else {
+        generate::package(&mut upstream, &repository, &releases, existing)?
+    };
     Ok((upstream, package))
 }
 

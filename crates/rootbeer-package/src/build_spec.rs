@@ -8,7 +8,6 @@ use std::path::{Component, PathBuf};
 #[serde(rename_all = "snake_case")]
 pub enum BuildBackend {
     Autotools,
-    #[serde(rename = "commands", alias = "custom")]
     Custom,
     Zig,
 }
@@ -292,12 +291,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn custom_accepts_both_names_without_changing_existing_catalog_digests() {
-        for name in ["commands", "custom"] {
-            let backend: BuildBackend = serde_json::from_value(serde_json::json!(name)).unwrap();
-            assert!(matches!(backend, BuildBackend::Custom));
-            assert_eq!(serde_json::to_value(backend).unwrap(), "commands");
-        }
+    fn custom_is_the_only_explicit_phase_backend_name() {
+        let backend: BuildBackend = serde_json::from_value(serde_json::json!("custom")).unwrap();
+        assert!(matches!(backend, BuildBackend::Custom));
+        assert_eq!(serde_json::to_value(backend).unwrap(), "custom");
+        assert!(serde_json::from_value::<BuildBackend>(serde_json::json!("commands")).is_err());
     }
     #[test]
     fn dependency_roles_preserve_legacy_string_encoding() {

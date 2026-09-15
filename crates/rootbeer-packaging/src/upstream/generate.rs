@@ -272,9 +272,178 @@ pub(super) fn package(
     Ok(package)
 }
 
+pub(super) fn source_package(
+    upstream: &GitHubUpstream,
+    releases: &[Release],
+    existing: &CatalogPackage,
+    mut hash_source: impl FnMut(&str) -> Result<String, String>,
+) -> Result<CatalogPackage, String> {
+    let mut ordered = BTreeMap::new();
+    for release in releases {
+        let Some(version) = release_version(upstream, release)? else {
+            continue;
+        };
+        if ordered
+            .insert(version_key(version)?, (version, release))
+            .is_some()
+        {
+            return Err(format!(
+                "multiple release tags normalize to version `{version}`; restrict tag_prefix"
+            ));
+        }
+    }
+    let (key, (version, release)) = ordered
+        .last_key_value()
+        .ok_or("no matching stable source releases")?;
+    if *key <= version_key(&existing.default_version)? {
+        return Ok(existing.clone());
+    }
+    let mut build = upstream
+        .build
+        .clone()
+        .ok_or("source discovery requires a build template")?;
+    build.url = build
+        .url
+        .replace("{version}", version)
+        .replace("{tag}", &release.tag_name);
+    build.strip_prefix = build
+        .strip_prefix
+        .to_string_lossy()
+        .replace("{version}", version)
+        .replace("{tag}", &release.tag_name)
+        .into();
+    if build.url.contains(['{', '}']) || build.strip_prefix.to_string_lossy().contains(['{', '}']) {
+        return Err("unsupported placeholder in source discovery template".into());
+    }
+    let mut package = existing.clone();
+    if let Some(recipe) = package.versions.get(*version) {
+        if upstream
+            .systems
+            .iter()
+            .any(|system| !recipe.systems.contains(system))
+        {
+            return Err("retained source release needs explicit platform qualification".into());
+        }
+    } else {
+        build.sha256 = hash_source(&build.url)?;
+        build.validate()?;
+        package.versions.insert(
+            (*version).into(),
+            CatalogRecipe {
+                revision: 1,
+                source: None,
+                build: Some(build),
+                assets: BTreeMap::new(),
+                systems: upstream.systems.clone(),
+                bins: upstream.bins.clone(),
+                bin_paths: upstream.bin_paths.clone(),
+                apps: upstream.apps.clone(),
+                checksums: BTreeMap::new(),
+                mirror: false,
+                checks: upstream.checks.clone(),
+            },
+        );
+    }
+    package.default_version = (*version).into();
+    for system in existing
+        .versions
+        .values()
+        .flat_map(|recipe| &recipe.systems)
+    {
+        if upstream.systems.contains(system) {
+            package.default_versions.remove(system);
+        } else {
+            package
+                .default_versions
+                .insert(system.clone(), existing.default_version_for(system).into());
+        }
+    }
+    Ok(package)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_discovery_hashes_new_archives_and_preserves_retained_versions() {
+        let package = crate::PackageCatalog::embedded().unwrap().packages["xz"].clone();
+        let previous = package.default_version.clone();
+        let mut build = package.versions[&previous].build.clone().unwrap();
+        build.url = "https://example.com/xz-{tag}.tar.gz".into();
+        build.strip_prefix = "xz-{version}".into();
+        let mut upstream = GitHubUpstream::new("xz".into(), "owner/xz".into(), vec!["xz".into()]);
+        upstream.tag_prefix = Some("v".into());
+        upstream.systems = vec!["aarch64-macos".into()];
+        upstream.build = Some(build);
+        let releases = [release("v99.0", &[]), release("v98.0", &[])];
+        let mut fetched = Vec::new();
+        let generated = source_package(&upstream, &releases, &package, |url| {
+            fetched.push(url.to_string());
+            Ok("b".repeat(64))
+        })
+        .unwrap();
+        assert_eq!(fetched, ["https://example.com/xz-v99.0.tar.gz"]);
+        assert_eq!(generated.default_version, "99.0");
+        assert_eq!(generated.default_version_for("x86_64-linux"), previous);
+        let recipe = &generated.versions["99.0"];
+        assert!(recipe.source.is_none());
+        assert!(recipe.assets.is_empty());
+        assert_eq!(recipe.build.as_ref().unwrap().sha256, "b".repeat(64));
+        assert_eq!(
+            serde_json::to_value(&generated.versions[&previous]).unwrap(),
+            serde_json::to_value(&package.versions[&previous]).unwrap()
+        );
+        let repeated = source_package(&upstream, &releases, &generated, |_| {
+            panic!("unchanged sources must not be downloaded")
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(repeated).unwrap(),
+            serde_json::to_value(generated).unwrap()
+        );
+        assert!(source_package(&upstream, &releases, &package, |_| Err(
+            "download failed".into()
+        ))
+        .unwrap_err()
+        .contains("download failed"));
+    }
+
+    #[test]
+    fn source_candidates_round_trip_shared_inputs_and_library_contracts() {
+        let source = format!(
+            r#"return {{
+            schema = 2, name = "lib", description = "Library", homepage = "https://example.com",
+            systems = {{ "aarch64-macos" }}, default_version = "1",
+            upstream = {{ github = "owner/lib", repository_id = 42, tag_prefix = "v" }},
+            inputs = {{ source = {{ url = "https://example.com/lib-{{tag}}.tar.gz", archive = "tar.gz", strip_prefix = "lib-{{version}}" }} }},
+            build = {{ backend = "custom", steps = {{ configure = {{}}, build = {{ {{ "make" }} }}, check = {{ {{ "make", "test" }} }}, install = {{ {{ "make", "install" }} }} }} }},
+            outputs = {{ bins = {{}}, checks = {{}}, libraries = {{ "lib/lib.a" }} }},
+            versions = {{ ["1"] = {{ inputs = {{ source = {{ sha256 = "{}" }} }} }} }},
+        }}"#,
+            "a".repeat(64)
+        );
+        let definition = crate::PackageDefinition::from_lua(&source).unwrap();
+        let upstream = definition.github_upstream().unwrap().unwrap();
+        let generated = source_package(
+            &upstream,
+            &[release("v2", &[])],
+            &definition.package,
+            |_| Ok("b".repeat(64)),
+        )
+        .unwrap();
+        let updated = definition
+            .with_updates(generated.clone(), &upstream)
+            .unwrap();
+        let text = updated.to_lua().unwrap();
+        let loaded = crate::PackageDefinition::from_lua(&text).unwrap();
+        assert_eq!(
+            serde_json::to_value(loaded.package).unwrap(),
+            serde_json::to_value(generated).unwrap()
+        );
+        assert!(text.contains("https://example.com/lib-{tag}.tar.gz"));
+        assert!(text.contains("backend = \"custom\""));
+    }
 
     fn release(tag: &str, assets: &[&str]) -> Release {
         serde_json::from_value(serde_json::json!({

@@ -11,8 +11,7 @@ it akin to a dotfile manager like home-manager or chezmoi.
 - `crates/rootbeer-forge`: The package-maintainer CLI (`rootbeer-forge`)
 
 Configuration must not depend on the build or packaging crates. Backends produce
-phases for the shared build executor. Preserve existing catalog serialization
-when changing recipe models: pinned index hashes depend on it.
+phases for the shared build executor. Coordinate recipe schema changes with the index repository and its engine pin.
 
 User configuration is provided through a layering system in the core library,
 where the base fundamentals (such as symlinking files, creating new files,

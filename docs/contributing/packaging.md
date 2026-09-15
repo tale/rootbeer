@@ -211,33 +211,48 @@ propagate only through other runtime edges; a compiler's own runtime dependencie
 remain build inputs for its consumer.
 
 Runtime closures require lock schema 3, build receipt schema 2, and artifact index
-schema 6. Older dependency roles retain their existing schemas and catalog digests.
+schema 6. The authoring schema described below is separate from lock and artifact schemas.
 
-`custom` is the authoring name for explicit build phases. The serialized catalog
-continues to use `commands` for compatibility with existing pinned catalog
-hashes; both spellings are accepted. No recipe migration is required.
+`custom` names explicit build phases in both recipes and serialized catalogs.
+The old `commands` spelling is rejected.
 
 ## Definition API
 
-Declare shared source settings, commands, and checks once. Version entries contain
-only their checksum, revision, or exceptions:
+Package files use `schema = 2`. Four sections have separate responsibilities:
+
+- `upstream` optionally describes release discovery.
+- `inputs` describes prebuilt artifacts or source archives.
+- `build` describes source compilation, when required.
+- `outputs` describes exported commands, applications, libraries, and checks.
+
+Prebuilt-only packages need no source code, build backend, or discovery rules.
+Shared settings apply to every version; version entries supply their own hashes
+and explicit exceptions.
 
 ```lua
 return {
+    schema = 2,
     name = "tool",
     description = "A command-line tool",
+    homepage = "https://github.com/owner/tool",
     default_version = "2.0.0",
-    source = {
-        github = "owner/tool",
-        tag = "v{version}",
-        assets = {
-            ["aarch64-linux"] = "tool-{tag}-linux-arm64.tar.gz",
-            ["x86_64-linux"] = "tool-{tag}-linux-amd64.tar.gz",
-            ["aarch64-macos"] = "tool-{tag}-darwin-arm64.tar.gz",
+    systems = { "aarch64-macos", "aarch64-linux", "x86_64-linux" },
+    upstream = { github = "owner/tool", tag_prefix = "v" },
+    inputs = {
+        prebuilt = {
+            github = "owner/tool",
+            tag = "v{version}",
+            assets = {
+                ["aarch64-linux"] = "tool-{tag}-linux-arm64.tar.gz",
+                ["x86_64-linux"] = "tool-{tag}-linux-amd64.tar.gz",
+                ["aarch64-macos"] = "tool-{tag}-darwin-arm64.tar.gz",
+            },
         },
     },
-    bins = { "tool" },
-    checks = { { "tool", "--version" } },
+    outputs = {
+        bins = { "tool" },
+        checks = { { "tool", "--version" } },
+    },
     versions = {
         ["1.0.0"] = { revision = 2 },
         ["2.0.0"] = {},
@@ -245,20 +260,22 @@ return {
 }
 ```
 
-The filename matches `name`; aliases remain explicit. GitHub packages default their
-homepage to the repository URL. Override `homepage` for a project website.
+The filename matches `name`; aliases, homepage, supported systems, and default
+versions are explicit. `upstream.github` selects where to discover releases;
+`inputs.prebuilt.github` selects where to fetch binaries. Removing `upstream`
+disables discovery without changing installation inputs.
 
-`source.assets` defines supported platforms unless `systems` is explicit. Patterns
-accept `{version}` and `{tag}`; the tag template accepts `{version}`. Expansion
-happens before catalog validation. Command arguments and configure flags are literal.
-Unsupported placeholders and unknown fields fail validation.
+Prebuilt asset patterns accept `{version}` and `{tag}`; the tag template accepts
+`{version}`. Aqua-backed prebuilt inputs use `aqua = "owner/project"` and an exact
+tag instead of GitHub asset patterns. Expansion happens before catalog validation.
+Command arguments and configure flags are literal. Unsupported placeholders and
+unknown fields fail validation.
 
-A version inherits `bins`, `checks`, and `systems`; explicit arrays replace them.
-Version `assets` override individual platforms, filtered to that version's systems.
-Use `tag` for an exceptional release tag. Revisions default to 1. Empty arrays do
-not mean inheritance: invalid empty command or platform contracts are rejected.
-Discovery uses the shared command contract for new releases and preserves existing
-versions' explicit checks, including exceptions on the current default.
+Version `inputs.prebuilt.assets` overrides individual platforms. Version `outputs`
+fields and `systems` replace their shared counterparts, including explicit empty
+arrays or maps. `inputs.prebuilt.tag` selects an exceptional release tag. Revisions
+default to 1. Discovery uses shared outputs for new releases and preserves retained
+versions' exceptions, including exceptions on the current default.
 
 Choose the newest release for each platform. `default_version` stays explicit;
 `default_versions` selects older defaults for discontinued targets. Retain older
@@ -266,7 +283,7 @@ versions and their exceptions. Explicit version requests never fall back.
 
 ### Archive commands and moving releases
 
-Use `bin_paths` to map each declared command to its path inside a GitHub archive.
+Use `outputs.bin_paths` to map each declared command to its path inside a GitHub archive.
 For example, bobrwm maps `bobrwm` to `Bobrwm.app/Contents/MacOS/bobrwm-cli`.
 Mappings must cover every declared command and stay inside the archive. The full
 archive tree is retained, including resources and app bundles.
@@ -274,7 +291,7 @@ archive tree is retained, including resources and app bundles.
 Declare macOS app exports explicitly:
 
 ```lua
-apps = { ["Bobrwm.app"] = "Bobrwm.app" },
+outputs = { apps = { ["Bobrwm.app"] = "Bobrwm.app" } },
 ```
 
 Keys are exported `.app` filenames; values are relative paths to contained `.app`
@@ -286,26 +303,27 @@ configures login items or grants permissions.
 
 A moving tag such as `tip` is not a package version. Give each approved snapshot
 an exact version, select its exact asset name, and pin every platform's verified
-SHA-256 in that version's `checksums` map. Set `mirror = true` to retain the
+SHA-256 in that version's `inputs.prebuilt.checksums` map. Set `inputs.prebuilt.mirror = true` to retain the
 qualified package in the index's content-addressed registry. Receipts retain the
 original upstream URL and checksum. Old installations then remain available even
 if upstream replaces or removes the release assets.
 
-Mirrored snapshots require manual checksum qualification; set `source.track = false`
+Mirrored snapshots require manual checksum qualification; omit `upstream`
 instead of treating a moving tag as a stable release. Increment the recipe revision
 if another build of the same version changes its bytes. Applications can be opened
 from the verified store with `rb run bobrwm --app Bobrwm.app`.
 
 ### Source builds
 
-Use a shared `build` instead of `source`. It declares the supported `backend`
-(`autotools`, `zig`, or `custom`), archive format, source URL, strip prefix, and exact build
-dependencies. Autotools accepts `configure` flags. URL and strip prefix accept `{version}`. Build
-packages must declare `homepage` and `systems` explicitly.
+Put the archive URL, archive format, strip prefix, and patches under `inputs.source`.
+Use `build` for the backend (`autotools`, `zig`, or `custom`), backend settings, and
+exact build dependencies. Autotools accepts `configure` flags. URL and strip prefix
+accept `{version}`; `{tag}` additionally requires an explicit `upstream.tag_prefix`.
 
-Each version supplies its own verified `sha256`; checksums cannot be shared or
-inferred. A version's `build` can replace the complete build definition for a
-historical exception, including its exact URL and checksum.
+Each version supplies its own verified `inputs.source.sha256`; hashes cannot be
+shared or inferred from version names. Version `inputs.source` fields override
+individual download settings. A version's `build` replaces the complete backend
+configuration, independently of its source hash and outputs.
 
 Zig recipes must depend on an exact catalog compiler such as `zig@0.16.0`.
 Use `args` for project `-D` options; Rootbeer controls the install prefix and
@@ -313,7 +331,7 @@ isolates build caches. Installed commands belong under `bin/`; runtime resources
 must continue working after the installation is moved. Checks run through profile
 symlinks; offline reconstruction must recover the same commands and output tree.
 
-Use `patches` for reviewed unified diffs applied with `-p1` before compilation.
+Use `inputs.source.patches` for reviewed unified diffs applied with `-p1` before compilation.
 Patch contents are part of the recipe and build receipt. Keep changes narrowly
 focused, such as pinning a git-derived version or replacing a fixed installation
 path with executable-relative lookup. Pin unreleased source archives to a full
@@ -321,9 +339,9 @@ commit and use an exact snapshot version, retaining the original source checksum
 
 ### Library dependencies
 
-Declare static or shared libraries in `build.libraries`, for example
+Declare source-built static or shared libraries in `outputs.libraries`, for example
 `libraries = { "lib/libssl.a", "lib/libcrypto.a" }`. Library-only packages use
-`bins = {}` and `checks = {}`; their build must still run the upstream test suite.
+`outputs.bins = {}` and `outputs.checks = {}`; their build must still run the upstream test suite.
 Rootbeer validates declared libraries before export and after offline reconstruction.
 Use self-contained `.a` archives, `.dylib`, `.so`, or versioned `.so.*` files
 under `lib/` or `lib64/`.
@@ -399,15 +417,12 @@ pass paths as positional arguments. Rootbeer applies the same environment,
 logging, time limits, and artifact verification as the presets. Recipe commands
 and upstream build scripts execute trusted code.
 
-### Expansion and compatibility
+### Expansion
 
-Compact files expand into the same exact recipes used by resolution, caches,
-qualification, and signed snapshots. Existing expanded Lua definitions still load.
-`rootbeer-forge index` shows the expanded result. Discovery preserves existing templates
-and version overrides; expanded files stay expanded. Import and seeding infer compact
-templates once for new definitions.
-Migration preserves array ordering, so some older definitions keep explicit platform
-lists even when their membership matches the asset map.
+Schema 2 definitions expand into the resolved recipes used by builds, caches,
+installation, and signed snapshots. `rootbeer-forge index` shows those resolved
+inputs. Import, discovery, and rendering all write schema 2. Older compact and
+expanded Lua layouts are rejected; there is no authoring compatibility adapter.
 
 Shared changes affect every version that inherits them. Review expanded output,
 retain old behavior with version overrides, or increment every affected revision.
@@ -422,7 +437,7 @@ rootbeer-forge --catalog packages import github:owner/tool \
   --name tool --bin tool --output candidates
 ```
 
-The output contains one complete compact `packages/tool.lua`, including its
+The output contains one complete schema 2 `packages/tool.lua`, including its
 GitHub repository ID and reusable source patterns. The output directory must not
 already exist.
 
@@ -477,12 +492,18 @@ The importer does not download binaries, execute imported code, or publish candi
 
 ## Track upstream updates
 
-GitHub `source` settings drive both discovery and version expansion. A tag template
-such as `tool-{version}` also selects that release series; `source.tag_prefix`
-can override the discovery filter. `v{version}` selects only tags beginning with
-`v`; `{version}` selects bare numeric tags. `source.update_systems` narrows discovery without removing retained
-platform recipes. Set `source.track = false` to opt out. Source builds remain
-untracked; automatic discovery currently supports GitHub binary releases only.
+An optional `upstream` section describes GitHub release discovery, independently of
+the build backend. `upstream.tag_prefix` selects a release series;
+`upstream.exclude_tags` excludes unrelated tags, and `upstream.systems` narrows
+updates without removing retained platform recipes. Omit `upstream` to opt out.
+A pinned `upstream.repository_id` detects repository identity changes.
+
+For prebuilt packages, discovery selects platform assets using `inputs.prebuilt`.
+For source packages, it selects a stable release, expands the shared source URL,
+downloads the archive, and records the hash of the actual bytes. Source discovery
+requires a shared build definition and a source URL containing `{version}` or
+`{tag}`. It does not look for platform binaries or run builds during discovery.
+Existing versions remain pinned; generated candidates still require build checks.
 
 Run discovery directly against the package directory:
 
@@ -492,14 +513,15 @@ rootbeer-forge --catalog packages updates \
 ```
 
 For older catalogs without update rules, `seed-upstreams --output tracked-packages`
-creates compact copies of GitHub-backed packages with inferred source patterns.
+creates schema 2 copies of GitHub-backed binary packages with inferred asset patterns.
 Review their asset patterns and tag filters before adopting them. The output must
 be a new directory; seeding does not preserve customized discovery rules.
 
 `updates` reports each project independently. It writes `report.json`, `summary.md`,
-and complete files in `packages/` for changed recipes or discovery rules, including
-newly recorded repository IDs. The report separates recipe changes (`updated`) from
-rule changes (`rules_changed`); qualify only the former. A no-change scan writes no
+and a complete candidate catalog in `packages/` when recipes or discovery rules
+change. Keeping the catalog together preserves build dependencies. The report
+separates recipe changes (`updated`) from rule changes (`rules_changed`); package
+CI runs when recipes change and reuses verified results for unchanged packages. A no-change scan writes no
 package files and needs no qualification.
 Errors return a nonzero exit status after writing the report and successful candidates.
 
