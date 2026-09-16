@@ -47,14 +47,54 @@ references survive store relocation. Lockfiles expose all retained store paths
 for future garbage collection. The build audit checks declared sibling entries
 without consulting the host's library search paths.
 
-The current executor builds for its own host. Cross-compilation and a resource-aware
-graph scheduler are follow-up work. Build environment locks pin declared executable
+The current executor builds for its own host. Cross-compilation remains separate work. Build environment locks pin declared executable
 bytes, SDK/toolchain trees, and variables, and verification precedes cache
 lookup. Pinned builds use a declared tool path. They still require a host image
 identity for OS runtime inputs. Optional isolation uses macOS Seatbelt or Linux
 Bubblewrap to deny host networking, restrict reads, and make declared inputs
 read-only. All package subprocesses share this boundary, including tool probes
 and cache-hit checks. Source export caching goes through the same executor.
+
+## Build scheduling and recovery
+
+Catalog export uses the dependency scheduler in `rootbeer-build`; packaging owns
+qualification and publication. `--workers` remains the maximum number of package
+operations. `--jobs` is the compiler budget shared by source operations. Binary
+imports occupy a worker but do not reserve compiler slots. Ready source operations
+share the available slots; priority follows the longest remaining dependency chain.
+Each operation reports its allocation and elapsed time. Failures block dependants
+while independent work can finish and save verified results.
+
+Allocations remain fixed for an operation. This does not resize running compilers,
+parallelize the steps of one recipe, or impose a memory limit. Single-package build
+plans still walk dependencies in order. Those are explicit limits of this bounded
+scheduler, not requirements before adding more packages.
+
+### Existing tools
+
+| Tool | Decision |
+| --- | --- |
+| [GNU jobserver via the Rust crate](https://docs.rs/jobserver/latest/jobserver/) | Reuse when backends explicitly support cooperative job allocation. Do not inject into arbitrary custom commands. |
+| [Make/Ninja](https://ninja-build.org/manual.html#_gnu_jobserver_support) | Continue using upstream build tools for compilation. Ninja's Unix jobserver support needs FIFO transport and no explicit `-j`; existing recipes pass explicit job counts. |
+| [sccache](https://github.com/mozilla/sccache) | Candidate for compiler caching across changed source builds. It cannot replace verified package-output caching. No mandatory launcher or remote service in this change. |
+| [ccache](https://ccache.dev/manual/latest.html) | Suitable for C/C++ compiler caching, but not a replacement for dependency planning, qualification, or publication. |
+
+Keep the existing content-addressed build results, receipts, and GitHub Actions
+cache transport. Do not loosen build-cache identities to improve hit rates without
+proving that the omitted inputs cannot change outputs. A compiler-cache rollout
+needs measured benefit and explicit toolchain configuration; it does not block
+HTTP/3 or subsequent package ports.
+
+HTTP downloads retry transient failures up to five times with exponential backoff
+and jitter. `Retry-After` seconds and dates are respected; requests that require a
+wait longer than one minute fail rather than retry prematurely. Integrity failures
+and permanent HTTP errors are not retried.
+
+Index CI keeps restoration, timed export, and cache saving in separate steps.
+The export deadline is 55 minutes inside a 75-minute job, leaving time for setup
+and recovery. Cache saving uses `!cancelled()` so failures can retain completed
+results while explicit cancellation remains effective. Partial bundles never pass
+publication. Workflow configuration changes still require main-branch verification.
 
 ## Layer 1 — Rust Primitives
 

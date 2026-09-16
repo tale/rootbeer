@@ -1,7 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -283,7 +283,10 @@ fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
     }
 
     let token = std::env::var("GITHUB_TOKEN").ok();
-    let (_, body) = http_request(url, token.as_deref())
+    let response = http_request(url, token.as_deref())
+        .config()
+        .http_status_as_error(false)
+        .build()
         .call()
         .map_err(|error| {
             let is_transient = matches!(
@@ -298,21 +301,41 @@ fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
             );
             let message = format!("failed to fetch {url}: {error}");
             if is_transient {
-                return io::Error::other(TransientDownload(message));
+                return io::Error::other(TransientDownload {
+                    message,
+                    retry_after: None,
+                });
             }
             io::Error::other(message)
-        })?
-        .into_parts();
-
-    Ok(Box::new(body.into_reader()))
+        })?;
+    let status = response.status().as_u16();
+    if status >= 400 {
+        let message = format!("failed to fetch {url}: http status: {status}");
+        if !matches!(status, 408 | 429 | 500 | 502 | 503 | 504) {
+            return Err(io::Error::other(message));
+        }
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| retry_after(value, SystemTime::now()));
+        return Err(io::Error::other(TransientDownload {
+            message,
+            retry_after,
+        }));
+    }
+    Ok(Box::new(response.into_body().into_reader()))
 }
 
 #[derive(Debug)]
-struct TransientDownload(String);
+struct TransientDownload {
+    message: String,
+    retry_after: Option<Duration>,
+}
 
 impl std::fmt::Display for TransientDownload {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.message)
     }
 }
 
@@ -321,26 +344,64 @@ impl std::error::Error for TransientDownload {}
 fn body_error(url: &str, error: io::Error) -> io::Error {
     let message = format!("failed to read {url}: {error}");
     if url.starts_with("http://") || url.starts_with("https://") {
-        return io::Error::other(TransientDownload(message));
+        return io::Error::other(TransientDownload {
+            message,
+            retry_after: None,
+        });
     }
     io::Error::new(error.kind(), message)
 }
 
-fn with_retries<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
-    for attempt in 0..3 {
-        match operation() {
-            Err(error)
-                if attempt < 2
-                    && error
-                        .get_ref()
-                        .is_some_and(|cause| cause.is::<TransientDownload>()) =>
-            {
-                let delay = 1 << attempt;
-                eprintln!("download retry {}/3 in {delay}s: {error}", attempt + 2);
-                std::thread::sleep(std::time::Duration::from_secs(delay));
-            }
-            result => return result,
+fn retry_after(value: &str, now: SystemTime) -> Option<Duration> {
+    value
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
+        .or_else(|| {
+            httpdate::parse_http_date(value)
+                .ok()
+                .map(|date| date.duration_since(now).unwrap_or_default())
+        })
+}
+
+fn with_retries<T>(operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    retry_with_sleep(operation, std::thread::sleep)
+}
+
+fn retry_with_sleep<T>(
+    mut operation: impl FnMut() -> io::Result<T>,
+    mut sleep: impl FnMut(Duration),
+) -> io::Result<T> {
+    const ATTEMPTS: u32 = 5;
+    for attempt in 0..ATTEMPTS {
+        let error = match operation() {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        let transient = error
+            .get_ref()
+            .and_then(|cause| cause.downcast_ref::<TransientDownload>());
+        let Some(transient) = transient.filter(|_| attempt + 1 < ATTEMPTS) else {
+            return Err(error);
+        };
+        let backoff = Duration::from_secs(2 << attempt);
+        let delay = transient.retry_after.unwrap_or_default().max(backoff);
+        if delay > Duration::from_secs(60) {
+            return Err(error);
         }
+        let jitter = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as u64
+            % 1000;
+        let delay = (delay + Duration::from_millis(jitter)).min(Duration::from_secs(60));
+        eprintln!(
+            "download retry {}/{ATTEMPTS} in {:.1}s: {error}",
+            attempt + 2,
+            delay.as_secs_f64()
+        );
+        sleep(delay);
     }
     unreachable!()
 }
@@ -461,6 +522,54 @@ mod tests {
         "HTTP/1.1 200 OK\r\nContent-Length: 50\r\nConnection: close\r\n\r\npartial";
 
     #[test]
+    fn retry_backoff_is_bounded_and_preserves_server_minimum() {
+        let mut attempts = 0;
+        let mut delays = Vec::new();
+        let result = retry_with_sleep(
+            || -> io::Result<()> {
+                attempts += 1;
+                Err(io::Error::other(TransientDownload {
+                    message: "busy".into(),
+                    retry_after: Some(Duration::from_secs(10)),
+                }))
+            },
+            |delay| delays.push(delay),
+        );
+        assert!(result.is_err());
+        assert_eq!(attempts, 5);
+        assert_eq!(delays.len(), 4);
+        for (delay, minimum) in delays.iter().zip([10, 10, 10, 16]) {
+            assert!(*delay >= Duration::from_secs(minimum));
+            assert!(*delay < Duration::from_secs(minimum + 1));
+        }
+        let result = retry_with_sleep(
+            || -> io::Result<()> {
+                Err(io::Error::other(TransientDownload {
+                    message: "busy".into(),
+                    retry_after: Some(Duration::from_secs(3600)),
+                }))
+            },
+            |_| panic!("must not retry earlier than the server permits"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn retry_after_accepts_seconds_and_http_dates() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        assert_eq!(retry_after("12", now), Some(Duration::from_secs(12)));
+        assert_eq!(
+            retry_after(&httpdate::fmt_http_date(now + Duration::from_secs(20)), now),
+            Some(Duration::from_secs(20))
+        );
+        assert_eq!(
+            retry_after(&httpdate::fmt_http_date(now - Duration::from_secs(20)), now),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(retry_after("invalid", now), None);
+    }
+
+    #[test]
     fn retries_transient_status_and_partial_body_with_clean_output() {
         let server = HttpServer::new(vec![UNAVAILABLE, PARTIAL, SUCCESS]);
         let tmp = tempfile::tempdir().unwrap();
@@ -488,7 +597,7 @@ mod tests {
             .materialize(&server.url, None)
             .unwrap_err();
         assert!(error.to_string().contains(&server.url));
-        assert_eq!(server.request_count(), 3);
+        assert_eq!(server.request_count(), 5);
         assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 0);
     }
 
@@ -497,7 +606,19 @@ mod tests {
         let server = HttpServer::new(vec![UNAVAILABLE]);
         let error = read_url(&server.url).unwrap_err();
         assert!(error.to_string().contains("503"));
-        assert_eq!(server.request_count(), 3);
+        assert_eq!(server.request_count(), 5);
+    }
+
+    #[test]
+    fn server_retry_deadline_beyond_budget_is_not_retried_early() {
+        let server = HttpServer::new(vec![
+            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 3600\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        ]);
+        assert!(read_url(&server.url)
+            .unwrap_err()
+            .to_string()
+            .contains("429"));
+        assert_eq!(server.request_count(), 1);
     }
 
     #[test]

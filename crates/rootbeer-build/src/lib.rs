@@ -13,6 +13,7 @@ pub mod audit;
 mod backend;
 mod runner;
 mod sandbox;
+pub mod scheduler;
 pub use archive::pack;
 pub use runner::{run, run_with_sandbox};
 pub use sandbox::Sandbox;

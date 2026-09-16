@@ -10,7 +10,7 @@ use rootbeer_package::download::DownloadCache;
 use rootbeer_store::{hash_bytes, hash_file, Store};
 
 mod cache;
-mod scheduler;
+use rootbeer_build::scheduler;
 
 pub use cache::ExportCache;
 
@@ -272,7 +272,7 @@ pub fn export_catalog_with_workers(
                     }
                 }
             },
-        );
+        )?;
     }
     if !failures.is_empty() {
         return Err(format!(

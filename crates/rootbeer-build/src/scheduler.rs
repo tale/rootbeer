@@ -1,37 +1,64 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc;
+use std::time::Instant;
 
-pub(super) struct Task {
+/// A unique package operation and the operations that must complete before it.
+pub struct Task {
     pub key: String,
     pub dependencies: Vec<String>,
     pub is_source: bool,
 }
 
-pub(super) fn run<R: Send>(
+/// Runs dependency-ready operations within package-worker and compiler-slot limits.
+/// Source allocations share `jobs`; imports receive one job without reserving compiler slots.
+/// Dependencies absent from `tasks` must already be satisfied by the caller.
+pub fn run<R: Send>(
     tasks: Vec<Task>,
     workers: usize,
     jobs: usize,
     operation: impl Fn(&str, usize) -> Result<R, String> + Sync,
     mut complete: impl FnMut(String, Result<R, String>) -> bool,
-) {
-    let mut pending: BTreeMap<_, _> = tasks
-        .into_iter()
-        .map(|task| (task.key.clone(), task))
-        .collect();
-    let keys: std::collections::BTreeSet<_> = pending.keys().cloned().collect();
+) -> Result<(), String> {
+    if !(1..=64).contains(&workers) || !(1..=64).contains(&jobs) {
+        return Err("workers and jobs must be between 1 and 64".into());
+    }
+    let mut pending = BTreeMap::new();
+    for task in tasks {
+        if pending.insert(task.key.clone(), task).is_some() {
+            return Err("duplicate build task".into());
+        }
+    }
+    let keys: BTreeSet<_> = pending.keys().cloned().collect();
     for task in pending.values_mut() {
         task.dependencies.retain(|key| keys.contains(key));
     }
-    let priority: BTreeMap<_, _> = keys
-        .iter()
-        .map(|key| {
-            let dependants = pending
+    let mut priority = BTreeMap::new();
+    while priority.len() < pending.len() {
+        let previous = priority.len();
+        for key in pending.keys() {
+            if priority.contains_key(key) {
+                continue;
+            }
+            let dependants: Vec<_> = pending
                 .values()
                 .filter(|task| task.dependencies.contains(key))
-                .count();
-            (key.clone(), dependants)
-        })
-        .collect();
+                .collect();
+            if dependants
+                .iter()
+                .all(|task| priority.contains_key(&task.key))
+            {
+                let depth = dependants
+                    .iter()
+                    .map(|task| priority[&task.key])
+                    .max()
+                    .unwrap_or(0);
+                priority.insert(key.clone(), depth + 1);
+            }
+        }
+        if priority.len() == previous {
+            return Err("build task graph contains a cycle".into());
+        }
+    }
     let mut completed = BTreeMap::new();
     let mut available = jobs;
     let mut active = 0;
@@ -52,13 +79,14 @@ pub(super) fn run<R: Send>(
                 complete(key.clone(), Err(format!("dependency {dependency} failed")));
                 completed.insert(key, false);
             }
-            while active < workers && available > 0 {
+            while active < workers {
                 let ready: Vec<_> = pending
                     .values()
                     .filter(|task| {
                         task.dependencies
                             .iter()
                             .all(|key| completed.get(key) == Some(&true))
+                            && (!task.is_source || available > 0)
                     })
                     .collect();
                 let Some(task) = ready
@@ -67,38 +95,49 @@ pub(super) fn run<R: Send>(
                 else {
                     break;
                 };
-                let slots = ready.len().min(workers - active).min(available);
-                let allocation = if task.is_source {
+                let is_source = task.is_source;
+                let allocation = if is_source {
+                    let slots = ready
+                        .iter()
+                        .filter(|task| task.is_source)
+                        .count()
+                        .min(workers - active)
+                        .min(available);
                     available.div_ceil(slots)
                 } else {
-                    1
+                    0
                 };
                 let key = task.key.clone();
                 pending.remove(&key);
                 available -= allocation;
                 active += 1;
                 let (sender, operation) = (sender.clone(), &operation);
+                eprintln!(
+                    "START {key} ({}; jobs={})",
+                    if is_source { "source" } else { "import" },
+                    allocation.max(1)
+                );
                 scope.spawn(move || {
+                    let started = Instant::now();
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        operation(&key, allocation)
+                        operation(&key, allocation.max(1))
                     }))
                     .unwrap_or_else(|_| Err("package worker panicked".into()));
-                    let _ = sender.send((key, allocation, result));
+                    let _ = sender.send((key, allocation, result, started.elapsed()));
                 });
             }
             if active == 0 {
-                for (key, _) in std::mem::take(&mut pending) {
-                    complete(key, Err("unresolved package dependencies".into()));
-                }
-                break;
+                continue;
             }
-            let (key, allocation, result) = receiver.recv().unwrap();
+            let (key, allocation, result, elapsed) = receiver.recv().unwrap();
             available += allocation;
             active -= 1;
+            eprintln!("FINISH {key} ({:.1}s)", elapsed.as_secs_f64());
             let is_success = complete(key.clone(), result);
             completed.insert(key, is_success);
         }
     });
+    Ok(())
 }
 
 #[cfg(test)]
@@ -160,7 +199,8 @@ mod tests {
                 results.insert(key, result);
                 is_success
             },
-        );
+        )
+        .unwrap();
         assert_eq!(peak.load(Ordering::SeqCst), 3);
         assert_eq!(results.len(), 3);
         assert!(results.values().all(Result::is_ok));
@@ -192,7 +232,8 @@ mod tests {
                 results.insert(key, result);
                 is_success
             },
-        );
+        )
+        .unwrap();
         assert_eq!(started.into_inner().unwrap().len(), 2);
         assert!(results["independent"].is_ok());
         assert!(results["consumer"].as_ref().unwrap_err().contains("broken"));
@@ -215,8 +256,75 @@ mod tests {
                 results.insert(key, result);
                 is_success
             },
-        );
+        )
+        .unwrap();
         assert!(results["broken"].is_err());
         assert!(results["independent"].is_ok());
+    }
+    #[test]
+    fn imports_overlap_sources_without_reserving_compiler_slots() {
+        let arrivals = Mutex::new(0);
+        let ready = Condvar::new();
+        let mut import = task("z-archive", &[]);
+        import.is_source = false;
+        run(
+            vec![import, task("compiler", &[])],
+            2,
+            4,
+            |key, jobs| {
+                assert_eq!(jobs, if key == "compiler" { 4 } else { 1 });
+                let mut arrivals = arrivals.lock().unwrap();
+                *arrivals += 1;
+                ready.notify_all();
+                let (_arrivals, timeout) = ready
+                    .wait_timeout_while(arrivals, std::time::Duration::from_secs(5), |count| {
+                        *count < 2
+                    })
+                    .unwrap();
+                assert!(!timeout.timed_out());
+                Ok(())
+            },
+            |_, result| result.is_ok(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn longer_dependency_chains_start_before_alphabetical_leaves() {
+        let started = Mutex::new(Vec::new());
+        run(
+            vec![
+                task("a", &[]),
+                task("z", &[]),
+                task("middle", &["z"]),
+                task("last", &["middle"]),
+            ],
+            1,
+            1,
+            |key, _| {
+                started.lock().unwrap().push(key.to_string());
+                Ok(())
+            },
+            |_, result| result.is_ok(),
+        )
+        .unwrap();
+        assert_eq!(&started.into_inner().unwrap()[..2], &["z", "middle"]);
+    }
+
+    #[test]
+    fn invalid_graphs_never_start_work() {
+        for tasks in [
+            vec![task("a", &["b"]), task("b", &["a"])],
+            vec![task("a", &[]), task("a", &[])],
+        ] {
+            assert!(run(
+                tasks,
+                2,
+                2,
+                |_, _| -> Result<(), String> { panic!("invalid graph started work") },
+                |_, _| true
+            )
+            .is_err());
+        }
     }
 }
