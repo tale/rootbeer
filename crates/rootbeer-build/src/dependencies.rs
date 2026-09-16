@@ -118,7 +118,6 @@ pub(crate) fn environment(
     prefix: &Path,
     environment: &mut BTreeMap<&str, String>,
 ) -> Result<(), String> {
-    let quoted = |path: &Path| format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
     environment.insert("PKG_CONFIG_PATH", String::new());
     environment.insert(
         "PKG_CONFIG_LIBDIR",
@@ -133,19 +132,19 @@ pub(crate) fn environment(
     if !prefix.try_exists().map_err(|error| error.to_string())? {
         return Ok(());
     }
-    let cppflags = environment.get("CPPFLAGS").cloned().unwrap_or_default();
-    environment.insert(
-        "CPPFLAGS",
-        format!("{cppflags} -I{}", quoted(&prefix.join("include"))),
-    );
-    let ldflags = environment.get("LDFLAGS").cloned().unwrap_or_default();
-    environment.insert(
-        "LDFLAGS",
-        format!(
-            "{ldflags} -L{} -L{}",
-            quoted(&prefix.join("lib")),
-            quoted(&prefix.join("lib64"))
+    for (name, directories) in [
+        ("CPATH", vec![prefix.join("include")]),
+        (
+            "LIBRARY_PATH",
+            vec![prefix.join("lib"), prefix.join("lib64")],
         ),
-    );
+    ] {
+        let existing = environment.get(name).filter(|value| !value.is_empty());
+        let paths = directories
+            .into_iter()
+            .chain(existing.into_iter().flat_map(std::env::split_paths));
+        let value = std::env::join_paths(paths).map_err(|error| error.to_string())?;
+        environment.insert(name, value.to_string_lossy().into_owned());
+    }
     Ok(())
 }

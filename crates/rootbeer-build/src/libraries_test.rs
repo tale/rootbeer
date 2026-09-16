@@ -36,8 +36,9 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
     .unwrap();
     fs::write(middle.join("Makefile"), "all: libmiddle.a\nlibmiddle.a: middle.c\n\t$(CC) $(CPPFLAGS) -c middle.c -o middle.o\n\t$(AR) cr libmiddle.a middle.o\ncheck: all\n\t$(CC) $(LDFLAGS) check.c libmiddle.a -lbase -o check\n\t./check\n").unwrap();
     let consumer = sources.join("consumer");
-    fs::write(consumer.join("main.c"), "#include <base.h>\n#include <middle.h>\nint main(void) { return middle() - base() != 2; }\n").unwrap();
+    fs::write(consumer.join("main.c"), "#include <base.h>\n#include <middle.h>\n#ifndef ROOTBEER_TEST\n#error missing caller compiler flags\n#endif\nint main(void) { return middle() - base() != 2; }\n").unwrap();
     fs::write(consumer.join("Makefile"), "all: consumer\nconsumer: main.c\n\t! command -v rootbeer-test-generator\n\t$(CC) $(CPPFLAGS) $(LDFLAGS) main.c -lmiddle -lbase -o consumer\ncheck: all\n\t./consumer\n").unwrap();
+    fs::write(consumer.join("configure"), "#!/bin/sh\nset -eu\n$CC $CPPFLAGS ${LDFLAGS-} main.c -lmiddle -lbase -o configure-check\n./configure-check\n").unwrap();
     let archive = root.join("sources.tar.gz");
     pack(&sources, &archive).unwrap();
     let downloads = root.join("downloads");
@@ -81,7 +82,7 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
                 "dependencies": dependency.into_iter().map(|package| serde_json::json!({"package": package, "kind": if name == "base" { "build" } else { "link" }})).collect::<Vec<_>>(),
                 "libraries": if is_library { vec![format!("lib/lib{name}.a")] } else { vec![] },
                 "steps": {
-                    "configure": [], "build": [["make", "-j{jobs}"]], "check": [["make", "check"]],
+                    "configure": if name == "consumer" { vec![vec!["sh", "./configure"]] } else { vec![] }, "build": [["make", "-j{jobs}"]], "check": [["make", "check"]],
                     "install": [["sh", "-ec", install, "install", "{prefix}"]]
                 }
             }))
@@ -114,6 +115,7 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
     .collect();
     let environment = BuildEnvironment {
         tools,
+        variables: BTreeMap::from([("CPPFLAGS".into(), "-DROOTBEER_TEST=1".into())]),
         ..Default::default()
     }
     .pin()

@@ -84,7 +84,8 @@ review the change and regenerate the lock to get new cache keys.
 Pinned execution clears inherited variables and puts only dependency tools and
 declared tools on `PATH`. Rootbeer owns `PATH`, `CC`, `CXX`, shell selection,
 temporary directories, locale, and package-config lookup. Dependency library
-flags are appended to your `CPPFLAGS` and `LDFLAGS`.
+paths are prepended to `CPATH` and `LIBRARY_PATH`; your `CPPFLAGS` and
+`LDFLAGS` remain unchanged. Path lists preserve spaces without shell quoting.
 
 Environment locks describe input selection. Add `--isolate` to enforce filesystem
 and network restrictions while package code runs:
@@ -365,7 +366,7 @@ dependency set available during the build: commands on `PATH`, headers under
 `lib/pkgconfig`, `lib64/pkgconfig`, and `share/pkgconfig`. Conflicting exports fail
 the build. Dependency store entries remain unchanged.
 
-The builder supplies `CPPFLAGS`, `LDFLAGS`, `PKG_CONFIG_LIBDIR`, and
+The builder supplies `CPATH`, `LIBRARY_PATH`, `PKG_CONFIG_LIBDIR`, and
 `PKG_CONFIG_SYSROOT_DIR` for the merged dependency prefix. Declare a package
 providing `pkg-config` or `pkgconf` when the project needs that tool. Configure
 flags can use `{dependencies}`, such as `--with-openssl={dependencies}`.
