@@ -26,3 +26,7 @@ pub use upstream::{
 #[cfg(test)]
 #[path = "../../rootbeer-package/tests/support/catalog.rs"]
 mod test_catalog;
+
+#[cfg(test)]
+#[path = "../../../scripts/cache_inputs.rs"]
+mod cache_inputs;

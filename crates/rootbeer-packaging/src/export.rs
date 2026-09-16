@@ -10,6 +10,7 @@ use rootbeer_package::download::DownloadCache;
 use rootbeer_store::{hash_bytes, hash_file, Store};
 
 mod cache;
+mod scheduler;
 
 pub use cache::ExportCache;
 
@@ -80,7 +81,7 @@ pub fn export_catalog_shard(
     )
 }
 
-/// Qualifies recipes concurrently, limiting source compilation to one package at a time.
+/// Qualifies dependency-ready recipes concurrently within the total build job budget.
 pub fn export_catalog_with_workers(
     catalog: &PackageCatalog,
     registry: &str,
@@ -166,33 +167,68 @@ pub fn export_catalog_with_workers(
     }
     if !tasks.is_empty() {
         let inputs = export_inputs(catalog, tasks.iter().map(|(_, (key, ..))| key.as_str()))?;
-        let build_cache = cache_options.map(|cache| rootbeer_build::BuildCache {
-            directory: cache.directory.join("builds"),
-            context: cache.context.clone(),
-            recheck: cache.recheck,
-        });
-        let environment = ExportEnvironment {
-            catalog,
-            registry,
-            build_options,
-            inputs: &inputs,
-            cache: build_cache.as_ref(),
+        let build_cache = rootbeer_build::BuildCache {
+            directory: cache_options
+                .map(|cache| cache.directory.join("builds"))
+                .unwrap_or_else(|| staging.path().join("build-cache")),
+            context: cache_options
+                .map(|cache| cache.context.clone())
+                .unwrap_or_else(|| "export-session".into()),
+            recheck: cache_options.is_some_and(|cache| cache.recheck),
         };
-        run_workers(
-            tasks,
+        let session = rootbeer_build::BuildSession::default();
+        let scheduled = tasks
+            .iter()
+            .map(|(is_source, (key, _, recipe, _))| scheduler::Task {
+                key: key.clone(),
+                dependencies: recipe
+                    .build
+                    .as_ref()
+                    .map(|build| {
+                        build
+                            .dependencies
+                            .iter()
+                            .map(|dependency| dependency.package().to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                is_source: *is_source,
+            })
+            .collect();
+        let metadata: BTreeMap<_, _> = tasks
+            .into_iter()
+            .map(|(_, (key, name, recipe, fingerprint))| (key, (name, recipe, fingerprint)))
+            .collect();
+        scheduler::run(
+            scheduled,
             workers,
-            |(key, name, recipe, fingerprint)| {
-                let result = (|| {
-                    let work = tempfile::tempdir_in(staging.path()).map_err(|e| e.to_string())?;
-                    let bundle = work.path().join("bundle");
-                    publication::create_bundle(&bundle)?;
-                    let artifact =
-                        export_recipe(&environment, &key, name, recipe, work.path(), &bundle)?;
-                    Ok::<_, String>((work, artifact))
-                })();
-                (key, recipe, fingerprint, result)
+            build_options.jobs,
+            |key, jobs| {
+                let (name, recipe, _) = &metadata[key];
+                let options = BuildOptions {
+                    jobs,
+                    downloads: cache_options
+                        .map(|cache| cache.directory.join("builds/downloads"))
+                        .unwrap_or_else(|| build_options.downloads.clone()),
+                    session: Some(session.clone()),
+                    ..build_options.clone()
+                };
+                let environment = ExportEnvironment {
+                    catalog,
+                    registry,
+                    build_options: &options,
+                    inputs: &inputs,
+                    cache: Some(&build_cache),
+                };
+                let work = tempfile::tempdir_in(staging.path()).map_err(|e| e.to_string())?;
+                let bundle = work.path().join("bundle");
+                publication::create_bundle(&bundle)?;
+                let artifact =
+                    export_recipe(&environment, key, name, recipe, work.path(), &bundle)?;
+                Ok((work, artifact))
             },
-            |(key, recipe, fingerprint, result)| {
+            |key, result| {
+                let (_, recipe, fingerprint) = &metadata[&key];
                 let result = result.and_then(|(work, artifact)| {
                     let bundle = work.path().join("bundle");
                     for (directory, extension) in [("receipts", ".json"), ("artifacts", ".tar.gz")]
@@ -227,10 +263,12 @@ pub fn export_catalog_with_workers(
                             .or_default()
                             .insert(context.system.clone(), artifact);
                         eprintln!("PASS {key} on {}", context.system);
+                        true
                     }
                     Err(error) => {
                         eprintln!("FAIL {key} on {}: {error}", context.system);
                         failures.insert(key, error);
+                        false
                     }
                 }
             },
@@ -308,55 +346,6 @@ fn export_inputs<'a>(
     Ok(inputs)
 }
 
-fn run_workers<T: Send, R: Send>(
-    tasks: Vec<(bool, T)>,
-    workers: usize,
-    operation: impl Fn(T) -> R + Sync,
-    mut complete: impl FnMut(R),
-) {
-    use std::sync::{mpsc, Condvar, Mutex};
-    let queue = Mutex::new((std::collections::VecDeque::from(tasks), false));
-    let ready = Condvar::new();
-    let (sender, receiver) = mpsc::sync_channel(workers);
-    std::thread::scope(|scope| {
-        for _ in 0..workers {
-            let (queue, ready, operation, sender) = (&queue, &ready, &operation, sender.clone());
-            scope.spawn(move || loop {
-                let (is_source, task) = {
-                    let mut state = queue.lock().unwrap();
-                    loop {
-                        if state.0.is_empty() {
-                            return;
-                        }
-                        if let Some(position) = state
-                            .0
-                            .iter()
-                            .position(|(is_source, _)| !is_source || !state.1)
-                        {
-                            let task = state.0.remove(position).unwrap();
-                            state.1 |= task.0;
-                            break task;
-                        }
-                        state = ready.wait(state).unwrap();
-                    }
-                };
-                let result = operation(task);
-                if is_source {
-                    queue.lock().unwrap().1 = false;
-                    ready.notify_all();
-                }
-                if sender.send(result).is_err() {
-                    return;
-                }
-            });
-        }
-        drop(sender);
-        for result in receiver {
-            complete(result);
-        }
-    });
-}
-
 #[derive(Clone, Copy)]
 struct ExportEnvironment<'a> {
     catalog: &'a PackageCatalog,
@@ -400,9 +389,6 @@ fn export_recipe(
             &build,
             &rootbeer_build::BuildOptions {
                 cache: cache.cloned(),
-                downloads: cache
-                    .map(|cache| cache.directory.join("downloads"))
-                    .unwrap_or_else(|| rootbeer_store::state_dir().join("downloads")),
                 ..build_options.clone()
             },
         )?;
@@ -615,47 +601,95 @@ mod tests {
     use super::*;
 
     #[test]
-    fn workers_skip_waiting_sources_and_bound_parallelism() {
-        use std::sync::{
-            atomic::{AtomicUsize, Ordering},
-            mpsc, Mutex,
+    fn shared_dependencies_compile_once_per_export_including_rechecks_and_temporary_caches() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir_all(source.join("fixture")).unwrap();
+        let counter = root.path().join("compilations");
+        fs::write(
+            source.join("fixture/configure"),
+            format!(
+                r#"#!/bin/sh
+echo built >> '{}'
+cat > Makefile <<'MAKE'
+all:
+	true
+check:
+	true
+install:
+	mkdir -p $(DESTDIR)/bin
+	printf '#!/bin/sh\nexit 0\n' > $(DESTDIR)/bin/xz
+	chmod +x $(DESTDIR)/bin/xz
+MAKE
+"#,
+                counter.display()
+            ),
+        )
+        .unwrap();
+        let archive = root.path().join("source.tar.gz");
+        rootbeer_build::pack(&source, &archive).unwrap();
+        let downloads = root.path().join("cache/builds/downloads");
+        let downloaded = DownloadCache::new(&downloads)
+            .materialize(&format!("file://{}", archive.display()), None)
+            .unwrap();
+        let mut catalog = crate::test_catalog::catalog().clone();
+        catalog.packages.retain(|name, _| name == "xz");
+        let package = catalog.packages.get_mut("xz").unwrap();
+        let recipe = package.versions.get_mut(&package.default_version).unwrap();
+        recipe.systems = vec![ResolveContext::current().system];
+        recipe.bins = vec!["xz".into()];
+        recipe.checks = vec![vec!["xz".into(), "--version".into()]];
+        let build = recipe.build.as_mut().unwrap();
+        build.url = "https://example.invalid/shared-source.tar.gz".into();
+        build.sha256 = downloaded.sha256;
+        build.strip_prefix = "fixture".into();
+        build.configure.clear();
+        build.dependencies.clear();
+        let package = package.clone();
+        for name in ["consumer-a", "consumer-b"] {
+            let mut consumer = package.clone();
+            consumer.name = name.into();
+            consumer
+                .versions
+                .get_mut(&consumer.default_version)
+                .unwrap()
+                .build
+                .as_mut()
+                .unwrap()
+                .dependencies = vec![format!("xz@{}", package.default_version).into()];
+            catalog.packages.insert(name.into(), consumer);
+        }
+        let cache = ExportCache {
+            directory: root.path().join("cache"),
+            context: "shared-test".into(),
+            recheck: true,
         };
-        let (sender, receiver) = mpsc::channel();
-        let receiver = Mutex::new(receiver);
-        let active = AtomicUsize::new(0);
-        let source_active = AtomicUsize::new(0);
-        let maximum = AtomicUsize::new(0);
-        let mut completed = Vec::new();
-        run_workers(
-            vec![(true, 0), (true, 1), (false, 2), (false, 3)],
-            2,
-            |task| {
-                let count = active.fetch_add(1, Ordering::SeqCst) + 1;
-                maximum.fetch_max(count, Ordering::SeqCst);
-                if task < 2 {
-                    assert_eq!(source_active.fetch_add(1, Ordering::SeqCst), 0);
-                }
-                if task == 0 {
-                    receiver
-                        .lock()
-                        .unwrap()
-                        .recv_timeout(Duration::from_secs(5))
-                        .unwrap();
-                }
-                if task == 2 {
-                    sender.send(()).unwrap();
-                }
-                if task < 2 {
-                    source_active.fetch_sub(1, Ordering::SeqCst);
-                }
-                active.fetch_sub(1, Ordering::SeqCst);
-                task
-            },
-            |task| completed.push(task),
-        );
-        completed.sort();
-        assert_eq!(completed, [0, 1, 2, 3]);
-        assert_eq!(maximum.load(Ordering::SeqCst), 2);
+        let options = BuildOptions {
+            jobs: 3,
+            downloads,
+            ..Default::default()
+        };
+        for (name, cache, expected) in [
+            ("first", Some(&cache), 3),
+            ("recheck", Some(&cache), 6),
+            ("temporary", None, 9),
+        ] {
+            export_catalog_with_workers(
+                &catalog,
+                "owner/index",
+                &root.path().join(name),
+                &options,
+                2,
+                cache,
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                fs::read_to_string(&counter).unwrap().lines().count(),
+                expected,
+                "{name}"
+            );
+        }
     }
 
     #[test]

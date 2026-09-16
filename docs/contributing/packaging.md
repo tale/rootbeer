@@ -423,7 +423,8 @@ steps = {
 ```
 
 `{prefix}` is the isolated staging directory, `{dependencies}` is the dependency
-prefix, and `{jobs}` is the compiler parallelism limit. Build, check, and install
+prefix, and `{jobs}` is the compiler parallelism limit, not an artifact input.
+Changing it must not change the intended output. Build, check, and install
 phases must contain commands; configure may be empty. Arguments are passed
 directly, without shell evaluation. For shell syntax, explicitly invoke `sh` and
 pass paths as positional arguments. Rootbeer applies the same environment,
@@ -587,7 +588,8 @@ rootbeer-forge --catalog packages export --registry tale/rootbeer-index --output
 
 Use a trusted cache and identify the OS image and tools in `BUILD_ENVIRONMENT_ID`.
 A missing entry runs full verification; corruption fails. `--recheck` bypasses
-reuse. CI keeps scheduled full checks to detect upstream and platform drift.
+persistent reuse, while shared dependencies still compile once per export invocation.
+CI keeps scheduled full checks to detect upstream and platform drift.
 
 ## Qualify packages in parallel
 
@@ -599,10 +601,16 @@ rootbeer-forge --catalog packages export --registry tale/rootbeer-index \
   --output result --workers 2 --jobs 2
 ```
 
-`--workers` limits concurrent package exports; `--jobs` limits compiler jobs within
-each source build. The index runs one job for each supported platform, with its
-own cache scoped to the engine and build environment. Successful results are saved
-even when another package fails, so a retry reuses verified work.
+`--workers` limits concurrent package exports; `--jobs` is the total compiler job
+budget shared between them. Dependencies run before their consumers, while
+independent source builds can overlap. Shared dependencies reuse verified outputs
+within the invocation, including `--recheck` and exports without a persistent cache.
+A failed dependency blocks its consumers; independent packages continue.
+
+The index runs one job per supported platform. Cache keys include relevant engine
+source, recipes, dependency outputs, and the build environment. Unrelated CLI edits
+and changes to job allocation do not invalidate compiled outputs. Successful
+results survive failures elsewhere, so retries can reuse verified work.
 
 Assembly combines the three platform bundles and requires every declared version
 and platform before publication. Pin `ROOTBEER_REV` to an engine commit supporting

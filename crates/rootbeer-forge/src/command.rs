@@ -62,7 +62,7 @@ enum Command {
         registry: String,
         #[arg(long)]
         output: PathBuf,
-        /// Compiler jobs for the single active source build
+        /// Total compiler job budget shared by concurrent source builds
         #[arg(short, long, default_value_t = 2)]
         jobs: usize,
         /// Maximum packages to qualify concurrently

@@ -5,7 +5,7 @@ mod consumer_test;
 mod environment;
 pub use environment::{verify_environment, BuildEnvironment};
 mod plan;
-pub use cache::BuildCache;
+pub use cache::{BuildCache, BuildSession};
 pub use plan::BuildPlan;
 
 mod archive;
@@ -42,6 +42,7 @@ pub struct BuildOptions {
     pub jobs: usize,
     pub downloads: PathBuf,
     pub cache: Option<BuildCache>,
+    pub session: Option<BuildSession>,
     pub phase_timeout: Duration,
 }
 
@@ -53,6 +54,7 @@ impl Default for BuildOptions {
             jobs: 2,
             downloads: rootbeer_store::state_dir().join("downloads"),
             cache: None,
+            session: None,
             phase_timeout: Duration::from_secs(1200),
         }
     }
@@ -208,10 +210,9 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
                         &graph.system,
                         &dependencies,
                         &identity,
-                        opts.jobs,
                         &graph.nodes[key].exports,
                     )?;
-                    cache.entry(key)
+                    cache.entry(key, opts.session.as_ref())
                 })
                 .transpose()?;
             let restored = cache_entry
@@ -295,6 +296,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
                 if !is_cached {
                     entry.save(&artifact, &destination)?;
                 }
+                entry.complete();
             }
             fs::write(
                 destination.join("receipt.json"),

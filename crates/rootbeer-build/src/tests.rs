@@ -435,6 +435,7 @@ EOF
         .execute(
             &second,
             &BuildOptions {
+                jobs: 3,
                 cache: Some(cache.clone()),
                 ..opts.clone()
             },
@@ -492,6 +493,50 @@ EOF
         )
         .unwrap();
     assert!(refreshed.join("build.log").exists());
+
+    let session = BuildSession::default();
+    for (name, request, should_build, should_build_dependency) in [
+        ("session-first", "tool", true, false),
+        ("session-consumer", "fixture", true, false),
+        ("session-repeat", "fixture", false, false),
+    ] {
+        let output = directory.path().join(name);
+        BuildPlan::resolve(&catalog, request, &inputs)
+            .unwrap()
+            .execute(
+                &output,
+                &BuildOptions {
+                    cache: Some(BuildCache {
+                        recheck: true,
+                        ..cache.clone()
+                    }),
+                    session: Some(session.clone()),
+                    ..opts.clone()
+                },
+            )
+            .unwrap();
+        assert_eq!(output.join("build.log").exists(), should_build);
+        assert_eq!(
+            output.join("dependency-tool@5.8.3/build.log").exists(),
+            should_build_dependency
+        );
+    }
+    let output = directory.path().join("new-session");
+    BuildPlan::resolve(&catalog, "tool", &inputs)
+        .unwrap()
+        .execute(
+            &output,
+            &BuildOptions {
+                cache: Some(BuildCache {
+                    recheck: true,
+                    ..cache.clone()
+                }),
+                session: Some(BuildSession::default()),
+                ..opts.clone()
+            },
+        )
+        .unwrap();
+    assert!(output.join("build.log").is_file());
 
     let mut failing_catalog = catalog.clone();
     failing_catalog
@@ -654,7 +699,6 @@ EOF
         &environment
             .identity(&format!("{}\0host", cache.context))
             .unwrap(),
-        1,
         &BTreeMap::new(),
     )
     .unwrap();

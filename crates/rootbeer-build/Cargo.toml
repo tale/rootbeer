@@ -14,3 +14,6 @@ flate2 = "1"
 tar = "0.4"
 libc = "0.2.182"
 goblin = { version = "0.10.7", default-features = false, features = ["std", "elf32", "elf64", "mach32", "mach64", "endian_fd"] }
+
+[build-dependencies]
+sha2 = "0.10"

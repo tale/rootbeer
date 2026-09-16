@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{publication, CatalogRecipe, LockedSource, PackageCatalog, PublishedArtifact};
-use rootbeer_store::{hash_bytes, hash_file};
+use rootbeer_store::hash_bytes;
 
 /// Reuses successful exports from a trusted cache under an explicit build environment identity.
 pub struct ExportCache {
@@ -31,8 +31,7 @@ impl<'a> Cache<'a> {
             return Err("export cache requires a build environment identity".into());
         }
         fs::create_dir_all(&options.directory).map_err(|e| e.to_string())?;
-        let engine = hash_file(std::env::current_exe().map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+        let engine = env!("ROOTBEER_ENGINE_IDENTITY").to_string();
         Ok(Self { options, engine })
     }
 
@@ -146,7 +145,7 @@ fn fingerprint(
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
     let bytes = serde_json::to_vec(&(
-        "rootbeer-export-v2",
+        "rootbeer-export-v3",
         engine,
         context,
         registry,

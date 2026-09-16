@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use rootbeer_package::{BuildArtifact, CatalogRecipe, LockedPackage, LockedSource};
 use rootbeer_store::hash_file;
@@ -14,6 +15,12 @@ pub struct BuildCache {
     pub recheck: bool,
 }
 
+/// Shares completed cache entries across builds in one invocation, including forced rechecks.
+#[derive(Debug, Clone, Default)]
+pub struct BuildSession {
+    completed: Arc<Mutex<BTreeSet<PathBuf>>>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Record {
     key: String,
@@ -24,11 +31,16 @@ pub(crate) struct Entry {
     directory: PathBuf,
     key: String,
     should_rebuild: bool,
+    session: Option<BuildSession>,
     _lock: fs::File,
 }
 
 impl BuildCache {
-    pub(crate) fn entry(&self, key: String) -> Result<Entry, String> {
+    pub(crate) fn entry(
+        &self,
+        key: String,
+        session: Option<&BuildSession>,
+    ) -> Result<Entry, String> {
         if self.context.trim().is_empty() {
             return Err(
                 "build cache requires an identity for the host image, SDK, and toolchain".into(),
@@ -42,10 +54,14 @@ impl BuildCache {
             .open(self.directory.join("locks").join(&key))
             .map_err(|error| error.to_string())?;
         lock.lock().map_err(|error| error.to_string())?;
+        let directory = self.directory.join("results").join(&key);
+        let is_completed =
+            session.is_some_and(|session| session.completed.lock().unwrap().contains(&directory));
         Ok(Entry {
-            directory: self.directory.join("results").join(&key),
+            directory,
             key,
-            should_rebuild: self.recheck,
+            should_rebuild: self.recheck && !is_completed,
+            session: session.cloned(),
             _lock: lock,
         })
     }
@@ -57,7 +73,6 @@ pub(crate) fn key(
     system: &str,
     dependencies: &BTreeMap<String, LockedPackage>,
     context: &str,
-    jobs: usize,
     exports: &BTreeMap<String, rootbeer_package::graph::DependencyExports>,
 ) -> Result<String, String> {
     let outputs = dependencies
@@ -70,50 +85,31 @@ pub(crate) fn key(
             Ok((name, (hash, &package.provides, exports.get(name))))
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
-    let engine = rootbeer_store::hash_bytes(
-        concat!(
-            include_str!("lib.rs"),
-            include_str!("cache.rs"),
-            include_str!("plan.rs"),
-            include_str!("environment.rs"),
-            include_str!("dependencies.rs"),
-            include_str!("runner.rs"),
-            include_str!("sandbox.rs"),
-            include_str!("sandbox/macos.rs"),
-            include_str!("sandbox/linux.rs"),
-            include_str!("archive.rs"),
-            include_str!("audit/mod.rs"),
-            include_str!("audit/parse.rs"),
-            include_str!("audit/policy.rs"),
-            include_str!("backend/mod.rs"),
-            include_str!("backend/autotools.rs"),
-            include_str!("backend/custom.rs"),
-            include_str!("backend/zig.rs"),
-            include_str!("../../rootbeer-package/src/build_spec.rs"),
-            include_str!("../../rootbeer-package/src/realize.rs"),
-            include_str!("../../rootbeer-package/src/runtime.rs"),
-            include_str!("../../rootbeer-package/src/spec.rs"),
-            include_str!("../../rootbeer-package/src/graph.rs"),
-            include_str!("../../rootbeer-store/src/lib.rs"),
-            include_str!("../../../Cargo.lock")
-        )
-        .as_bytes(),
-    );
+    let engine = env!("ROOTBEER_ENGINE_IDENTITY");
     let bytes = serde_json::to_vec(&(
-        "rootbeer-build-v1",
+        "rootbeer-build-v2",
         engine,
         name,
         recipe,
         system,
         outputs,
         context,
-        jobs,
     ))
     .map_err(|error| error.to_string())?;
     Ok(rootbeer_store::hash_bytes(&bytes))
 }
 
 impl Entry {
+    pub(crate) fn complete(&self) {
+        if let Some(session) = &self.session {
+            session
+                .completed
+                .lock()
+                .unwrap()
+                .insert(self.directory.clone());
+        }
+    }
+
     pub(crate) fn key(&self) -> &str {
         &self.key
     }
@@ -203,7 +199,6 @@ mod tests {
                 "aarch64-macos",
                 dependencies,
                 "sdk-v1",
-                2,
                 &BTreeMap::new(),
             )
             .unwrap()
@@ -230,7 +225,6 @@ mod tests {
                 "aarch64-macos",
                 &dependencies,
                 "sdk-v1",
-                2,
                 &libraries
             )
             .unwrap()
@@ -244,7 +238,6 @@ mod tests {
             "aarch64-macos",
             &dependencies,
             "sdk-v1",
-            2,
             &BTreeMap::new()
         )
         .is_err());
@@ -267,20 +260,24 @@ mod tests {
         let cache = BuildCache {
             directory: root.path().into(),
             context: "test".into(),
-            recheck: false,
+            recheck: true,
         };
-        let first = cache.entry("same".into()).unwrap();
+        let session = BuildSession::default();
+        let first = cache.entry("same".into(), Some(&session)).unwrap();
+        assert!(first.should_rebuild);
         let (started, started_receiver) = std::sync::mpsc::channel();
         let (acquired, acquired_receiver) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || {
             started.send(()).unwrap();
-            let _second = cache.entry("same".into()).unwrap();
+            let second = cache.entry("same".into(), Some(&session)).unwrap();
+            assert!(!second.should_rebuild);
             acquired.send(()).unwrap();
         });
         started_receiver.recv().unwrap();
         assert!(acquired_receiver
             .recv_timeout(std::time::Duration::from_millis(100))
             .is_err());
+        first.complete();
         drop(first);
         acquired_receiver
             .recv_timeout(std::time::Duration::from_secs(5))

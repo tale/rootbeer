@@ -17,3 +17,6 @@ ureq = "3"
 [dev-dependencies]
 flate2 = "1"
 tar = "0.4"
+
+[build-dependencies]
+sha2 = "0.10"
