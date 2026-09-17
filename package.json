@@ -4,23 +4,24 @@
   "author": "Aarnav Tale <aarnav@tale.me>",
   "type": "module",
   "scripts": {
-    "lua2md": "tsx scripts/lua2md.ts lua/rootbeer -o docs/api/_generated",
+    "lua2md": "node scripts/lua2md.ts lua/rootbeer -o docs/api/_generated",
     "predev": "pnpm lua2md",
     "dev": "vitepress dev",
     "prebuild": "pnpm lua2md",
     "build": "vitepress build",
     "preview": "vitepress preview",
-    "test:catalog": "node --import tsx --test .vitepress/theme/catalog.test.ts"
+    "test:catalog": "node --test .vitepress/theme/catalog.test.ts"
   },
   "devDependencies": {
-    "oxfmt": "^0.43.0",
-    "tsx": "^4.21.0",
-    "vitepress": "2.0.0-alpha.17"
+    "oxfmt": "^0.68.0",
+    "vitepress": "2.0.0-alpha.20"
   },
-  "packageManager": "pnpm@10.30.0",
-  "pnpm": {
-    "overrides": {
-      "vite": "npm:vite@8"
+  "packageManager": "pnpm@12.4.2",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.21.0",
+      "onFail": "error"
     }
   }
 }

@@ -2,8 +2,9 @@
 
 ## Prerequisites
 
-Rust is pinned in `rust-toolchain.toml`. Install [rustup](https://rustup.rs/) and
-[mise](https://mise.jdx.dev/), then run:
+Rust is pinned in `rust-toolchain.toml`; Node and pnpm are pinned in
+`package.json`. Mise reads these files through the project settings. Install
+[rustup](https://rustup.rs/) and [mise](https://mise.jdx.dev/), then run:
 
 ```bash
 rustup show

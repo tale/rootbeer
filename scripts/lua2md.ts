@@ -6,7 +6,7 @@
  *
  * Usage:
  *   pnpm lua2md
- *   tsx scripts/lua2md.ts lua/rootbeer -o docs/api
+ *   node scripts/lua2md.ts lua/rootbeer -o docs/api
  */
 import { readFile, writeFile, mkdir, access, constants } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";

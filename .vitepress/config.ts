@@ -1,5 +1,5 @@
 import { defineConfig } from "vitepress";
-import { docsSidebar } from "./nav";
+import { docsSidebar } from "./nav.ts";
 
 export default defineConfig({
   srcDir: "docs",

@@ -13,7 +13,7 @@ import {
   primaryCommand,
   searchPackages,
   type CatalogPackage,
-} from "./catalog";
+} from "./catalog.ts";
 
 const pkg: CatalogPackage = {
   name: "test-tool",
