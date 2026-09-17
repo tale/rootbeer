@@ -92,6 +92,72 @@ impl Environment {
         })
     }
 
+    pub fn with_rust(self) -> Result<Self, String> {
+        if !self.is_host {
+            for name in ["cargo", "rustc"] {
+                if !self.lock.tools.contains_key(name) {
+                    return Err(format!("Rust builds require pinned tool {name}"));
+                }
+            }
+            let root = self
+                .lock
+                .inputs
+                .get("rust-libraries")
+                .ok_or("Rust builds require a pinned rust-libraries input")?;
+            if root.path.file_name().and_then(|name| name.to_str()) != Some("lib") {
+                return Err("rust-libraries must point to the toolchain lib directory".into());
+            }
+            for name in ["cargo", "rustc"] {
+                let expected = root
+                    .path
+                    .parent()
+                    .ok_or("invalid Rust library directory")?
+                    .join("bin")
+                    .join(name)
+                    .canonicalize()
+                    .map_err(|error| error.to_string())?;
+                if self.lock.tools[name]
+                    .path
+                    .canonicalize()
+                    .map_err(|error| error.to_string())?
+                    != expected
+                {
+                    return Err(format!("{name} must belong to the pinned Rust sysroot"));
+                }
+            }
+            return Ok(self);
+        }
+        let output = std::process::Command::new("rustc")
+            .args(["--print", "sysroot"])
+            .output()
+            .map_err(|error| format!("Rust builds require an installed toolchain: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "cannot locate Rust toolchain: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let root = PathBuf::from(
+            String::from_utf8(output.stdout)
+                .map_err(|error| error.to_string())?
+                .trim(),
+        );
+        let root = root.canonicalize().map_err(|error| error.to_string())?;
+        let mut lock = self.lock;
+        for name in ["cargo", "rustc"] {
+            lock.tools
+                .insert(name.into(), pin_input(&root.join("bin").join(name), true)?);
+        }
+        lock.inputs.insert(
+            "rust-libraries".into(),
+            pin_input(&root.join("lib"), false)?,
+        );
+        Ok(Self {
+            lock,
+            is_host: true,
+        })
+    }
+
     pub fn identity(&self, context: &str) -> Result<String, String> {
         let bytes = serde_json::to_vec(&(context, self.is_host, &self.lock))
             .map_err(|error| error.to_string())?;

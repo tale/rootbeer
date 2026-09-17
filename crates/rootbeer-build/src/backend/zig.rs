@@ -26,6 +26,7 @@ pub(super) fn plan(options: &[String], context: &Context<'_>) -> Result<Vec<Phas
     ];
     arguments.extend_from_slice(options);
     Ok(vec![Phase {
+        requires_network: false,
         name: "build",
         commands: vec![arguments],
     }])

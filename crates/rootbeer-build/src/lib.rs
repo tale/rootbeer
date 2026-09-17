@@ -99,6 +99,16 @@ pub fn build_package(
 fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<BuildArtifact, String> {
     opts.validate()?;
     let environment = environment::Environment::resolve(opts.environment.as_ref())?;
+    let environment = if plan.recipes.values().any(|recipe| {
+        recipe
+            .build
+            .as_ref()
+            .is_some_and(|build| matches!(build.backend, BuildBackend::Rust))
+    }) {
+        environment.with_rust()?
+    } else {
+        environment
+    };
     let isolation = if opts.is_isolated {
         Sandbox::identity()?
     } else {
@@ -355,6 +365,33 @@ fn compile(
     let mut environment = build_environment.variables(tools, host_tools, &workspace_path);
     let dependency_prefix = tools.join(".rootbeer-libraries");
     dependencies::environment(&dependency_prefix, &mut environment)?;
+    if let Some(rust) = &build.rust {
+        for (name, value) in &rust.environment {
+            environment.insert(name, value.clone());
+        }
+        environment.insert(
+            "CARGO_HOME",
+            workspace_path
+                .join("cargo-home")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        environment.insert(
+            "CARGO_TARGET_DIR",
+            workspace_path
+                .join("cargo-target")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        environment.insert("CARGO_INCREMENTAL", "0".into());
+        environment.insert(
+            "RUSTC",
+            build_environment.lock.tools["rustc"]
+                .path
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
     let mut reads = vec![tools.to_path_buf(), host_tools.to_path_buf()];
     reads.extend(dependencies.keys().map(|key| dependency_roots[key].clone()));
     let sandbox = opts
@@ -376,6 +413,20 @@ fn compile(
             (environment["CC"].as_str(), "--version"),
             ("make", "--version"),
         ],
+        BuildBackend::Rust => {
+            for name in ["cargo", "rustc"] {
+                if !host_tools.join(name).is_file() {
+                    return Err(format!(
+                        "Rust builds require a pinned toolchain providing {name}"
+                    ));
+                }
+            }
+            vec![
+                ("cargo", "--version"),
+                ("rustc", "--version"),
+                (environment["CC"].as_str(), "--version"),
+            ]
+        }
         BuildBackend::Zig => {
             if !zig.is_file() {
                 return Err("Zig builds require an exact catalog dependency providing zig".into());
@@ -435,10 +486,17 @@ fn compile(
             ))
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
+    let downloads_directory = opts
+        .downloads
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
     let phases = backend::plan(
         build,
         &backend::Context {
             prefix: &prefix,
+            downloads: &downloads_directory,
+            host_tools,
+            bins: &recipe.bins,
             dependencies: &dependency_prefix,
             tools,
             workspace: &workspace_path,
@@ -447,6 +505,11 @@ fn compile(
         },
     )?;
     for phase in phases {
+        let phase_sandbox = if phase.requires_network {
+            None
+        } else {
+            sandbox.as_ref()
+        };
         for command in phase.commands {
             if let Err(error) = run_with_sandbox(
                 &command,
@@ -454,7 +517,7 @@ fn compile(
                 &environment,
                 &log,
                 opts.phase_timeout,
-                sandbox.as_ref(),
+                phase_sandbox,
             ) {
                 let retained = workspace.keep();
                 return Err(format!(

@@ -5,18 +5,22 @@ pub(super) fn plan(options: &[String], context: &Context<'_>) -> Vec<Phase> {
     configure.extend(options.iter().map(|argument| context.expand(argument)));
     vec![
         Phase {
+            requires_network: false,
             name: "configure",
             commands: vec![configure],
         },
         Phase {
+            requires_network: false,
             name: "build",
             commands: vec![vec!["make".into(), format!("-j{}", context.jobs)]],
         },
         Phase {
+            requires_network: false,
             name: "check",
             commands: vec![vec!["make".into(), "check".into()]],
         },
         Phase {
+            requires_network: false,
             name: "install",
             commands: vec![vec![
                 "make".into(),

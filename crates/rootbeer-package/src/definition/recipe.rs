@@ -96,6 +96,8 @@ struct Source {
 #[serde(deny_unknown_fields)]
 struct Build {
     backend: crate::BuildBackend,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rust: Option<crate::RustBuild>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     configure: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

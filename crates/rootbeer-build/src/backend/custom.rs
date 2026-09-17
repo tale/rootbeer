@@ -14,6 +14,7 @@ pub(super) fn plan(
     ]
     .into_iter()
     .map(|(name, commands)| Phase {
+        requires_network: false,
         name,
         commands: commands
             .iter()

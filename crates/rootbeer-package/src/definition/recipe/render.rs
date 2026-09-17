@@ -160,6 +160,7 @@ fn split(recipe: &CatalogRecipe) -> Result<(Inputs, Option<Build>, Outputs), Str
             },
             Some(Build {
                 backend: build.backend.clone(),
+                rust: build.rust.clone(),
                 configure: build.configure.clone(),
                 args: build.args.clone(),
                 dependencies: build.dependencies.clone(),

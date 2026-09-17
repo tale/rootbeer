@@ -10,6 +10,7 @@ pub enum BuildBackend {
     Autotools,
     Custom,
     Zig,
+    Rust,
 }
 
 /// Which exports a dependency contributes to its consumer's build environment.
@@ -85,6 +86,8 @@ pub struct SourceBuild {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<crate::GitSource>,
     pub backend: BuildBackend,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust: Option<RustBuild>,
     pub url: String,
     pub sha256: String,
     #[serde(
@@ -106,6 +109,73 @@ pub struct SourceBuild {
     pub libraries: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steps: Option<BuildSteps>,
+}
+
+/// Cargo workspace selection and compile-time inputs for Rust binaries.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustBuild {
+    pub packages: Vec<String>,
+    #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default)]
+    pub no_default_features: bool,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+}
+
+impl RustBuild {
+    fn validate(&self) -> Result<(), String> {
+        let valid = |value: &str| {
+            !value.is_empty()
+                && !value.starts_with('-')
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-/".contains(&byte))
+        };
+        if self.packages.is_empty()
+            || self
+                .packages
+                .iter()
+                .any(|name| !valid(name) || name.contains('/'))
+            || self.features.iter().any(|name| !valid(name))
+        {
+            return Err(
+                "Rust builds require explicit Cargo packages and valid feature names".into(),
+            );
+        }
+        for (name, value) in &self.environment {
+            if name.is_empty()
+                || name.starts_with(|ch: char| ch.is_ascii_digit())
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+                || ["CARGO", "RUST", "LD_", "DYLD_"]
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix))
+                || matches!(
+                    name.as_str(),
+                    "PATH"
+                        | "HOME"
+                        | "TMPDIR"
+                        | "CC"
+                        | "CXX"
+                        | "AR"
+                        | "RANLIB"
+                        | "MAKEFLAGS"
+                        | "SOURCE_DATE_EPOCH"
+                        | "ZERO_AR_DATE"
+                        | "CONFIG_SHELL"
+                        | "LC_ALL"
+                        | "TZ"
+                )
+                || value.contains('\0')
+            {
+                return Err(format!("Rust build cannot set environment variable {name}"));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Explicit command phases for source projects without a built-in preset.
@@ -192,6 +262,15 @@ impl SourceBuild {
                 );
             }
             _ => {}
+        }
+        if matches!(self.backend, BuildBackend::Rust) != self.rust.is_some() {
+            return Err("rust settings are required only for the Rust backend".into());
+        }
+        if let Some(rust) = &self.rust {
+            rust.validate()?;
+            if !self.configure.is_empty() || !self.args.is_empty() || !self.libraries.is_empty() {
+                return Err("Rust builds use rust settings and export binaries".into());
+            }
         }
         if matches!(self.backend, BuildBackend::Custom) != self.steps.is_some() {
             return Err("steps are required only for the custom backend".into());

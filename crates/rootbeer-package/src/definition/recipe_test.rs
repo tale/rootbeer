@@ -285,3 +285,25 @@ fn optional_prebuilts_can_cover_only_some_source_platforms() {
     assert!(recipe.build.is_some());
     roundtrip(&definition);
 }
+
+#[test]
+fn rust_settings_roundtrip_and_reject_builder_overrides() {
+    let text = source()
+        .replace("backend = \"autotools\", configure = { \"--disable-shared\" }", "backend = \"rust\", rust = { packages = { \"tool-cli\" }, features = { \"tls\" }, environment = { APP_VERSION = \"1\" } }")
+        .replace(", libraries = { \"lib/libtool.a\" }", "");
+    let definition = roundtrip(&PackageDefinition::from_lua(&text).unwrap());
+    let mut build = definition.package.versions["1"].build.clone().unwrap();
+    assert_eq!(build.rust.as_ref().unwrap().packages, ["tool-cli"]);
+    for name in ["PATH", "CARGO_HOME", "RUSTC", "LD_PRELOAD", "CC"] {
+        build
+            .rust
+            .as_mut()
+            .unwrap()
+            .environment
+            .insert(name.into(), "override".into());
+        assert!(build.validate().unwrap_err().contains("environment"));
+        build.rust.as_mut().unwrap().environment.remove(name);
+    }
+    build.rust.as_mut().unwrap().packages.clear();
+    assert!(build.validate().is_err());
+}

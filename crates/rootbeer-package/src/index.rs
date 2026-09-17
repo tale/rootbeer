@@ -188,8 +188,10 @@ impl ArtifactIndex {
                         || !recipe.checksums.is_empty()
                         || recipe.mirror
                         || recipe.build.as_ref().is_some_and(|build| {
-                            matches!(build.backend, super::BuildBackend::Zig)
-                                || !build.args.is_empty()
+                            matches!(
+                                build.backend,
+                                super::BuildBackend::Zig | super::BuildBackend::Rust
+                            ) || !build.args.is_empty()
                                 || !build.patches.is_empty()
                         })
                 })

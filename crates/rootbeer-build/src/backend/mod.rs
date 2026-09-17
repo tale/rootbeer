@@ -4,16 +4,21 @@ use rootbeer_package::{BuildBackend, SourceBuild};
 
 mod autotools;
 mod custom;
+mod rust;
 mod zig;
 
 #[derive(Debug, Clone)]
 pub struct Phase {
     pub name: &'static str,
+    pub requires_network: bool,
     pub commands: Vec<Vec<String>>,
 }
 
 pub struct Context<'a> {
     pub prefix: &'a Path,
+    pub downloads: &'a Path,
+    pub host_tools: &'a Path,
+    pub bins: &'a [String],
     pub dependencies: &'a Path,
     pub tools: &'a Path,
     pub workspace: &'a Path,
@@ -42,5 +47,8 @@ pub fn plan(build: &SourceBuild, context: &Context<'_>) -> Result<Vec<Phase>, St
         BuildBackend::Autotools => Ok(autotools::plan(&build.configure, context)),
         BuildBackend::Custom => custom::plan(build.steps.as_ref(), context),
         BuildBackend::Zig => zig::plan(&build.args, context),
+        BuildBackend::Rust => {
+            rust::plan(build.rust.as_ref().ok_or("missing Rust settings")?, context)
+        }
     }
 }

@@ -21,7 +21,7 @@ build or packaging crates. Both applications share the package runtime;
 compilation and publishing belong to the maintainer application.
 
 A build plan owns its recipes and resolved binary inputs. Execution never
-re-resolves package metadata. Autotools, Zig, and Custom backend modules produce
+re-resolves package metadata. Autotools, Zig, Rust, and Custom backend modules produce
 phases consumed by one executor. Graph planning, receipt validation, and cache
 closure selection share the same dependency model.
 
@@ -52,8 +52,29 @@ bytes, SDK/toolchain trees, and variables, and verification precedes cache
 lookup. Pinned builds use a declared tool path. They still require a host image
 identity for OS runtime inputs. Optional isolation uses macOS Seatbelt or Linux
 Bubblewrap to deny host networking, restrict reads, and make declared inputs
-read-only. All package subprocesses share this boundary, including tool probes
-and cache-hit checks. Source export caching goes through the same executor.
+read-only. Compilation, tests, tool probes, and cache-hit checks share this boundary.
+Source and Cargo dependency acquisition happen before offline compilation. Source export caching goes through the same executor.
+
+## Rust packages
+
+Use `build.backend = "rust"` with `build.rust.packages` selecting explicit Cargo
+workspace packages. `features`, `no_default_features`, and `environment` configure
+features and compile-time application values. `outputs.bins` selects installed
+executables. The executor owns release mode, job limits, Cargo directories, and
+locked/offline behavior; recipes cannot override those through Rust settings.
+
+The source archive must contain `Cargo.lock`. Cargo vendors its locked dependencies
+in a network-enabled acquisition phase, reusing Cargo's download cache. Build and
+test phases use the private vendor configuration and `--frozen`. Cargo owns registry
+checksum and Git revision verification. Isolation applies after acquisition;
+upstream build scripts never run in the acquisition phase.
+
+Host builds resolve the active Rust sysroot before entering the extracted source,
+then pin its Cargo/rustc executables and library tree in the build receipt and cache
+identity. Repository rustup overrides cannot select a different compiler during the
+build. Explicit environment locks must declare `cargo`, `rustc`, and a
+`rust-libraries` input pointing to that toolchain's `lib` directory. No rustup proxy
+or developer Cargo home is used by build phases. CI selects an exact toolchain.
 
 ## Build scheduling and recovery
 
