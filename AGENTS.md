@@ -13,6 +13,26 @@ it akin to a dotfile manager like home-manager or chezmoi.
 Configuration must not depend on the build or packaging crates. Backends produce
 phases for the shared build executor. Coordinate recipe schema changes with the index repository and its engine pin.
 
+Production package recipes belong exclusively in `rootbeer-index/packages/`.
+Rootbeer contains generic package tooling and regression tests; never embed or
+duplicate production recipes in this repository.
+
+## Package CI and Publication
+
+- Verify changed package inputs once on each supported platform, then promote
+  those exact verified artifacts through merge and publication without rebuilding.
+- Reuse verified results for unaffected packages. Scope invalidation to changed
+  recipes, dependencies, relevant backend/executor behavior, and build environments;
+  an unrelated engine change must not force a full-catalog rebuild.
+- Do not run a cold baseline build merely to warm caches before a PR, or stack
+  baseline, PR, and post-merge full builds for the same publication. Check artifact
+  promotion eligibility and cache reuse before triggering expensive CI.
+- Retry only failed or affected work, preserving completed results. Reserve full
+  requalification for scheduled/explicit rechecks or changes that actually affect
+  the entire catalog. Never bypass integrity or provenance checks to save CI time.
+- If current tooling prevents reuse, identify and fix that limitation rather than
+  treating repeated full builds as a routine prerequisite for adding packages.
+
 User configuration is provided through a layering system in the core library,
 where the base fundamentals (such as symlinking files, creating new files,
 running commands, etc.) are provided by the library, callable from the user's

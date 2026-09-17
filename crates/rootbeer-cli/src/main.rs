@@ -69,7 +69,7 @@ enum Commands {
     /// View or change the git remote protocol for the source directory
     Remote(remote::Args),
 
-    /// Update rootbeer to the latest nightly build
+    /// Update Rootbeer through its installation owner
     Update,
 }
 

@@ -55,8 +55,20 @@ Exact versions in your configuration stay fixed, though packaging details may ch
 If you [selected a custom index](/guide/package-sources#use-another-index),
 updates keep using that snapshot until you change its URL and checksum.
 
-`rb update` updates Rootbeer itself. It does not update your packages, and a
-matching package lock remains usable after upgrading `rb`.
+`rb update` selects the latest published Rootbeer package from the signed index,
+rather than the separate nightly download channel:
+
+- Standalone installations replace only their `rb` executable, atomically.
+- Installations made with `rb use rootbeer` switch the user profile to the updated
+  package, preserving the original version or source selection and other packages.
+- Lua-managed installations direct you to `rb apply --update`; they never change
+  your configuration lock implicitly. Explicit version pins remain unchanged.
+
+Run the command through the owning profile. Direct store paths and unrecognized
+symlinks cannot self-update. Older user profiles without saved requests require
+one explicit `rb use rootbeer --update` (or `rootbeer@VERSION`) to record your choice.
+
+A matching configuration lock remains usable after upgrading `rb`.
 
 ## What offline mode covers
 

@@ -217,6 +217,7 @@ fn install_profile(
         root,
         profile,
         packages,
+        &[],
         realizer,
         &Applications::new(root.join("app-state"), root.join("Applications")),
     )
@@ -260,6 +261,7 @@ fn persistent_apps_update_remove_and_protect_unowned_paths() {
         root,
         &profile,
         std::slice::from_ref(&first),
+        &[],
         &realizer,
         &applications,
     )
@@ -270,6 +272,7 @@ fn persistent_apps_update_remove_and_protect_unowned_paths() {
         root,
         &profile,
         std::slice::from_ref(&second),
+        &[],
         &realizer,
         &applications,
     )
@@ -278,7 +281,9 @@ fn persistent_apps_update_remove_and_protect_unowned_paths() {
     let old_profile = fs::read_link(&profile).unwrap();
     fs::remove_file(&link).unwrap();
     fs::create_dir(&link).unwrap();
-    assert!(super::install_profile(root, &profile, &[first], &realizer, &applications).is_err());
+    assert!(
+        super::install_profile(root, &profile, &[first], &[], &realizer, &applications).is_err()
+    );
     assert_eq!(fs::read_link(&profile).unwrap(), old_profile);
     remove_from_profile(root, &profile, &["app".into()], &realizer, &applications).unwrap();
     assert!(link.is_dir());
@@ -313,4 +318,57 @@ fn generations_retain_runtime_closures_without_exporting_their_commands() {
     );
     assert!(!generation.join("bin/internal-tool").exists());
     assert!(generation.join("bin/consumer").exists());
+}
+
+#[test]
+fn profile_generations_preserve_selections_and_remove_only_selected_requests() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path();
+    let profile = root.join("profiles/user/current");
+    let first = package(root, "first", "1", "first");
+    let second = package(root, "second", "1", "second");
+    let realizer = realizer(root);
+    let applications = Applications::new(root.join("app-state"), root.join("Applications"));
+    let pinned = PackageRequest::parse("first@1");
+    super::install_profile(
+        root,
+        &profile,
+        &[first.clone(), second.clone()],
+        &[pinned.clone(), PackageRequest::parse("second@HEAD")],
+        &realizer,
+        &applications,
+    )
+    .unwrap();
+    let previous = fs::read_link(&profile).unwrap();
+    assert_eq!(installed_request(&profile, "first").unwrap(), Some(pinned));
+    assert_eq!(
+        installed_request(&profile, "second").unwrap(),
+        Some(PackageRequest::parse("second@HEAD"))
+    );
+    super::install_profile(
+        root,
+        &profile,
+        &[first],
+        &[PackageRequest::parse("first")],
+        &realizer,
+        &applications,
+    )
+    .unwrap();
+    assert_ne!(fs::read_link(&profile).unwrap(), previous);
+    assert_eq!(
+        installed_request(&profile, "first").unwrap(),
+        Some(PackageRequest::parse("first"))
+    );
+    assert_eq!(
+        installed_request(&previous, "first").unwrap(),
+        Some(PackageRequest::parse("first@1"))
+    );
+    remove_from_profile(root, &profile, &["first".into()], &realizer, &applications).unwrap();
+    assert_eq!(installed_request(&profile, "first").unwrap(), None);
+    assert_eq!(
+        installed_request(&profile, "second").unwrap(),
+        Some(PackageRequest::parse("second@HEAD"))
+    );
+    fs::write(profile.join("requests.json"), "invalid").unwrap();
+    assert!(installed_request(&profile, "second").is_err());
 }
