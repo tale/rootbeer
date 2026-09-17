@@ -16,7 +16,6 @@ import PackageSearch from '../../.vitepress/theme/PackageSearch.vue'
 <div class="catalog-page">
   <header class="catalog-header">
     <h1>Package catalog</h1>
-    <p>Search tools for macOS and Linux. Compare versions, check commands, and install packages.</p>
   </header>
   <PackageSearch />
 </div>

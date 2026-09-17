@@ -4,7 +4,6 @@ import { useData } from "vitepress";
 import PackageDetails from "./PackageDetails.vue";
 import {
   availableVersions,
-  defaultVersion,
   loadCatalog,
   matchesPackage,
   platforms,
@@ -140,7 +139,6 @@ onUnmounted(() => {
           }}</span></label
         >
       </fieldset>
-      <p class="filter-note">Select a platform to see its versions and defaults.</p>
       <nav class="catalog-nav" aria-label="Package guides">
         <h2>Using packages</h2>
         <a href="/guide/packages#run-a-tool">Run a tool</a>
@@ -229,9 +227,6 @@ onUnmounted(() => {
         <p v-if="show && !packages.some((pkg) => pkg.name === show)" class="catalog-message">
           “{{ show }}” is not in the published collection.
         </p>
-        <p class="result-hint">
-          Select a package for commands, versions, and installation instructions.
-        </p>
         <div class="package-list">
           <article
             v-for="pkg in results"
@@ -248,11 +243,6 @@ onUnmounted(() => {
               >
                 <span class="package-name">{{ pkg.name }}</span
                 ><span class="package-version">{{ preferredVersion(pkg, system) }}</span
-                ><span class="default-label">{{
-                  preferredVersion(pkg, system) === defaultVersion(pkg, system)
-                    ? "default"
-                    : "available"
-                }}</span
                 ><span class="expand-indicator" aria-hidden="true">{{
                   show === pkg.name ? "−" : "+"
                 }}</span>
@@ -282,7 +272,6 @@ onUnmounted(() => {
           </article>
         </div>
         <p class="collection-note">
-          Availability comes from the published index.
           <a href="/contributing/packaging">Missing a tool? Contribute a package →</a>
         </p>
       </template>
@@ -341,12 +330,6 @@ legend,
   margin-left: auto;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--vp-c-text-2);
-}
-.filter-note {
-  margin: 12px 0 0;
-  font-size: 12px;
-  line-height: 1.65;
   color: var(--vp-c-text-2);
 }
 .catalog-nav {
@@ -455,11 +438,6 @@ input[type="radio"]:focus-visible {
   color: var(--vp-c-brand-1);
   padding: 4px 8px;
 }
-.result-hint {
-  font-size: 12px;
-  color: var(--vp-c-text-2);
-  margin: 0 0 12px;
-}
 .package-list {
   border: 1px solid var(--vp-c-border);
 }
@@ -481,7 +459,11 @@ input[type="radio"]:focus-visible {
   gap: 10px;
   text-align: left;
   width: 100%;
-  padding: 18px 24px 4px;
+  padding: 18px 24px 10px;
+  flex-wrap: wrap;
+}
+.result-title > button:focus-visible {
+  outline-offset: -4px;
 }
 .result-title > button:hover .package-name {
   text-decoration: underline;
@@ -493,13 +475,10 @@ input[type="radio"]:focus-visible {
 }
 .package-version {
   font-family: var(--vp-font-family-mono);
+  overflow-wrap: anywhere;
+  min-width: 0;
   font-size: 12px;
   font-weight: 400;
-}
-.default-label {
-  font-weight: 400;
-  font-size: 10px;
-  color: var(--vp-c-text-2);
 }
 .expand-indicator {
   margin-left: auto;
@@ -585,7 +564,6 @@ input[type="radio"]:focus-visible {
   .filter-count {
     display: none;
   }
-  .filter-note,
   .contribute-nav {
     display: none;
   }
@@ -604,7 +582,7 @@ input[type="radio"]:focus-visible {
     width: 100%;
   }
   .result-title > button {
-    padding: 16px 16px 4px;
+    padding: 16px 16px 10px;
     flex-wrap: wrap;
     gap: 6px;
   }

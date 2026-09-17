@@ -19,7 +19,14 @@ export interface CatalogRecipe {
   apps?: Record<string, string>;
   revision: number;
   source?: string;
-  build?: { url: string; libraries?: string[] };
+  build?: {
+    url: string;
+    libraries?: string[];
+    dependencies?: (
+      | string
+      | { package: string; kind: "all" | "build" | "link" | "runtime" | "link_runtime" }
+    )[];
+  };
 }
 
 export const platforms = [
@@ -295,4 +302,25 @@ export function packageCommand(
       ? ` --bin ${quote(bin)}`
       : "";
   return `rb ${mode}${selectedBin} ${quote(request)}`;
+}
+
+export function packageDependencies(recipe: CatalogRecipe, system = "") {
+  const labels = {
+    all: "Build / link",
+    build: "Build",
+    link: "Link",
+    runtime: "Runtime",
+    link_runtime: "Link / runtime",
+  };
+  return (recipe.build?.dependencies ?? []).map((dependency) => {
+    const request = typeof dependency === "string" ? dependency : dependency.package;
+    const kind = typeof dependency === "string" ? "all" : dependency.kind;
+    const separator = request.indexOf("@");
+    const name = separator < 0 ? request : request.slice(0, separator);
+    const version = separator < 0 ? "" : request.slice(separator + 1);
+    const params = new URLSearchParams({ show: name });
+    if (version) params.set("version", version);
+    if (system) params.set("platform", system);
+    return { request, kind: labels[kind], href: `/packages/?${params}` };
+  });
 }

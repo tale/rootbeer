@@ -8,6 +8,7 @@ import {
   loadCatalog,
   matchesPackage,
   packageCommand,
+  packageDependencies,
   preferredVersion,
   primaryCommand,
   searchPackages,
@@ -309,4 +310,29 @@ test("schema 7 keeps source-capable packages available without prebuilts", async
     const catalog = await loadCatalog(data.source);
     assert.deepEqual(availableVersions(catalog.packages[0]), ["2.0"]);
   });
+});
+
+test("links exact dependencies with their scope and selected platform", () => {
+  const recipe = structuredClone(pkg.versions["2.0"]);
+  assert.deepEqual(packageDependencies(recipe), []);
+  recipe.build = {
+    url: "https://example.org/source.tar.gz",
+    dependencies: [
+      "test-library@1.2+build.3",
+      { package: "test-compiler@2.0", kind: "build" },
+      { package: "test-runtime@3.0", kind: "link_runtime" },
+      { package: "test-helper@4.0", kind: "runtime" },
+      { package: "test-static@5.0", kind: "link" },
+    ],
+  };
+  const dependencies = packageDependencies(recipe, "aarch64-linux");
+  assert.deepEqual(
+    dependencies.map((dependency) => dependency.kind),
+    ["Build / link", "Build", "Link / runtime", "Runtime", "Link"],
+  );
+  const url = new URL(dependencies[0].href, "https://example.org");
+  assert.equal(url.searchParams.get("show"), "test-library");
+  assert.equal(url.searchParams.get("version"), "1.2+build.3");
+  assert.equal(url.searchParams.get("platform"), "aarch64-linux");
+  assert.equal(dependencies[0].request, "test-library@1.2+build.3");
 });

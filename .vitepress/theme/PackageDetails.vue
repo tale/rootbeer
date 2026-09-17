@@ -4,6 +4,7 @@ import {
   availableVersions,
   defaultVersion,
   packageCommand,
+  packageDependencies,
   platforms,
   preferredVersion,
   primaryCommand,
@@ -12,7 +13,15 @@ import {
 
 const props = defineProps<{ pkg: CatalogPackage; system: string; repositoryUrl?: string }>();
 const version = defineModel<string>("version", { default: "" });
-const mode = ref<"run" | "use" | "config">("run");
+const mode = ref<"bootstrap" | "run" | "use" | "config">(
+  props.pkg.name === "rootbeer" && !version.value ? "bootstrap" : "use",
+);
+const modes = computed(() => [
+  ...(props.pkg.name === "rootbeer" ? [["bootstrap", "Install Rootbeer"]] : []),
+  ["use", props.pkg.name === "rootbeer" ? "Install with rb" : "Install"],
+  ["run", "Run once"],
+  ["config", "Lua config"],
+]);
 const selectedBin = ref("");
 const copied = ref(false);
 const copyError = ref("");
@@ -26,6 +35,21 @@ const isInvalidVersion = computed(
   () => Boolean(version.value) && !versions.value.includes(version.value),
 );
 const recipe = computed(() => props.pkg.versions[selectedVersion.value]);
+const dependencies = computed(() => packageDependencies(recipe.value, props.system));
+const dependencyGroups = computed(() => {
+  const descriptions: Record<string, string> = {
+    "Build / link": "Tools and libraries used to build this package.",
+    Build: "Tools used during compilation.",
+    Link: "Libraries linked during compilation.",
+    Runtime: "Packages required when running this package.",
+    "Link / runtime": "Libraries needed during compilation and at runtime.",
+  };
+  return [...new Set(dependencies.value.map((dependency) => dependency.kind))].map((kind) => ({
+    kind,
+    description: descriptions[kind],
+    entries: dependencies.value.filter((dependency) => dependency.kind === kind),
+  }));
+});
 const isLibrary = computed(() => recipe.value.bins.length === 0);
 const isDefaultAvailable = computed(() =>
   versions.value.includes(defaultVersion(props.pkg, props.system)),
@@ -39,17 +63,19 @@ const bin = computed(() =>
 const command = computed(() =>
   packageCommand(
     props.pkg,
-    mode.value,
+    mode.value === "bootstrap" ? "use" : mode.value,
     isPinned.value ? selectedVersion.value : "",
     mode.value === "run" ? bin.value : "",
   ),
 );
 const snippet = computed(() =>
-  isLibrary.value
-    ? `dependencies = { "${props.pkg.name}@${selectedVersion.value}" }`
-    : mode.value === "use"
-      ? `${command.value}\neval "$(rb env)"`
-      : command.value,
+  mode.value === "bootstrap"
+    ? 'sh -c "$(curl -fsSL https://rootbeer.tale.me/rb.sh)"\nexport PATH="$HOME/.rootbeer/bin:$PATH"'
+    : isLibrary.value
+      ? `dependencies = { "${props.pkg.name}@${selectedVersion.value}" }`
+      : mode.value === "use"
+        ? `${command.value}\neval "$(rb env)"`
+        : command.value,
 );
 const recipeUrl = computed(() =>
   props.repositoryUrl ? `${props.repositoryUrl}/blob/main/packages/${props.pkg.name}.lua` : "",
@@ -76,6 +102,9 @@ const sourceUrl = computed(() => {
 watch(snippet, () => {
   copied.value = false;
   copyError.value = "";
+});
+watch(version, () => {
+  if (mode.value === "bootstrap") mode.value = "use";
 });
 watch(selectedVersion, () => {
   selectedBin.value = "";
@@ -116,21 +145,13 @@ function chooseCommand(command: string) {
     <div class="detail-columns">
       <section class="usage" :aria-label="`Use ${pkg.name}`">
         <fieldset v-if="!isLibrary" class="usage-modes">
-          <legend>Use this package</legend>
-          <label
-            v-for="[id, label] in [
-              ['run', 'Run once'],
-              ['use', 'Install'],
-              ['config', 'Lua config'],
-            ]"
-            :key="id"
-            :class="{ selected: mode === id }"
-          >
+          <legend class="sr-only">Use this package</legend>
+          <label v-for="[id, label] in modes" :key="id" :class="{ selected: mode === id }">
             <input v-model="mode" type="radio" :name="`usage-${pkg.name}`" :value="id" />
             {{ label }}
           </label>
         </fieldset>
-        <div class="command-options">
+        <div v-if="mode !== 'bootstrap'" class="command-options">
           <label
             >Version
             <select v-model="version">
@@ -138,11 +159,11 @@ function chooseCommand(command: string) {
                 {{ version }} · unavailable
               </option>
               <option v-if="isDefaultAvailable" value="">
-                Default{{ system ? ` · ${defaultVersion(pkg, system)}` : " for your platform" }}
+                Latest ({{ defaultVersion(pkg, system) }})
               </option>
-              <option v-else value="">{{ selectedVersion }} · exact version</option>
+              <option v-else value="">{{ selectedVersion }}</option>
               <option v-for="entry in versions" :key="entry" :value="entry">
-                {{ entry }} · exact version
+                {{ entry }}
               </option>
             </select>
           </label>
@@ -162,23 +183,25 @@ function chooseCommand(command: string) {
             </select>
           </label>
         </div>
-        <p v-if="isLibrary" class="usage-note">
-          Add this dependency to your package recipe's <code>build</code> table. Rootbeer supplies
-          its libraries and headers during the build.
+        <p v-if="mode === 'bootstrap'" class="usage-note">
+          Install the latest Rootbeer nightly. Requires <code>curl</code> and <code>unzip</code>.
+        </p>
+        <p v-else-if="isLibrary" class="usage-note">
+          Add to your recipe's <code>build</code> table to make this library available during
+          compilation.
         </p>
         <p v-else-if="mode === 'run'" class="usage-note">
-          Download and run <code>{{ bin }}</code
-          >. No configuration or shell setup required. Pass arguments after <code>--</code>.
+          Run <code>{{ bin }}</code> without adding it to your shell. Append <code>--</code>
+          followed by any arguments for the command.
         </p>
         <p v-else-if="mode === 'use'" class="usage-note">
-          Keep this package installed for your user. The second line makes its commands available in
-          this shell.
+          Install <code>{{ pkg.name }}</code> for your user. The second line makes its commands
+          available in your current shell.
         </p>
-        <p v-else class="usage-note">
-          Add this to <code>init.lua</code>, then run <code>rb apply</code> and
-          <code>eval "$(rb env)"</code>.
+        <p v-else-if="mode === 'config'" class="usage-note">
+          Add to <code>init.lua</code>, then run <code>rb apply</code>.
         </p>
-        <p v-if="isInvalidVersion" class="usage-note" role="alert">
+        <p v-if="isInvalidVersion && mode !== 'bootstrap'" class="usage-note" role="alert">
           Version {{ version }} is not available{{ system ? " on this platform" : "" }}. Choose an
           available version to see its install command.
         </p>
@@ -198,32 +221,21 @@ function chooseCommand(command: string) {
           <pre><code>{{ snippet }}</code></pre>
         </div>
         <p v-if="copyError" class="usage-note" role="status">{{ copyError }}</p>
-        <p v-if="!isInvalidVersion && (isPinned || isLibrary)" class="version-note">
-          Pinned to {{ selectedVersion }}. Updating keeps this version.
-        </p>
-        <p v-else-if="!isInvalidVersion" class="version-note">
-          Uses your platform's default on first install. Repeat runs keep the cached version; use
-          <code>--update</code> to refresh it.
-        </p>
         <a
           class="guide-link"
           :href="
-            isLibrary
-              ? '/contributing/packaging#library-dependencies'
-              : mode === 'run'
-                ? '/guide/packages#run-a-tool'
-                : mode === 'use'
-                  ? '/guide/packages#set-up-your-shell'
-                  : '/guide/packages#declare-tools-in-your-configuration'
+            mode === 'bootstrap'
+              ? '/guide/getting-started'
+              : isLibrary
+                ? '/contributing/packaging#library-dependencies'
+                : '/guide/packages'
           "
           >{{
-            isLibrary
-              ? "Build with libraries"
-              : mode === "run"
-                ? "More run examples"
-                : mode === "use"
-                  ? "Set up new terminals"
-                  : "Configuration guide"
+            mode === "bootstrap"
+              ? "Installation guide"
+              : isLibrary
+                ? "Building with dependencies"
+                : "Usage and updates"
           }}
           →</a
         >
@@ -245,14 +257,12 @@ function chooseCommand(command: string) {
             <code>{{ name }}</code>
           </button>
         </div>
-        <p v-if="recipe.build?.libraries?.length" class="metadata-note">
-          <code v-for="library in recipe.build.libraries" :key="library">{{ library }}</code>
-        </p>
-        <p v-if="recipe.bins.length && !recipe.bins.includes(pkg.name)" class="metadata-note">
-          Install as <code>{{ pkg.name }}</code
-          >; run it with
-          {{ recipe.bins.length === 1 ? "the command above" : "one of these commands" }}.
-        </p>
+        <template v-if="recipe.build?.libraries?.length">
+          <h3 v-if="!isLibrary">Libraries provided</h3>
+          <p class="metadata-note">
+            <code v-for="library in recipe.build.libraries" :key="library">{{ library }}</code>
+          </p>
+        </template>
         <p v-if="pkg.aliases.length" class="metadata-note">
           Package aliases: <code v-for="alias in pkg.aliases" :key="alias">{{ alias }}</code>
         </p>
@@ -261,12 +271,23 @@ function chooseCommand(command: string) {
           <p class="metadata-note">
             <code v-for="name in Object.keys(recipe.apps)" :key="name">{{ name }}</code>
           </p>
-          <p class="metadata-note">
-            Installing with <code>rb use</code> or <code>rb apply</code> creates managed links in
-            <code>~/Applications</code>. Existing apps are never overwritten.
-          </p>
         </template>
+        <h3>Dependencies</h3>
+        <div v-for="group in dependencyGroups" :key="group.kind" class="dependency-group">
+          <p class="metadata-note">{{ group.description }}</p>
+          <ul class="dependency-list">
+            <li v-for="dependency in group.entries" :key="dependency.request">
+              <a :href="dependency.href"
+                ><code>{{ dependency.request }}</code></a
+              >
+            </li>
+          </ul>
+        </div>
+        <p v-if="!dependencies.length" class="metadata-note">No package dependencies declared.</p>
         <h3>Platform defaults</h3>
+        <p class="metadata-note">
+          The version installed on each platform unless you choose a specific version.
+        </p>
         <dl class="platform-defaults">
           <div
             v-for="platform in platforms"
@@ -283,14 +304,10 @@ function chooseCommand(command: string) {
             </dd>
           </div>
         </dl>
-        <p class="metadata-note">
-          Older defaults can keep a platform supported. Rootbeer installs a prebuilt package; it
-          does not compile on your machine.
-        </p>
       </section>
     </div>
 
-    <section class="versions" :aria-label="`${pkg.name} versions`">
+    <section v-if="versions.length > 1" class="versions" :aria-label="`${pkg.name} versions`">
       <h3>
         Available versions
         <span
@@ -345,10 +362,6 @@ function chooseCommand(command: string) {
       </div>
       <p v-if="!system && Object.keys(pkg.default_versions ?? {}).length" class="metadata-note">
         * Some platforms use a different default; see the platform list above.
-      </p>
-      <p class="metadata-note">
-        Only published versions are listed.
-        <a href="/guide/packages#choose-a-version">How version selection works →</a>
       </p>
     </section>
   </div>
@@ -437,8 +450,7 @@ select {
   font-size: 13px;
 }
 .usage-note,
-.metadata-note,
-.version-note {
+.metadata-note {
   font-size: 13px;
   line-height: 1.65;
   color: var(--vp-c-text-2);
@@ -493,6 +505,8 @@ a:focus-visible {
   outline-offset: 3px;
 }
 .guide-link {
+  display: inline-block;
+  margin-top: 12px;
   font-size: 13px;
 }
 h3 span {
@@ -514,6 +528,24 @@ h3 span {
 .metadata-note code + code {
   margin-left: 8px;
 }
+.metadata h3:not(:first-child) {
+  margin-top: 20px;
+}
+.dependency-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 16px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 13px;
+}
+.dependency-list li {
+  min-width: 0;
+}
+.dependency-list a {
+  overflow-wrap: anywhere;
+}
 .platform-defaults {
   margin: 0;
   font-size: 12px;
@@ -528,7 +560,8 @@ h3 span {
 dd {
   margin: 0;
   font-family: var(--vp-font-family-mono);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 .chosen-platform {
   color: var(--vp-c-brand-1);
