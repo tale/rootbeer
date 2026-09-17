@@ -2,16 +2,17 @@
 
 ## Prerequisites
 
-Rootbeer uses [mise](https://mise.jdx.dev/) to manage toolchain versions.
-Install mise, then run:
+Rust is pinned in `rust-toolchain.toml`. Install [rustup](https://rustup.rs/) and
+[mise](https://mise.jdx.dev/), then run:
 
 ```bash
+rustup show
 mise install
 ```
 
-This installs the pinned versions of:
+This installs the development tools:
 
-- **Rust 1.93+** (with rustfmt, clippy, and rust-analyzer)
+- **Rust 1.98.1** (with rustfmt, clippy, and rust-analyzer)
 - **Node + pnpm** (for the docs site)
 - **lua-language-server** (for Lua type checking and doc generation)
 - **lefthook** (git hooks)

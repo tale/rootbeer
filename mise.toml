@@ -1,3 +1,6 @@
+[settings]
+idiomatic_version_file_enable_tools = ["rust"]
+
 [tools]
 pnpm = "10.30.0"
 node = "24.13.1"
@@ -5,10 +8,6 @@ lua-language-server = "latest"
 lefthook = "latest"
 stylua = "latest"
 "aqua:Kampfkarren/selene" = "latest"
-rust = {
-	version = "1.93.0",
-	components = "rustc,rust-std,rust-docs,rustfmt,rust-analyzer,clippy"
-}
 
 [env]
 _.path = ["./target/debug"]
