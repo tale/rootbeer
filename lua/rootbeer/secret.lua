@@ -11,9 +11,8 @@
 ---   phase — used when the secret is a binary blob (SSH key, certificate,
 ---   GPG key, …) that should never transit Lua memory or the plan log.
 ---
---- All providers gate on an external CLI being installed and authenticated
---- on the target machine. Missing or locked providers surface as a clear
---- error at the call site.
+--- 1Password requires an installed, authenticated `op` CLI. Age decryption
+--- is built in and needs a native identity file or a 1Password key field.
 ---
 --- ```lua
 --- -- 1Password: embed a field into a generated config file
@@ -59,3 +58,31 @@ function rootbeer.secret.op(reference) end
 --- @param dest string The destination path on disk (`~` expansion supported).
 --- @param opts? rootbeer.SecretDocumentOpts Optional settings.
 function rootbeer.secret.op_document(reference, dest, opts) end
+
+--- @class rootbeer.AgeOpts
+--- @field identity? string Native age identity file. Supports `~` and script-relative paths. Mutually exclusive with `identity_op`.
+--- @field identity_op? string 1Password `op://` field containing complete native `AGE-SECRET-KEY-...` lines. Mutually exclusive with `identity`.
+
+--- @class rootbeer.AgeFileOpts: rootbeer.AgeOpts
+--- @field mode? integer Destination permissions, from 0 to 0777. Defaults to `0x180` (0600).
+
+--- Decrypts an age file synchronously during planning, including dry runs.
+--- Supports binary or ASCII-armored ciphertext and native X25519 identities.
+--- Returns UTF-8 text unchanged, including trailing newlines. Plaintext enters
+--- Lua and any generated file content; avoid printing it or embedding it in
+--- command arguments. Plan debug output omits file bytes, but custom handlers
+--- can still inspect inline content. Use `age_file` for binary/deferred writes.
+--- @param path string Ciphertext path, relative to the script directory or absolute; `~` supported.
+--- @param opts rootbeer.AgeOpts Exactly one identity source is required.
+--- @return string plaintext
+function rootbeer.secret.age(path, opts) end
+
+--- Decrypts and atomically writes an age file during apply. Dry runs neither
+--- read ciphertext nor fetch keys. Plaintext never enters Lua or the plan.
+--- Parent directories are created automatically. The destination is replaced
+--- (including any symlink) only after decryption succeeds, with the specified
+--- permissions. Native X25519 identities only; no passphrase, SSH or plugin keys.
+--- @param path string Ciphertext path, relative to the script directory or absolute; `~` supported.
+--- @param dest string Destination path; script-relative paths and `~` supported.
+--- @param opts rootbeer.AgeFileOpts Identity source and optional permissions.
+function rootbeer.secret.age_file(path, dest, opts) end

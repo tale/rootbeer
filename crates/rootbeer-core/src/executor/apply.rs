@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::{fs, os::unix::fs as unix_fs, process, process::Command, thread};
@@ -18,6 +18,7 @@ use crate::{
 fn resolve_source(source: &WriteSource) -> io::Result<Vec<u8>> {
     match source {
         WriteSource::Bytes(bytes) => Ok(bytes.clone()),
+        WriteSource::AgeFile { path, identity, .. } => crate::age::decrypt(path, identity),
         WriteSource::OpDocument { reference } => {
             let output = Command::new("op")
                 .args(["document", "get", reference])
@@ -105,7 +106,18 @@ fn apply_with_package_realizer(
                     fs::create_dir_all(parent)?;
                 }
 
-                fs::write(path, &bytes)?;
+                if let WriteSource::AgeFile { mode, .. } = source {
+                    let parent = path
+                        .parent()
+                        .ok_or_else(|| io::Error::other("missing destination parent"))?;
+                    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+                    file.write_all(&bytes)?;
+                    file.as_file()
+                        .set_permissions(fs::Permissions::from_mode(*mode))?;
+                    file.persist(path).map_err(|error| error.error)?;
+                } else {
+                    fs::write(path, &bytes)?;
+                }
                 let result = OpResult::FileWritten {
                     path: path.clone(),
                     bytes: Some(bytes.len()),
@@ -389,6 +401,59 @@ mod tests {
         fn on_result(&mut self, r: &OpResult) {
             self.results.push(r.clone());
         }
+    }
+
+    #[test]
+    fn age_file_apply_is_private_and_failure_preserves_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let plaintext = b"private binary\x00\xff";
+        let identity = crate::age::tests::fixture(dir.path(), plaintext, false);
+        let path = dir.path().join("nested/output");
+        let encrypted = dir.path().join("secret.age");
+        let ops = vec![Op::WriteFile {
+            path: path.clone(),
+            source: WriteSource::AgeFile {
+                path: encrypted.clone(),
+                identity,
+                mode: 0o600,
+            },
+        }];
+        crate::executor::dry_run(&ops, &mut Recorder::default());
+        assert!(!path.exists());
+        apply(&ops, false, &mut Recorder::default()).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), plaintext);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        apply(&ops, false, &mut Recorder::default()).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::write(encrypted, b"corrupted").unwrap();
+        assert!(apply(&ops, false, &mut Recorder::default()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), plaintext);
+    }
+
+    #[test]
+    fn age_file_dry_run_needs_no_key_or_ciphertext() {
+        let dir = tempfile::tempdir().unwrap();
+        let ops = vec![Op::WriteFile {
+            path: dir.path().join("output"),
+            source: WriteSource::AgeFile {
+                path: dir.path().join("missing.age"),
+                identity: crate::AgeIdentity::File(dir.path().join("missing.key")),
+                mode: 0o600,
+            },
+        }];
+        let report = crate::executor::dry_run(&ops, &mut Recorder::default());
+        assert!(matches!(
+            report.results[0],
+            OpResult::FileWritten { bytes: None, .. }
+        ));
+        assert!(!dir.path().join("output").exists());
     }
 
     #[test]

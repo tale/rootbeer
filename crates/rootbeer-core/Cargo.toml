@@ -9,6 +9,7 @@ default = ["embedded-stdlib"]
 embedded-stdlib = []
 
 [dependencies]
+age = { version = "0.12.1", default-features = false, features = ["armor"] }
 rootbeer-store = { path = "../rootbeer-store" }
 rootbeer-package = { path = "../rootbeer-package" }
 libc = "0.2.182"

@@ -1,4 +1,5 @@
 pub use rootbeer_store::deterministic;
+mod age;
 mod executor;
 mod lua;
 pub mod package;
@@ -9,7 +10,7 @@ pub use rootbeer_store as store;
 
 pub use executor::{ExecutionHandler, ExecutionReport, OpResult};
 pub use pipeline::{Mode, Options, PackageLockMode, Pipeline, PlannedPipeline};
-pub use plan::{Op, WriteSource};
+pub use plan::{AgeIdentity, Op, WriteSource};
 pub use profile::ProfileError;
 
 #[cfg(feature = "embedded-stdlib")]

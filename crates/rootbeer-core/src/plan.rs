@@ -2,19 +2,49 @@ use std::path::PathBuf;
 
 use crate::package::{LockedPackage, PackageIntent};
 
-/// Where the bytes for a [`Op::WriteFile`] come from.
-///
-/// Most writes are `Bytes` — content produced during planning (Lua strings,
-/// codec output, etc.). Secret-backed variants defer the fetch to apply time
-/// so the value never lands in Lua memory or the plan log.
+/// Identity location; key material is resolved only when decrypting.
 #[derive(Debug, Clone, PartialEq)]
+pub enum AgeIdentity {
+    File(PathBuf),
+    OnePassword(String),
+}
+
+/// File contents, either inline bytes or a provider resolved during apply.
+/// Debug output omits inline bytes, which may contain composed secrets.
+#[derive(Clone, PartialEq)]
 pub enum WriteSource {
     /// Bytes already produced during planning.
     Bytes(Vec<u8>),
     /// Fetched from 1Password via `op document get <reference>` at apply time.
     OpDocument { reference: String },
-    // Future providers (e.g. `Rage { ciphertext, identity }`) add a variant
-    // here and a matching arm in `executor::apply` + a Lua binding.
+    /// Age ciphertext decrypted at apply time, written atomically with this mode.
+    AgeFile {
+        path: PathBuf,
+        identity: AgeIdentity,
+        mode: u32,
+    },
+}
+
+impl std::fmt::Debug for WriteSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bytes(bytes) => f.debug_struct("Bytes").field("len", &bytes.len()).finish(),
+            Self::OpDocument { reference } => f
+                .debug_struct("OpDocument")
+                .field("reference", reference)
+                .finish(),
+            Self::AgeFile {
+                path,
+                identity,
+                mode,
+            } => f
+                .debug_struct("AgeFile")
+                .field("path", path)
+                .field("identity", identity)
+                .field("mode", mode)
+                .finish(),
+        }
+    }
 }
 
 impl WriteSource {
@@ -52,6 +82,7 @@ impl WriteSource {
         match self {
             Self::Bytes(_) => None,
             Self::OpDocument { reference } => Some(format!("op-document {reference}")),
+            Self::AgeFile { path, .. } => Some(format!("age {}", path.display())),
         }
     }
 }
