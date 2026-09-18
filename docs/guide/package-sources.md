@@ -4,6 +4,52 @@
 you can request a GitHub release or an Aqua recipe with `rb run`, `rb use`, or
 `rb.packages()`.
 
+## Define packages locally
+
+Keep registry-format recipes beside your configuration:
+
+```text
+rootbeer.lua
+packages/
+  my-tool.lua
+```
+
+Load them before declaring packages:
+
+```lua
+local rb = require("rootbeer")
+
+rb.package_catalog("packages")
+rb.packages({ "my-tool", "jq" })
+```
+
+Each file returns a [schema-2 package recipe](/contributing/packaging#definition-api),
+with its filename matching the package name. Use the same `inputs`, `build`,
+`outputs`, and `versions` fields as registry recipes. GitHub and Aqua prebuilts,
+source archives, Rust, Zig, Autotools, and custom build phases are supported.
+A source recipe's archive URL and SHA-256 remain required.
+
+The directory is relative to the configuration script; absolute paths and `~`
+also work. Call `package_catalog` once. Local names and aliases take precedence
+over the selected registry, while other requests still use the registry normally.
+Explicit `github:` and `aqua:` requests keep their original meaning.
+
+Recipes can depend on other local recipes or packages from the selected registry.
+Source-capable local recipes build locally by default, even if they also declare
+upstream prebuilts. Planning reads and validates recipes without downloading or
+building. Apply runs the shared build executor and its checks, then installs the
+result in the normal package profile.
+
+Recipe contents are recorded in `rootbeer.lock`. Editing a local recipe refreshes
+local package resolutions on the next apply; unchanged registry requests retain
+their locks. `--locked` rejects recipe changes, and `--offline` replays matching
+locks and cached packages. Use ordinary apply once after changing a recipe.
+`--update` refreshes resolutions but does not discover and rewrite local versions;
+maintain their `versions` and defaults in the recipe files.
+
+The setting applies to this Lua configuration. Standalone `rb run` and `rb use`
+do not load it. Recipes stay on your machine; no index publication is needed.
+
 ## Install from GitHub
 
 Use `github:owner/repository@tag`:

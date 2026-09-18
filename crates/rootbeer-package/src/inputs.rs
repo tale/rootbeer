@@ -20,6 +20,7 @@ pub struct PackageResolverInputs {
 pub enum ResolverInput {
     AquaRegistry(GitHubRepositoryPin),
     Catalog { sha256: String },
+    LocalCatalog(Box<super::PackageCatalog>),
     PublishedIndex(super::PackageIndexPin),
     OfficialIndex(super::PackageIndexPin),
 }
@@ -63,6 +64,30 @@ impl PackageResolverInputs {
             Some(ResolverInput::PublishedIndex(pin)) => Some(pin),
             _ => None,
         }
+    }
+
+    pub fn local_catalog(&self) -> Option<&super::PackageCatalog> {
+        match self.resolvers.get("local") {
+            Some(ResolverInput::LocalCatalog(catalog)) => Some(catalog),
+            _ => None,
+        }
+    }
+
+    pub fn same_package_authority(&self, other: &Self, request: &super::PackageRequest) -> bool {
+        if request
+            .resolver
+            .as_deref()
+            .is_some_and(|name| name != "rootbeer")
+        {
+            return true;
+        }
+        let has_local = [self, other].iter().any(|inputs| {
+            inputs
+                .local_catalog()
+                .is_some_and(|catalog| catalog.find(&request.name).is_some())
+        });
+        self.explicit_package_index() == other.explicit_package_index()
+            && (!has_local || self.local_catalog() == other.local_catalog())
     }
 
     pub fn is_empty(&self) -> bool {

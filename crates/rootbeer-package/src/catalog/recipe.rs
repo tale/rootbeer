@@ -7,7 +7,7 @@ use super::valid_name;
 use crate::PackageRequest;
 
 /// The upstream identity and approved versions of a canonical package.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogPackage {
     pub name: String,
@@ -22,7 +22,7 @@ pub struct CatalogPackage {
 }
 
 /// An explicit backend request and its platform and command contract.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogRecipe {
     pub revision: u32,

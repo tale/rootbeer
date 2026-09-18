@@ -349,3 +349,69 @@ fn source_selections_are_explicit_planned_inputs() {
         ]
     );
 }
+
+fn write_local_recipe(root: &std::path::Path) {
+    std::fs::create_dir(root.join("packages")).unwrap();
+    std::fs::write(
+        root.join("packages/demo.lua"),
+        format!(
+            r#"return {{
+        schema = 2, name = "demo", aliases = {{ "demo-alias" }},
+        description = "Local test tool", homepage = "https://example.invalid/demo",
+        default_version = "1", systems = {{ "{}" }},
+        inputs = {{ prebuilt = {{ github = "owner/demo", tag = "v{{version}}", assets = {{ ["aarch64-macos"] = "demo.tar.gz", ["x86_64-linux"] = "demo.tar.gz", ["aarch64-linux"] = "demo.tar.gz" }} }} }},
+        outputs = {{ bins = {{ "demo" }}, checks = {{ {{ "demo", "--version" }} }} }},
+        versions = {{ ["1"] = {{}} }},
+    }}"#,
+            crate::package::ResolveContext::current().system
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn local_recipes_plan_without_resolution_and_expose_their_commands() {
+    let root = tempfile::tempdir().unwrap();
+    write_local_recipe(root.path());
+    let vm = vm_in(
+        r#"
+        rb.package_catalog("packages")
+        rb.packages({ "demo-alias", "registry-tool" })
+        result = rb.which("demo")
+    "#,
+        root.path(),
+    );
+    let result: String = vm.lua.globals().get("result").unwrap();
+    assert!(result.ends_with("/bin/demo"));
+    assert_eq!(vm.drain_ops().len(), 2);
+    assert!(!root.path().join("rootbeer.lock").exists());
+}
+
+#[test]
+fn local_catalogs_reject_late_duplicate_and_invalid_declarations() {
+    let root = tempfile::tempdir().unwrap();
+    write_local_recipe(root.path());
+    for script in [
+        "rb.package('demo'); rb.package_catalog('packages')",
+        "rb.package_catalog('packages'); rb.package_catalog('packages')",
+        "rb.package_catalog('missing')",
+        "rb.package_catalog('packages'); rb.package('demo@missing')",
+    ] {
+        let vm = super::super::test_support::vm(root.path(), None);
+        assert!(vm
+            .exec(&format!("local rb = require('rootbeer'); {script}"), "test")
+            .is_err());
+    }
+    std::fs::write(
+        root.path().join("packages/demo.lua"),
+        "return { schema = 2 }",
+    )
+    .unwrap();
+    let vm = super::super::test_support::vm(root.path(), None);
+    assert!(vm
+        .exec(
+            "local rb = require('rootbeer'); rb.package_catalog('packages')",
+            "test"
+        )
+        .is_err());
+}

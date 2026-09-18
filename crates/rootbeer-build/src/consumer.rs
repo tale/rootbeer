@@ -9,17 +9,21 @@ use rootbeer_store::{hash_bytes, hash_file};
 /// Builds an installation resolver that prefers published artifacts and can execute source recipes.
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
     let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
-    if let Some(pin) = inputs.package_index() {
-        stack.push(SourceResolver::new(pin, rootbeer_store::state_dir()));
+    if inputs.package_index().is_some() || inputs.local_catalog().is_some() {
+        stack.push(SourceResolver::with_inputs(
+            inputs,
+            rootbeer_store::state_dir(),
+        ));
     }
     stack
 }
 
-/// Installs published artifacts or builds recipes from a verified index.
+/// Installs published artifacts or builds recipes from local definitions and verified indexes.
 pub struct SourceResolver {
     state: std::path::PathBuf,
-    index: IndexResolver,
-    pin: PackageIndexPin,
+    index: Option<IndexResolver>,
+    pin: Option<PackageIndexPin>,
+    inputs: PackageResolverInputs,
 }
 
 impl SourceResolver {
@@ -27,8 +31,25 @@ impl SourceResolver {
     pub fn new(pin: &PackageIndexPin, state: impl Into<std::path::PathBuf>) -> Self {
         let state = state.into();
         Self {
-            index: IndexResolver::with_cache(pin, state.join("downloads")),
-            pin: pin.clone(),
+            index: Some(IndexResolver::with_cache(pin, state.join("downloads"))),
+            pin: Some(pin.clone()),
+            inputs: PackageResolverInputs::default(),
+            state,
+        }
+    }
+
+    /// Combines configuration-local recipes with the selected published index.
+    pub fn with_inputs(
+        inputs: &PackageResolverInputs,
+        state: impl Into<std::path::PathBuf>,
+    ) -> Self {
+        let state = state.into();
+        Self {
+            index: inputs
+                .package_index()
+                .map(|pin| IndexResolver::with_cache(pin, state.join("downloads"))),
+            pin: inputs.package_index().cloned(),
+            inputs: inputs.clone(),
             state,
         }
     }
@@ -53,9 +74,30 @@ impl PackageResolver for SourceResolver {
                 return Err("Git refs cannot be combined with a release version".into());
             }
         }
-        let index = self.index.index()?;
-        let package = index
-            .catalog
+        let local = self
+            .inputs
+            .local_catalog()
+            .filter(|catalog| catalog.find(&request.name).is_some());
+        let index = if local.is_none_or(PackageCatalog::requires_index) {
+            Some(
+                self.index
+                    .as_ref()
+                    .ok_or("this request requires a package index")?
+                    .index()?,
+            )
+        } else {
+            None
+        };
+        let mut catalog = match (local, &index) {
+            (Some(local), None) => local.clone(),
+            (_, Some(index)) => index.catalog.clone(),
+            _ => return Err("no package catalog selected".into()),
+        };
+        if let Some(local) = local {
+            catalog.packages.extend(local.packages.clone());
+        }
+        catalog.validate()?;
+        let package = catalog
             .find(&request.name)
             .ok_or_else(|| format!("unknown index package `{}`", request.name))?;
         let version = request
@@ -63,13 +105,30 @@ impl PackageResolver for SourceResolver {
             .as_deref()
             .unwrap_or_else(|| package.default_version_for(&context.system));
         let key = format!("{}@{version}", package.name);
-        if request.source.is_none()
-            && index
-                .artifacts
-                .get(&key)
-                .is_some_and(|systems| systems.contains_key(&context.system))
+        if local.is_none()
+            && request.source.is_none()
+            && index.as_ref().is_some_and(|index| {
+                index
+                    .artifacts
+                    .get(&key)
+                    .is_some_and(|systems| systems.contains_key(&context.system))
+            })
         {
-            return self.index.resolve(request, context);
+            return self.index.as_ref().unwrap().resolve(request, context);
+        }
+        if local.is_some()
+            && request.source.is_none()
+            && package
+                .versions
+                .get(version)
+                .is_some_and(|recipe| recipe.build.is_none())
+        {
+            return catalog::CatalogResolver::new(
+                &catalog,
+                &self.inputs,
+                backend_stack(&self.inputs),
+            )
+            .resolve(request, context);
         }
         if context != &ResolveContext::current() {
             return Err("local source builds require the host platform".into());
@@ -118,10 +177,11 @@ impl PackageResolver for SourceResolver {
         recipe.checksums.clear();
         recipe.bin_paths.clear();
         recipe.mirror = false;
-        let mut catalog = index.catalog.clone();
+        let name = package.name.clone();
+        let catalog_sha256 = catalog.sha256();
         catalog
             .packages
-            .get_mut(&package.name)
+            .get_mut(&name)
             .unwrap()
             .versions
             .insert(version.clone(), recipe);
@@ -133,7 +193,7 @@ impl PackageResolver for SourceResolver {
             .keep();
         let artifact = crate::build_package(
             &catalog,
-            &format!("{}@{version}", package.name),
+            &format!("{name}@{version}"),
             &run.join("output"),
             &crate::BuildOptions {
                 downloads,
@@ -146,8 +206,9 @@ impl PackageResolver for SourceResolver {
             },
         )?;
         let proof = SourceBuildProof {
-            index: self.pin.clone(),
-            catalog_sha256: index.catalog_sha256.clone(),
+            index: index.as_ref().and(self.pin.clone()),
+            local_catalog_sha256: local.map(PackageCatalog::sha256),
+            catalog_sha256,
             recipe_sha256,
             source_url,
             source_sha256,

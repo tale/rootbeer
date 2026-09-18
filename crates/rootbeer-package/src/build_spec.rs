@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, PathBuf};
 
 /// Supported source compilation mechanisms.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BuildBackend {
     Autotools,
@@ -80,7 +80,7 @@ impl From<&str> for BuildDependency {
 }
 
 /// Verified source inputs and exact canonical build dependencies.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceBuild {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -112,7 +112,7 @@ pub struct SourceBuild {
 }
 
 /// Cargo workspace selection and compile-time inputs for Rust binaries.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustBuild {
     pub packages: Vec<String>,
@@ -179,7 +179,7 @@ impl RustBuild {
 }
 
 /// Explicit command phases for source projects without a built-in preset.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuildSteps {
     pub configure: Vec<Vec<String>>,

@@ -54,7 +54,12 @@ pub fn default_resolver_stack() -> ResolverStack {
 
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
     let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
-    if let Some(pin) = inputs.package_index() {
+    if let Some(catalog) = inputs.local_catalog() {
+        stack.push(
+            catalog::CatalogResolver::new(catalog, inputs, backend_stack(inputs))
+                .with_fallback(inputs.package_index()),
+        );
+    } else if let Some(pin) = inputs.package_index() {
         stack.push(index::IndexResolver::new(pin));
     }
     stack

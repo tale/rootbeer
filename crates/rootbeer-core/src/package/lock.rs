@@ -148,12 +148,8 @@ where
                 PackageIntent::Request(request) => {
                     let can_reuse = !should_update
                         && previous.is_some_and(|lock| {
-                            request
-                                .resolver
-                                .as_deref()
-                                .is_some_and(|name| name != "rootbeer")
-                                || lock.inputs.explicit_package_index()
-                                    == input.resolver_inputs.explicit_package_index()
+                            lock.inputs
+                                .same_package_authority(&input.resolver_inputs, request)
                         });
                     let saved = if can_reuse {
                         previous
@@ -240,6 +236,15 @@ fn offline_resolution(
             .resolver
             .as_deref()
             .is_none_or(|name| name == "rootbeer");
+        if is_canonical
+            && inputs
+                .local_catalog()
+                .is_some_and(|catalog| catalog.find(&request.name).is_some())
+        {
+            return Err(format!(
+                "{request} has no matching local recipe lock; run without --offline first"
+            ));
+        }
         if let Some(saved) = super::standalone::cached_resolution(request, context)
             .map_err(|error| error.to_string())?
         {
@@ -573,5 +578,71 @@ mod tests {
                 .version,
             "3.0.0"
         );
+    }
+
+    #[test]
+    fn local_recipe_edits_reconcile_only_local_requests_and_cannot_replay_offline() {
+        let definition = crate::package::PackageDefinition::from_lua(
+            r#"return {
+            schema = 2, name = "demo", description = "Local demo",
+            homepage = "https://example.invalid/demo", default_version = "1",
+            systems = { "aarch64-macos" },
+            inputs = { prebuilt = { github = "owner/demo", tag = "v{version}", assets = { ["aarch64-macos"] = "demo.tar.gz" } } },
+            outputs = { bins = { "demo" }, checks = { { "demo", "--version" } } },
+            versions = { ["1"] = {} },
+        }"#,
+        )
+        .unwrap();
+        let catalog = crate::package::PackageCatalog {
+            schema: 1,
+            packages: BTreeMap::from([("demo".into(), definition.package)]),
+        };
+        let mut inputs = PackageResolverInputs::default();
+        inputs.resolvers.insert(
+            "local".into(),
+            ResolverInput::LocalCatalog(Box::new(catalog.clone())),
+        );
+        let context = ResolveContext::new("test-system");
+        let builder = PackageLockBuilder::new_with_inputs(
+            TrackingResolver {
+                calls: Default::default(),
+            },
+            FakeRealizer,
+            context.clone(),
+            inputs.clone(),
+        );
+        let input = PackageLockInput::with_resolver_inputs(
+            context.clone(),
+            inputs,
+            vec![
+                PackageIntent::request(PackageRequest::parse("demo")),
+                PackageIntent::request(PackageRequest::parse("registry-tool")),
+            ],
+        );
+        let lock = builder.build(&input).unwrap();
+        builder.resolver.calls.borrow_mut().clear();
+        builder.reconcile(&input, Some(&lock), true).unwrap();
+        assert!(builder.resolver.calls.borrow().is_empty());
+        let mut changed = input.clone();
+        let mut catalog = catalog;
+        catalog
+            .packages
+            .get_mut("demo")
+            .unwrap()
+            .versions
+            .get_mut("1")
+            .unwrap()
+            .revision = 2;
+        changed.resolver_inputs.resolvers.insert(
+            "local".into(),
+            ResolverInput::LocalCatalog(Box::new(catalog)),
+        );
+        assert!(builder.reconcile(&changed, Some(&lock), true).is_err());
+        builder.reconcile(&changed, Some(&lock), false).unwrap();
+        assert_eq!(*builder.resolver.calls.borrow(), ["demo"]);
+        builder.resolver.calls.borrow_mut().clear();
+        changed.resolver_inputs.resolvers.remove("local");
+        builder.reconcile(&changed, Some(&lock), false).unwrap();
+        assert_eq!(*builder.resolver.calls.borrow(), ["demo"]);
     }
 }

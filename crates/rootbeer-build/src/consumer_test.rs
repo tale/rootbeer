@@ -76,7 +76,7 @@ EOF
         panic!("expected source fallback");
     };
     assert_eq!(proof.source_sha256, cached.sha256);
-    assert_eq!(proof.index, pin);
+    assert_eq!(proof.index.as_ref(), Some(&pin));
     let repeated = resolver.resolve(&request, &context).unwrap().unwrap();
     let ResolutionProof::SourceBuild(repeated_proof) = repeated.proof else {
         panic!("expected source build");
@@ -100,6 +100,71 @@ EOF
         )]),
     );
     index.validate_complete().unwrap();
+    let local = index.catalog.clone();
+    let local_sha256 = local.sha256();
+    let mut inputs = PackageResolverInputs::default();
+    inputs
+        .resolvers
+        .insert("local".into(), ResolverInput::LocalCatalog(Box::new(local)));
+    inputs.resolvers.insert(
+        "rootbeer".into(),
+        ResolverInput::PublishedIndex(PackageIndexPin {
+            url: "https://unavailable.invalid/index.json".into(),
+            sha256: "a".repeat(64),
+        }),
+    );
+    let local_resolver = SourceResolver::with_inputs(&inputs, &state);
+    let local_resolution = local_resolver.resolve(&request, &context).unwrap().unwrap();
+    let ResolutionProof::SourceBuild(local_proof) = &local_resolution.proof else {
+        panic!("local source recipe must take precedence over published artifacts");
+    };
+    assert_eq!(local_proof.index, None);
+    assert_eq!(
+        local_proof.local_catalog_sha256.as_deref(),
+        Some(local_sha256.as_str())
+    );
+    assert_eq!(
+        local_resolution.package.output_sha256,
+        built.package.output_sha256
+    );
+    assert_eq!(local_resolution.package.provides, built.package.provides);
+
+    let mut local_tool = index.catalog.packages["xz"].clone();
+    local_tool.name = "local-tool".into();
+    local_tool.aliases.clear();
+    local_tool
+        .versions
+        .get_mut("5.8.3")
+        .unwrap()
+        .build
+        .as_mut()
+        .unwrap()
+        .dependencies = vec![BuildDependency::from("xz@5.8.3")];
+    let local = PackageCatalog {
+        schema: 1,
+        packages: BTreeMap::from([("local-tool".into(), local_tool)]),
+    };
+    assert!(local.requires_index());
+    let dependency_pin = save(&index);
+    inputs
+        .resolvers
+        .insert("local".into(), ResolverInput::LocalCatalog(Box::new(local)));
+    inputs.resolvers.insert(
+        "rootbeer".into(),
+        ResolverInput::PublishedIndex(dependency_pin.clone()),
+    );
+    let local_resolver = SourceResolver::with_inputs(&inputs, &state);
+    let local_resolution = local_resolver
+        .resolve(&PackageRequest::parse("local-tool"), &context)
+        .unwrap()
+        .unwrap();
+    let ResolutionProof::SourceBuild(local_proof) = local_resolution.proof else {
+        panic!("expected local source build with registry dependency");
+    };
+    assert_eq!(local_proof.index, Some(dependency_pin));
+    assert!(local_proof.local_catalog_sha256.is_some());
+    assert_eq!(local_resolution.package.name, "local-tool");
+
     let resolver = SourceResolver::new(&save(&index), &state);
     let normal = resolver.resolve(&request, &context).unwrap().unwrap();
     assert!(matches!(normal.proof, ResolutionProof::PublishedIndex(_)));

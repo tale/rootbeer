@@ -15,7 +15,7 @@ pub(crate) use recipe::{validate_apps, validate_bin_paths, validate_commands, va
 pub use recipe::{CatalogPackage, CatalogRecipe};
 
 /// A versioned snapshot of Rootbeer's canonical package definitions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageCatalog {
     pub schema: u32,
@@ -74,8 +74,44 @@ impl PackageCatalog {
         Ok(catalog)
     }
 
-    /// Checks identities, aliases, versions, backend requests, and smoke tests.
+    /// Loads local recipes, allowing dependencies supplied by the selected registry.
+    pub fn from_local_directory(directory: &Path) -> Result<Self, String> {
+        let definitions = super::PackageDefinition::from_directory(directory)?;
+        let catalog = Self {
+            schema: 1,
+            packages: definitions
+                .into_iter()
+                .map(|(name, definition)| (name, definition.package))
+                .collect(),
+        };
+        catalog.validate_recipes()?;
+        if !catalog.requires_index() {
+            catalog.validate()?;
+        }
+        Ok(catalog)
+    }
+
+    /// Whether any declared dependency must be supplied by an external catalog.
+    pub fn requires_index(&self) -> bool {
+        self.packages
+            .values()
+            .flat_map(|package| package.versions.values())
+            .filter_map(|recipe| recipe.build.as_ref())
+            .flat_map(|build| &build.dependencies)
+            .any(|dependency| {
+                self.find(&PackageRequest::parse(dependency.package()).name)
+                    .is_none()
+            })
+    }
+
+    /// Checks complete recipes and their dependency graph.
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_recipes()?;
+        crate::graph::validate_dependencies(self)
+    }
+
+    /// Checks recipe identities and contracts without requiring a complete dependency graph.
+    pub fn validate_recipes(&self) -> Result<(), String> {
         if self.schema != 1 || self.packages.is_empty() {
             return Err("catalog must use schema 1 and contain packages".into());
         }
@@ -120,7 +156,6 @@ impl PackageCatalog {
                 }
             }
         }
-        crate::graph::validate_dependencies(self)?;
         Ok(())
     }
 
@@ -156,6 +191,7 @@ pub struct CatalogResolver {
     catalog: PackageCatalog,
     inputs: PackageResolverInputs,
     backends: ResolverStack,
+    fallback: Option<super::index::IndexResolver>,
 }
 
 impl CatalogResolver {
@@ -168,7 +204,14 @@ impl CatalogResolver {
             catalog: catalog.clone(),
             inputs: inputs.clone(),
             backends,
+            fallback: None,
         }
+    }
+
+    /// Resolves names absent from this catalog using the selected published index.
+    pub fn with_fallback(mut self, pin: Option<&super::PackageIndexPin>) -> Self {
+        self.fallback = pin.map(super::index::IndexResolver::new);
+        self
     }
 }
 
@@ -182,13 +225,16 @@ impl PackageResolver for CatalogResolver {
         request: &PackageRequest,
         context: &ResolveContext,
     ) -> Result<Option<PackageResolution>, String> {
+        let catalog = &self.catalog;
+        let Some(package) = catalog.find(&request.name) else {
+            if let Some(fallback) = &self.fallback {
+                return fallback.resolve(request, context);
+            }
+            return Err(format!("unknown catalog package `{}`; use `rootbeer-forge list` or an explicit backend request", request.name));
+        };
         if request.source.is_some() {
             return Err("source requests require a source-build resolver".into());
         }
-        let catalog = &self.catalog;
-        let Some(package) = catalog.find(&request.name) else {
-            return Err(format!("unknown catalog package `{}`; use `rootbeer-forge list` or an explicit backend request", request.name));
-        };
         if request.asset.is_some() || !request.bins.is_empty() {
             return Err("catalog recipes own assets and commands; use an explicit backend request for overrides".into());
         }

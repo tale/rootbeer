@@ -61,10 +61,13 @@ impl GitSource {
     }
 }
 
-/// Immutable provenance for a locally built package selected from a verified index.
+/// Immutable provenance for a package built from local recipes or a verified index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceBuildProof {
-    pub index: crate::PackageIndexPin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<crate::PackageIndexPin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_catalog_sha256: Option<String>,
     pub catalog_sha256: String,
     pub recipe_sha256: String,
     pub source_url: String,

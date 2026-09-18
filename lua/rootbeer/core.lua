@@ -119,6 +119,13 @@ function rootbeer.exec(cmd, args) end
 --- @field url string HTTPS index URL, or an explicit absolute `file:///` URL.
 --- @field sha256 string Lowercase SHA-256 of the exact index JSON bytes.
 
+--- Loads registry-format Lua recipes from a local directory, relative to the config.
+--- Call once, before declaring packages. Local names and aliases take precedence
+--- over the selected index. Planning only reads recipes; apply resolves downloads
+--- and executes source builds. Recipe contents are tracked in `rootbeer.lock`.
+--- @param path string Directory containing one schema-2 `<name>.lua` file per package.
+function rootbeer.package_catalog(path) end
+
 --- Selects a pinned artifact index for canonical package requests. Call once,
 --- before declaring packages. Planning performs no index downloads; apply verifies
 --- the index and records its pin in `rootbeer.lock`.

@@ -5,7 +5,8 @@ use std::{fs, io};
 use crate::executor::{self, ApplyOptions, ExecutionHandler, ExecutionReport};
 use crate::package::lockfile::{LockError, RootbeerLock};
 use crate::package::{
-    PackageIndexPin, PackageIntent, PackageLockBuilder, PackageResolverInputs, ResolverInput,
+    PackageCatalog, PackageIndexPin, PackageIntent, PackageLockBuilder, PackageResolverInputs,
+    ResolverInput,
 };
 use crate::plan::Op;
 use crate::{Error, Runtime};
@@ -145,6 +146,10 @@ impl Pipeline {
             .lua
             .app_data_ref::<PackageIndexPin>()
             .map(|pin| pin.clone());
+        let local_catalog = vm
+            .lua
+            .app_data_ref::<PackageCatalog>()
+            .map(|catalog| catalog.clone());
         let ops = vm.drain_ops();
 
         Ok(PlannedPipeline {
@@ -152,6 +157,7 @@ impl Pipeline {
             package_resolver: self.package_resolver,
             opts: self.opts,
             package_index,
+            local_catalog,
             ops,
         })
     }
@@ -162,6 +168,7 @@ pub struct PlannedPipeline {
     tools: std::sync::Arc<crate::tools::ToolRuntime>,
     package_resolver: fn(&PackageResolverInputs) -> crate::package::ResolverStack,
     package_index: Option<PackageIndexPin>,
+    local_catalog: Option<PackageCatalog>,
     opts: Options,
     ops: Vec<Op>,
 }
@@ -246,6 +253,13 @@ impl PlannedPipeline {
                 .map(|lock| lock.inputs.clone())
                 .unwrap_or_default()
         };
+        inputs.resolvers.remove("local");
+        if let Some(catalog) = &self.local_catalog {
+            inputs.resolvers.insert(
+                "local".into(),
+                ResolverInput::LocalCatalog(Box::new(catalog.clone())),
+            );
+        }
         if let Some(pin) = &self.package_index {
             inputs.resolvers.insert(
                 "rootbeer".into(),
@@ -268,10 +282,40 @@ impl PlannedPipeline {
             inputs.resolvers.remove("rootbeer");
         }
         let needs_aqua = self.ops.iter().any(|op| {
-            matches!(op,
-                Op::Package { intent: PackageIntent::Request(request) }
-                    if request.resolver.as_deref() == Some("aqua")
-            )
+            let Op::Package {
+                intent: PackageIntent::Request(request),
+            } = op
+            else {
+                return false;
+            };
+            if request.resolver.as_deref() == Some("aqua") {
+                return true;
+            }
+            if request
+                .resolver
+                .as_deref()
+                .is_some_and(|name| name != "rootbeer")
+            {
+                return false;
+            }
+            let Some(package) = inputs
+                .local_catalog()
+                .and_then(|catalog| catalog.find(&request.name))
+            else {
+                return false;
+            };
+            let context = crate::package::ResolveContext::current();
+            let version = request
+                .version
+                .as_deref()
+                .unwrap_or_else(|| package.default_version_for(&context.system));
+            package.versions.get(version).is_some_and(|recipe| {
+                recipe.build.is_none()
+                    && recipe
+                        .source
+                        .as_deref()
+                        .is_some_and(|source| source.starts_with("aqua:"))
+            })
         });
         if needs_aqua
             && !self.opts.package_lock.is_offline
@@ -303,7 +347,9 @@ impl PlannedPipeline {
     }
 
     fn lock_matches_plan(&self, lock: &RootbeerLock) -> Result<bool, Error> {
-        if lock.inputs.explicit_package_index() != self.package_index.as_ref() {
+        if lock.inputs.explicit_package_index() != self.package_index.as_ref()
+            || lock.inputs.local_catalog() != self.local_catalog.as_ref()
+        {
             return Ok(false);
         }
         let Some(expected) = lock.input_fingerprint.as_deref() else {
@@ -326,6 +372,9 @@ impl PlannedPipeline {
             matches!(op,
                 Op::Package { intent: PackageIntent::Request(request) }
                     if request.resolver.as_deref().is_none_or(|name| name == "rootbeer")
+                        && self.local_catalog.as_ref().is_none_or(|catalog| {
+                            catalog.find(&request.name).is_none() || catalog.requires_index()
+                        })
             )
         })
     }
@@ -395,6 +444,7 @@ mod tests {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
+            local_catalog: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
                 intent: PackageIntent::Locked(package()),
@@ -419,6 +469,7 @@ mod tests {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
+            local_catalog: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
                 intent: PackageIntent::Locked(package()),
@@ -448,6 +499,7 @@ mod tests {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
+            local_catalog: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
                 intent: PackageIntent::Locked(planned_package),
@@ -471,6 +523,7 @@ mod tests {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
+            local_catalog: None,
             opts,
             ops: vec![Op::Package {
                 intent: PackageIntent::Locked(package()),
@@ -504,6 +557,7 @@ mod tests {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
+            local_catalog: None,
             opts,
             ops: vec![Op::Package {
                 intent: PackageIntent::Locked(package()),
@@ -524,6 +578,66 @@ mod tests {
             ..Default::default()
         };
         Pipeline::new(options).plan().unwrap()
+    }
+
+    #[test]
+    fn local_recipe_changes_invalidate_locked_plans_without_selecting_the_registry() {
+        let root = tempfile::tempdir().unwrap();
+        let recipes = root.path().join("packages");
+        fs::create_dir(&recipes).unwrap();
+        let recipe = format!(
+            r#"return {{
+            schema = 2, name = "demo", description = "Local demo",
+            homepage = "https://example.invalid/demo", default_version = "1",
+            systems = {{ "{}" }},
+            inputs = {{ prebuilt = {{ github = "owner/demo", tag = "v{{version}}", assets = {{ ["aarch64-macos"] = "demo.tar.gz", ["x86_64-linux"] = "demo.tar.gz", ["aarch64-linux"] = "demo.tar.gz" }} }} }},
+            outputs = {{ bins = {{ "demo" }}, checks = {{ {{ "demo", "--version" }} }} }},
+            versions = {{ ["1"] = {{ revision = 1 }} }},
+        }}"#,
+            crate::package::ResolveContext::current().system
+        );
+        fs::write(recipes.join("demo.lua"), &recipe).unwrap();
+        let script =
+            "local rb = require('rootbeer'); rb.package_catalog('packages'); rb.package('demo')";
+        let planned = plan_index_script(root.path(), script);
+        assert!(!planned.has_canonical_requests());
+        let mut inputs = PackageResolverInputs::default();
+        inputs.resolvers.insert(
+            "local".into(),
+            ResolverInput::LocalCatalog(Box::new(planned.local_catalog.clone().unwrap())),
+        );
+        let builder = PackageLockBuilder::current_system_with_inputs(inputs.clone());
+        let fingerprint = builder
+            .fingerprint_input(&builder.lock_input_from_ops(&planned.ops))
+            .unwrap();
+        let lock = RootbeerLock::from_packages([])
+            .unwrap()
+            .with_resolver_inputs(inputs)
+            .with_input_fingerprint(fingerprint);
+        assert!(planned.lock_matches_plan(&lock).unwrap());
+        lock.write(root.path().join("rootbeer.lock")).unwrap();
+        fs::write(
+            recipes.join("demo.lua"),
+            recipe.replace("revision = 1", "revision = 2"),
+        )
+        .unwrap();
+        let changed = plan_index_script(root.path(), script);
+        assert!(!changed.lock_matches_plan(&lock).unwrap());
+        assert!(matches!(
+            changed.locked_ops_for_apply(&mut |_| {}).unwrap_err(),
+            Error::Lock(LockError::StaleLockfile { .. })
+        ));
+        let removed = plan_index_script(
+            root.path(),
+            "local rb = require('rootbeer'); rb.package('demo')",
+        );
+        assert!(removed.has_canonical_requests());
+        assert!(!removed.lock_matches_plan(&lock).unwrap());
+        let mixed = plan_index_script(
+            root.path(),
+            &(script.to_string() + "; rb.package('registry-tool')"),
+        );
+        assert!(mixed.has_canonical_requests());
     }
 
     #[test]
@@ -666,6 +780,7 @@ mod tests {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
+            local_catalog: None,
             opts: options,
             ops: vec![],
         };
@@ -705,6 +820,7 @@ mod tests {
                 tools: Default::default(),
                 package_resolver: crate::package::resolver_stack_for_inputs,
                 package_index: None,
+                local_catalog: None,
                 opts: options,
                 ops: vec![],
             };

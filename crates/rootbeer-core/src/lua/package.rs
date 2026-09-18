@@ -8,8 +8,8 @@ use super::module::Module;
 use super::vm::{profile_bin_path, PackageBins};
 use crate::package::{
     lockfile::RootbeerLock, profile as package_profile, ArchiveFormat, LockedInstall,
-    LockedPackage, LockedSource, PackageIndexPin, PackageIntent, PackageRequest, Provides,
-    ResolveContext,
+    LockedPackage, LockedSource, PackageCatalog, PackageIndexPin, PackageIntent, PackageRequest,
+    Provides, ResolveContext,
 };
 use crate::plan::{Op, WriteSource};
 
@@ -19,6 +19,30 @@ impl Module for Package {
     const NAME: &'static str = "";
 
     fn build(lua: &Lua, t: &Table) -> LuaResult<()> {
+        t.set(
+            "package_catalog",
+            lua.create_function(|lua, path: String| {
+                let cx = Ctx::from(lua);
+                if lua.app_data_ref::<PackageCatalog>().is_some()
+                    || cx
+                        .run
+                        .lock()
+                        .iter()
+                        .any(|op| matches!(op, Op::Package { .. }))
+                {
+                    return Err(LuaError::RuntimeError(
+                        "declare package_catalog once, before packages".into(),
+                    ));
+                }
+                let path = cx.resolve(&path);
+                let catalog = PackageCatalog::from_local_directory(&path).map_err(|error| {
+                    LuaError::RuntimeError(format!("{}: {error}", path.display()))
+                })?;
+                drop(cx);
+                lua.set_app_data(catalog);
+                Ok(())
+            })?,
+        )?;
         t.set(
             "package_index",
             lua.create_function(|lua, spec: Table| {
@@ -288,7 +312,45 @@ fn batch_entries(table: Table) -> LuaResult<Vec<Value>> {
 }
 
 fn request_bins(lua: &Lua, cx: &Ctx<'_>, request: &PackageRequest) -> LuaResult<Vec<String>> {
+    let local = lua.app_data_ref::<PackageCatalog>();
+    if request
+        .resolver
+        .as_deref()
+        .is_none_or(|name| name == "rootbeer")
+    {
+        if let Some(package) = local
+            .as_ref()
+            .and_then(|catalog| catalog.find(&request.name))
+        {
+            let context = ResolveContext::current();
+            let version = request
+                .version
+                .as_deref()
+                .unwrap_or_else(|| package.default_version_for(&context.system));
+            let recipe = package.versions.get(version).ok_or_else(|| {
+                LuaError::RuntimeError(format!("{}@{version}: no local recipe", package.name))
+            })?;
+            if !recipe.systems.contains(&context.system) {
+                return Err(LuaError::RuntimeError(format!(
+                    "{}@{version}: no local recipe for {}",
+                    package.name, context.system
+                )));
+            }
+            return Ok(recipe.bins.clone());
+        }
+    }
     if let Ok(lock) = RootbeerLock::read(cx.runtime.script_dir.join("rootbeer.lock")) {
+        if request
+            .resolver
+            .as_deref()
+            .is_none_or(|name| name == "rootbeer")
+            && lock
+                .inputs
+                .local_catalog()
+                .is_some_and(|catalog| catalog.find(&request.name).is_some())
+        {
+            return Ok(Vec::new());
+        }
         if lock.inputs.explicit_package_index() == lua.app_data_ref::<PackageIndexPin>().as_deref()
         {
             if let Ok(package) = lock.package_for_request(request, &ResolveContext::current()) {
