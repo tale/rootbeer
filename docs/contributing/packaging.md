@@ -550,12 +550,26 @@ Legacy tags that do not belong to the tracked release series can be listed expli
 in a package's `source.exclude_tags`, or supplied with repeated `--exclude-tag`
 arguments during import. Unsupported tags otherwise remain visible errors.
 
-The index's discovery workflow runs daily or manually, retains the report and
-candidates as workflow artifacts, and qualifies changed packages on all three
-platforms using verified-result caches. Discovery errors remain visible while
-successful candidates can still be checked. It has read-only repository permissions
-and does not publish, open pull requests, or advance defaults automatically.
-Review qualified candidates before copying them into the index's `packages/` directory.
+The index checks upstream releases daily and qualifies changed candidates on all
+three platforms, reusing verified results for unaffected packages. After successful
+assembly, publication verifies the artifact digest and exact catalog, commits the
+changed recipes, and publishes those same artifacts without rebuilding. Candidates
+whose catalog, engine, or pipeline inputs changed during verification are discarded;
+the next scan retries against current inputs. Discovery errors remain in the report
+while successful candidates continue independently.
+
+Rootbeer has a separate main-branch update path. Successful engine CI can send a
+`rootbeer-update` repository dispatch to the index; a 15-minute scheduled poll is the
+fallback. Both resolve the current main commit and require successful `CI` checks,
+hash its source archive, and retain existing version recipes. Index qualification
+still builds and checks the new package on each supported platform. The package
+update does not advance `engine-revision`.
+
+For immediate dispatch, set `INDEX_UPDATE_TOKEN` in the Rootbeer repository to a
+fine-grained token with Contents write access to `tale/rootbeer-index` (required by
+GitHub's repository-dispatch endpoint). Without it, polling remains active. The
+index's existing `PUBLISH_INDEX` switch controls automatic promotion and publication.
+Packages without discovery rules remain listed as untracked in the report.
 
 ## Qualify a change
 
