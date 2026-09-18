@@ -338,3 +338,17 @@ variant — there is no per-provider write op. To add a provider:
 
 No CLI changes are required — the dry-run / apply output picks up the
 new provider through `fetch_label`.
+
+## Internal runtime tools
+
+Providers use the per-pipeline `ToolRuntime` in `crates/rootbeer-core/src/tools.rs`
+for packaged executables. Pass a pinned `PackageRequest` and exported command
+name to `command()`; the provider owns that declaration, while package recipes
+remain in their registry. The returned `Command` uses an absolute store path.
+
+Preparation uses the standalone package resolver, download cache, and verified
+realizer without activating a user profile. All exports from a prepared package
+are reused for that pipeline, including across Lua evaluation and apply. Failed
+preparation can be retried. Package offline mode is inherited from the pipeline;
+provider network access and authentication remain the provider's responsibility.
+No secret values are cached by this runtime. See `one_password.rs` for a consumer.

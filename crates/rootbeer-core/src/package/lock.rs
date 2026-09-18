@@ -111,6 +111,15 @@ where
     }
 
     pub fn build(&self, input: &PackageLockInput) -> Result<RootbeerLock, LockBuildError> {
+        self.build_with_previous(input, None)
+    }
+
+    /// Refreshes resolution while retaining verified output identities for unchanged inputs.
+    pub fn build_with_previous(
+        &self,
+        input: &PackageLockInput,
+        previous: Option<&RootbeerLock>,
+    ) -> Result<RootbeerLock, LockBuildError> {
         let input_fingerprint = self.fingerprint_input(input)?;
 
         let mut entries = Vec::new();
@@ -118,12 +127,13 @@ where
             let entry = match intent {
                 PackageIntent::Request(request) => {
                     let mut resolution = self.resolve_request(request, &input.context)?;
-                    resolution.package = self.realize_locked_package(&resolution.package)?;
+                    resolution.package =
+                        self.realize_locked_package(&resolution.package, previous)?;
                     PackageLockEntry::resolved(request, &input.context, resolution)?
                 }
 
                 PackageIntent::Locked(package) => {
-                    PackageLockEntry::locked(self.realize_locked_package(package)?)
+                    PackageLockEntry::locked(self.realize_locked_package(package, previous)?)
                 }
             };
 
@@ -151,16 +161,24 @@ where
     fn realize_locked_package(
         &self,
         package: &LockedPackage,
+        previous: Option<&RootbeerLock>,
     ) -> Result<LockedPackage, LockBuildError> {
+        let mut locked = package.clone();
+        if locked.output_sha256.is_none() {
+            locked.output_sha256 = previous
+                .into_iter()
+                .flat_map(|lock| lock.packages.values())
+                .find(|old| old.same_realization_input(package))
+                .and_then(|old| old.output_sha256.clone());
+        }
         let realized =
             self.realizer
-                .realize_package(package)
+                .realize_package(&locked)
                 .map_err(|source| LockBuildError::Realize {
                     package: package.id(),
                     source,
                 })?;
 
-        let mut locked = package.clone();
         locked.output_sha256 = Some(realized.store_entry.output_sha256);
         Ok(locked)
     }
@@ -287,6 +305,59 @@ mod tests {
             inputs: BTreeMap::new(),
             notes: vec!["test resolver".to_string()],
         })
+    }
+
+    #[test]
+    fn refresh_reuses_unchanged_outputs_and_still_detects_tampering() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("tool");
+        std::fs::write(&source, b"tool bytes").unwrap();
+        let mut package = package();
+        package.source = LockedSource::File {
+            path: source.clone(),
+            sha256: crate::store::hash_file(&source).unwrap(),
+        };
+        package.install = LockedInstall::Binary {
+            path: "tool".into(),
+        };
+        package.provides.bins.insert("tool".into(), "tool".into());
+        let store = crate::store::Store::new(root.path().join("store"));
+        let builder = PackageLockBuilder::new(
+            FakeResolver {
+                package: package.clone(),
+            },
+            PackageRealizer::with_dirs(
+                store.clone(),
+                root.path().join("downloads"),
+                root.path().join("tmp"),
+            ),
+            ResolveContext::new("test-system"),
+        );
+        let input = builder.lock_input_from_ops(&[Op::Package {
+            intent: PackageIntent::request(PackageRequest::new("demo").resolver("fake")),
+        }]);
+        let previous = builder.build(&input).unwrap();
+        std::fs::remove_file(&source).unwrap();
+        let refreshed = builder
+            .build_with_previous(&input, Some(&previous))
+            .unwrap();
+        assert_eq!(refreshed.packages, previous.packages);
+        let locked = refreshed.packages.values().next().unwrap();
+        let output = store.store_path(
+            locked.output_sha256.as_ref().unwrap(),
+            &locked.name,
+            &locked.version,
+        );
+        std::fs::write(output.join("tool"), b"tampered").unwrap();
+        assert!(builder
+            .build_with_previous(&input, Some(&previous))
+            .is_err());
+        let mut changed = input.clone();
+        package.version = "2.0.0".into();
+        changed.intents = vec![PackageIntent::locked(package)];
+        assert!(builder
+            .build_with_previous(&changed, Some(&previous))
+            .is_err());
     }
 
     #[test]

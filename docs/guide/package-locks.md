@@ -4,6 +4,18 @@ Rootbeer remembers resolved versions so repeated installs do not unexpectedly
 change your tools. `rb run` and `rb use` save requests in Rootbeer's state directory;
 Lua configurations save them in `rootbeer.lock` alongside `init.lua`.
 
+`--update` refreshes package metadata, not the download cache. Unchanged signed
+index snapshots and checksum-pinned archives are reused. Downloads without an
+upstream checksum use HTTP ETag or Last-Modified validation when the server
+supports it; a changed response replaces the cached content. Existing downloads
+without these validators need one fetch to record them. Servers without validators
+still require a download to detect changes.
+
+When resolution returns identical package inputs, Rootbeer retains the prior
+output hash and verifies the installed store entry instead of unpacking it again.
+Changed source hashes, install layouts, exports, or runtime dependencies prevent
+that reuse. Cached contents remain checksum-verified.
+
 ## Update tools installed with run or use
 
 Refresh a request before running it, or update selected installed packages:

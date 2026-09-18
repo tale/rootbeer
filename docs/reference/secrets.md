@@ -11,9 +11,21 @@ local rb = require("rootbeer")
 
 ### 1Password (`op`)
 
-Requires the [1Password CLI](https://developer.1password.com/docs/cli) to
-be installed and signed in. Touch ID / biometric prompts surface
-synchronously when the CLI runs.
+Rootbeer prepares its own [1Password CLI](https://developer.1password.com/docs/cli)
+from `aqua:1password/cli@v2.39.0` on the first provider call. It invokes the
+verified store executable directly, without using your shell's `op` or changing
+your user profile. The same runtime is shared by field reads, document downloads,
+and `identity_op` throughout planning and apply.
+
+The CLI installation is cached across runs; secret values are not. Offline
+package mode requires the tool to be cached already and does not make 1Password
+secret access offline. First use can download the CLI, including during a dry
+run that evaluates `rb.secret.op()`. Deferred document and age-file operations
+do not prepare their tools during a dry run.
+
+Your normal 1Password account authentication still applies. Touch ID / biometric
+prompts surface synchronously when the CLI runs. The provider version is pinned
+by Rootbeer; `apply --update` does not change this internal dependency.
 
 **Use a secret in a config file:**
 

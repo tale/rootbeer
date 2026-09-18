@@ -116,7 +116,11 @@ impl Pipeline {
 
     /// Evaluate the Lua script and advance to the planned phase.
     pub fn plan(self) -> Result<PlannedPipeline, Error> {
+        let tools = std::sync::Arc::new(crate::tools::ToolRuntime::new(
+            self.opts.package_lock.offline(),
+        ));
         let runtime = Runtime {
+            tools: tools.clone(),
             script_dir: self.opts.script_dir.clone(),
             script_name: self.opts.script_name.clone(),
             lua_dir: self.opts.lua_dir.clone(),
@@ -143,6 +147,7 @@ impl Pipeline {
         let ops = vm.drain_ops();
 
         Ok(PlannedPipeline {
+            tools,
             package_resolver: self.package_resolver,
             opts: self.opts,
             package_index,
@@ -153,6 +158,7 @@ impl Pipeline {
 
 /// A pipeline that has been planned — ops are collected, ready to execute.
 pub struct PlannedPipeline {
+    tools: std::sync::Arc<crate::tools::ToolRuntime>,
     package_resolver: fn(&PackageResolverInputs) -> crate::package::ResolverStack,
     package_index: Option<PackageIndexPin>,
     opts: Options,
@@ -178,6 +184,7 @@ impl PlannedPipeline {
             Mode::Apply => {
                 let ops = self.locked_ops_for_apply(&mut |notice| handler.on_output(notice))?;
                 executor::apply_with_options(
+                    &self.tools,
                     &ops,
                     self.opts.force,
                     handler,
@@ -276,7 +283,7 @@ impl PlannedPipeline {
             inputs,
         );
         let input = builder.lock_input_from_ops(&self.ops);
-        let lock = builder.build(&input)?;
+        let lock = builder.build_with_previous(&input, existing.as_ref())?;
         lock.write(&path)?;
         Ok(crate::package::lockfile::apply_to_ops(&lock, &self.ops)?)
     }
@@ -366,6 +373,7 @@ mod tests {
     fn apply_attempts_to_build_lock_when_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let planned = PlannedPipeline {
+            tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
@@ -389,6 +397,7 @@ mod tests {
             .write(tmp.path().join("rootbeer.lock"))
             .unwrap();
         let planned = PlannedPipeline {
+            tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
@@ -417,6 +426,7 @@ mod tests {
             .write(tmp.path().join("rootbeer.lock"))
             .unwrap();
         let planned = PlannedPipeline {
+            tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
@@ -436,6 +446,7 @@ mod tests {
         let mut opts = opts(tmp.path().to_path_buf(), Mode::Apply);
         opts.package_lock = PackageLockMode::Locked;
         let planned = PlannedPipeline {
+            tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
             opts,
@@ -465,6 +476,7 @@ mod tests {
         let mut opts = opts(tmp.path().to_path_buf(), Mode::Apply);
         opts.package_lock = PackageLockMode::Locked;
         let planned = PlannedPipeline {
+            tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
             package_index: None,
             opts,

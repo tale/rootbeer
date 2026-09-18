@@ -15,12 +15,12 @@ use crate::{
 /// Resolve a `WriteSource` to its concrete bytes. Inline sources are a
 /// straight clone; secret-backed sources shell out to their provider here
 /// (apply time only).
-fn resolve_source(source: &WriteSource) -> io::Result<Vec<u8>> {
+fn resolve_source(source: &WriteSource, tools: &crate::tools::ToolRuntime) -> io::Result<Vec<u8>> {
     match source {
         WriteSource::Bytes(bytes) => Ok(bytes.clone()),
-        WriteSource::AgeFile { path, identity, .. } => crate::age::decrypt(path, identity),
+        WriteSource::AgeFile { path, identity, .. } => crate::age::decrypt(path, identity, tools),
         WriteSource::OpDocument { reference } => {
-            let output = Command::new("op")
+            let output = crate::one_password::command(tools)?
                 .args(["document", "get", reference])
                 .output()
                 .map_err(|e| io::Error::other(format!("failed to run `op`: {e}")))?;
@@ -49,10 +49,17 @@ pub fn apply(
     force: bool,
     handler: &mut impl ExecutionHandler,
 ) -> io::Result<ExecutionReport> {
-    apply_with_options(ops, force, handler, ApplyOptions::default())
+    apply_with_options(
+        &crate::tools::ToolRuntime::default(),
+        ops,
+        force,
+        handler,
+        ApplyOptions::default(),
+    )
 }
 
 pub fn apply_with_options(
+    tools: &crate::tools::ToolRuntime,
     ops: &[Op],
     force: bool,
     handler: &mut impl ExecutionHandler,
@@ -75,6 +82,7 @@ pub fn apply_with_options(
     let applications = Applications::default();
 
     apply_with_package_realizer(
+        tools,
         ops,
         force,
         handler,
@@ -85,6 +93,7 @@ pub fn apply_with_options(
 }
 
 fn apply_with_package_realizer(
+    tools: &crate::tools::ToolRuntime,
     ops: &[Op],
     force: bool,
     handler: &mut impl ExecutionHandler,
@@ -100,7 +109,7 @@ fn apply_with_package_realizer(
 
         match op {
             Op::WriteFile { path, source } => {
-                let bytes = resolve_source(source)?;
+                let bytes = resolve_source(source, tools)?;
 
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
@@ -301,6 +310,7 @@ fn apply_with_package_realizer(
             }
 
             Op::RealizePackage { package } => {
+                let is_cached = package_realizer.is_cached(package)?;
                 let realized = package_realizer.realize(package)?;
                 for (name, path) in &realized.apps {
                     if desired_apps
@@ -312,12 +322,23 @@ fn apply_with_package_realizer(
                         )));
                     }
                 }
-                activate_package_bins(&realized.bins, force, package_bin_dir)?;
+                let has_bin_changes =
+                    activate_package_bins(&realized.bins, force, package_bin_dir)?;
                 package_profile::write_env_file_for_bin_dir(package_bin_dir)?;
-                let result = OpResult::PackageRealized {
-                    name: package.name.clone(),
-                    version: package.version.clone(),
-                    store_path: Some(realized.store_entry.path),
+                let is_unchanged = is_cached
+                    && !has_bin_changes
+                    && applications.contains_exports("configuration", &realized.apps)?;
+                let result = if is_unchanged {
+                    OpResult::PackageUnchanged {
+                        name: package.name.clone(),
+                        version: package.version.clone(),
+                    }
+                } else {
+                    OpResult::PackageRealized {
+                        name: package.name.clone(),
+                        version: package.version.clone(),
+                        store_path: Some(realized.store_entry.path),
+                    }
                 };
                 handler.on_result(&result);
                 report.results.push(result);
@@ -346,8 +367,9 @@ fn activate_package_bins(
     bins: &std::collections::BTreeMap<String, PathBuf>,
     force: bool,
     bin_dir: &Path,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     fs::create_dir_all(bin_dir)?;
+    let mut has_changes = false;
 
     for (name, src) in bins {
         let dst = bin_dir.join(name);
@@ -375,9 +397,10 @@ fn activate_package_bins(
         }
 
         unix_fs::symlink(src, dst)?;
+        has_changes = true;
     }
 
-    Ok(())
+    Ok(has_changes)
 }
 
 #[cfg(test)]
@@ -723,6 +746,7 @@ mod tests {
 
         let mut h = Recorder::default();
         apply_with_package_realizer(
+            &crate::tools::ToolRuntime::default(),
             &ops,
             false,
             &mut h,
@@ -757,6 +781,139 @@ mod tests {
     }
 
     #[test]
+    fn cached_package_skips_unchanged_links_but_repairs_missing_links() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let (_archive_root, archive) = archive_source();
+        let mut package = locked_package(&archive);
+        let realizer = PackageRealizer::with_dirs(
+            Store::new(root.path().join("store")),
+            root.path().join("downloads"),
+            root.path().join("tmp"),
+        );
+        package.output_sha256 = Some(
+            realizer
+                .realize(&package)
+                .unwrap()
+                .store_entry
+                .output_sha256,
+        );
+        let bins = root.path().join("profile/bin");
+        let apps = Applications::new(
+            root.path().join("app-state"),
+            root.path().join("Applications"),
+        );
+        let ops = [Op::RealizePackage { package }];
+        let apply = || {
+            apply_with_package_realizer(
+                &crate::tools::ToolRuntime::default(),
+                &ops,
+                false,
+                &mut Recorder::default(),
+                &realizer,
+                &bins,
+                &apps,
+            )
+            .unwrap()
+        };
+        assert!(matches!(
+            apply().results[0],
+            OpResult::PackageRealized { .. }
+        ));
+        let link_before = fs::symlink_metadata(bins.join("demo")).unwrap();
+        let env_path = root.path().join("profile/env.sh");
+        let env_before = fs::metadata(&env_path).unwrap();
+        assert!(matches!(
+            apply().results[0],
+            OpResult::PackageUnchanged { .. }
+        ));
+        assert_eq!(
+            fs::symlink_metadata(bins.join("demo")).unwrap().ino(),
+            link_before.ino()
+        );
+        let env_after = fs::metadata(&env_path).unwrap();
+        assert_eq!(
+            (env_after.mtime(), env_after.mtime_nsec()),
+            (env_before.mtime(), env_before.mtime_nsec())
+        );
+        fs::remove_file(bins.join("demo")).unwrap();
+        assert!(matches!(
+            apply().results[0],
+            OpResult::PackageRealized { .. }
+        ));
+        assert!(bins.join("demo").exists());
+        let target = fs::read_link(bins.join("demo")).unwrap();
+        fs::write(target, b"tampered").unwrap();
+        assert!(apply_with_package_realizer(
+            &crate::tools::ToolRuntime::default(),
+            &ops,
+            false,
+            &mut Recorder::default(),
+            &realizer,
+            &bins,
+            &apps
+        )
+        .is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn cached_app_package_skips_only_when_owned_app_link_is_current() {
+        let root = tempfile::tempdir().unwrap();
+        let (_archive_root, archive) = archive_source();
+        let mut package = locked_package(&archive);
+        package
+            .provides
+            .apps
+            .insert("Demo.app".into(), "Demo.app".into());
+        let realizer = PackageRealizer::with_dirs(
+            Store::new(root.path().join("store")),
+            root.path().join("downloads"),
+            root.path().join("tmp"),
+        );
+        package.output_sha256 = Some(
+            realizer
+                .realize(&package)
+                .unwrap()
+                .store_entry
+                .output_sha256,
+        );
+        let bins = root.path().join("profile/bin");
+        let apps = Applications::new(
+            root.path().join("app-state"),
+            root.path().join("Applications"),
+        );
+        let ops = [Op::RealizePackage { package }];
+        let apply = || {
+            apply_with_package_realizer(
+                &crate::tools::ToolRuntime::default(),
+                &ops,
+                false,
+                &mut Recorder::default(),
+                &realizer,
+                &bins,
+                &apps,
+            )
+            .unwrap()
+        };
+        assert!(matches!(
+            apply().results[0],
+            OpResult::PackageRealized { .. }
+        ));
+        assert!(matches!(
+            apply().results[0],
+            OpResult::PackageUnchanged { .. }
+        ));
+        fs::remove_file(root.path().join("Applications/Demo.app")).unwrap();
+        assert!(matches!(
+            apply().results[0],
+            OpResult::PackageRealized { .. }
+        ));
+        assert!(root.path().join("Applications/Demo.app").is_symlink());
+    }
+
+    #[test]
     #[cfg(target_os = "macos")]
     fn application_links_reconcile_only_after_success_and_preserve_user_owner() {
         let root = tempfile::tempdir().unwrap();
@@ -774,6 +931,7 @@ mod tests {
         );
         let apply = |ops: &[Op]| {
             apply_with_package_realizer(
+                &crate::tools::ToolRuntime::default(),
                 ops,
                 false,
                 &mut Recorder::default(),
@@ -846,6 +1004,7 @@ mod tests {
         fs::write(directory.join("Demo.app/user-file"), "preserve").unwrap();
         let applications = Applications::new(root.path().join("app-state"), directory.clone());
         assert!(apply_with_package_realizer(
+            &crate::tools::ToolRuntime::default(),
             &[Op::RealizePackage { package }],
             true,
             &mut Recorder::default(),

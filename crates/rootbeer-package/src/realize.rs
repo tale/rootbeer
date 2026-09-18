@@ -70,6 +70,22 @@ impl PackageRealizer {
         }
     }
 
+    /// Whether every pinned output in this package's runtime closure is present.
+    /// This does not verify contents; callers must still realize the package.
+    pub fn is_cached(&self, package: &LockedPackage) -> io::Result<bool> {
+        let dependencies = crate::runtime::closure(package).map_err(io::Error::other)?;
+        Ok(dependencies
+            .into_iter()
+            .chain(std::iter::once(package))
+            .all(|package| {
+                package.output_sha256.as_ref().is_some_and(|hash| {
+                    self.store
+                        .store_path(hash, &package.name, &package.version)
+                        .exists()
+                })
+            }))
+    }
+
     pub fn realize(&self, package: &LockedPackage) -> io::Result<RealizedPackage> {
         for dependency in crate::runtime::closure(package).map_err(io::Error::other)? {
             self.realize_one(dependency)?;

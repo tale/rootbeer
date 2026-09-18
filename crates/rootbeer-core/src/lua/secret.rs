@@ -1,29 +1,8 @@
 use mlua::{Lua, Result as LuaResult, Table};
-use std::process::Command;
 
 use super::ctx::Ctx;
 use super::module::Module;
 use crate::plan::{AgeIdentity, Op, WriteSource};
-
-/// Reads a secret from 1Password via the `op` CLI.
-/// The reference should be in `op://` format (e.g. `op://vault/item/field`).
-fn read_op_secret(reference: &str) -> Result<String, mlua::Error> {
-    let output = Command::new("op")
-        .args(["read", "--no-newline", reference])
-        .output()
-        .map_err(|e| mlua::Error::RuntimeError(format!("failed to run `op`: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(mlua::Error::RuntimeError(format!(
-            "op read failed ({}): {stderr}",
-            output.status
-        )));
-    }
-
-    String::from_utf8(output.stdout)
-        .map_err(|e| mlua::Error::RuntimeError(format!("op returned invalid UTF-8: {e}")))
-}
 
 fn age_identity(cx: &Ctx<'_>, opts: &Table) -> LuaResult<AgeIdentity> {
     let path = opts.get::<Option<String>>("identity")?;
@@ -50,7 +29,7 @@ impl Module for Secret {
             lua.create_function(|lua, (path, opts): (String, Table)| {
                 let cx = Ctx::from(lua);
                 let identity = age_identity(&cx, &opts)?;
-                let bytes = crate::age::decrypt(&cx.resolve(&path), &identity)
+                let bytes = crate::age::decrypt(&cx.resolve(&path), &identity, &cx.runtime.tools)
                     .map_err(mlua::Error::external)?;
                 String::from_utf8(bytes).map_err(|_| {
                     mlua::Error::RuntimeError(
@@ -85,7 +64,10 @@ impl Module for Secret {
 
         t.set(
             "op",
-            lua.create_function(|_, reference: String| read_op_secret(&reference))?,
+            lua.create_function(|lua, reference: String| {
+                crate::one_password::read(&Ctx::from(lua).runtime.tools, &reference)
+                    .map_err(mlua::Error::external)
+            })?,
         )?;
 
         t.set(

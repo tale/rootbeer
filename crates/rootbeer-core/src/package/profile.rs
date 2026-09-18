@@ -58,6 +58,12 @@ pub fn write_env_file_for_bin_dir(bin_dir: &Path) -> io::Result<()> {
     } else {
         env_contents_for_bin_dir(bin_dir)
     };
+    match fs::read(&path) {
+        Ok(existing) if existing == contents.as_bytes() => return Ok(()),
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     fs::write(path, contents)
 }
 

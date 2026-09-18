@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::state_dir;
@@ -15,6 +16,13 @@ const USER_AGENT: &str = concat!("rootbeer/", env!("CARGO_PKG_VERSION"));
 pub struct DownloadCache {
     root: PathBuf,
     offline: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+struct UrlCacheEntry {
+    sha256: String,
+    etag: Option<String>,
+    last_modified: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +85,11 @@ impl DownloadCache {
             ));
         }
 
+        if expected_sha256.is_none() && (url.starts_with("https://") || url.starts_with("http://"))
+        {
+            return with_retries(|| self.revalidate_url(url));
+        }
+
         let (tmp, actual_sha256) = self.download_to_temp(url)?;
         let result = self.finish_download(&tmp, actual_sha256, expected_sha256, url);
         if result.is_err() {
@@ -89,6 +102,58 @@ impl DownloadCache {
     pub fn materialize_verified(&self, url: &str, sha256: &str) -> io::Result<PathBuf> {
         self.materialize(url, Some(sha256))
             .map(|downloaded| downloaded.path)
+    }
+
+    fn revalidate_url(&self, url: &str) -> io::Result<DownloadedFile> {
+        let metadata_path = self.root.join(format!(
+            "url-{}.json",
+            crate::store::hash_bytes(url.as_bytes())
+        ));
+        let metadata = match fs::read(&metadata_path) {
+            Ok(bytes) => serde_json::from_slice::<UrlCacheEntry>(&bytes).ok(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let cached = match metadata
+            .as_ref()
+            .filter(|entry| super::index::is_sha256(&entry.sha256))
+        {
+            Some(entry) => self.valid_cached(&entry.sha256)?,
+            None => None,
+        };
+        let validators = metadata
+            .as_ref()
+            .filter(|_| cached.is_some())
+            .filter(|entry| entry.etag.is_some() || entry.last_modified.is_some());
+        let response = http_response(url, validators)?;
+        if response.status().as_u16() == 304 {
+            return cached.filter(|_| validators.is_some()).ok_or_else(|| {
+                io::Error::other("received HTTP 304 without a verified cached download")
+            });
+        }
+        let mut metadata = UrlCacheEntry {
+            sha256: String::new(),
+            etag: response
+                .headers()
+                .get("etag")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+            last_modified: response
+                .headers()
+                .get("last-modified")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+        };
+        let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
+        let mut reader = response.into_body().into_reader();
+        let sha256 = copy_reader_to_writer(url, &mut reader, &mut file)?;
+        file.as_file().sync_all()?;
+        let downloaded = self.finish_download(file.path(), sha256, None, url)?;
+        metadata.sha256 = downloaded.sha256.clone();
+        let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
+        serde_json::to_writer(&mut file, &metadata)?;
+        file.persist(&metadata_path).map_err(|error| error.error)?;
+        Ok(downloaded)
     }
 
     fn valid_cached(&self, sha256: &str) -> io::Result<Option<DownloadedFile>> {
@@ -245,6 +310,14 @@ where
 
 fn copy_url_to_writer(url: &str, writer: &mut impl Write) -> io::Result<String> {
     let mut reader = url_reader(url)?;
+    copy_reader_to_writer(url, &mut reader, writer)
+}
+
+fn copy_reader_to_writer(
+    url: &str,
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+) -> io::Result<String> {
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 8192];
 
@@ -282,8 +355,29 @@ fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
         ));
     }
 
+    let response = http_response(url, None)?;
+    if response.status().as_u16() == 304 {
+        return Err(io::Error::other(
+            "unexpected HTTP 304 without cache validators",
+        ));
+    }
+    Ok(Box::new(response.into_body().into_reader()))
+}
+
+fn http_response(
+    url: &str,
+    cached: Option<&UrlCacheEntry>,
+) -> io::Result<ureq::http::Response<ureq::Body>> {
     let token = std::env::var("GITHUB_TOKEN").ok();
-    let response = http_request(url, token.as_deref())
+    let mut request = http_request(url, token.as_deref());
+    if let Some(cached) = cached {
+        if let Some(etag) = &cached.etag {
+            request = request.header("If-None-Match", etag);
+        } else if let Some(modified) = &cached.last_modified {
+            request = request.header("If-Modified-Since", modified);
+        }
+    }
+    let response = request
         .config()
         .http_status_as_error(false)
         .build()
@@ -324,7 +418,7 @@ fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
             retry_after,
         }));
     }
-    Ok(Box::new(response.into_body().into_reader()))
+    Ok(response)
 }
 
 #[derive(Debug)]
@@ -448,6 +542,7 @@ mod tests {
         url: String,
         is_done: std::sync::Arc<std::sync::atomic::AtomicBool>,
         requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        headers: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
         thread: Option<std::thread::JoinHandle<()>>,
     }
 
@@ -462,6 +557,8 @@ mod tests {
             let url = format!("http://{}", listener.local_addr().unwrap());
             let is_done = Arc::new(AtomicBool::new(false));
             let requests = Arc::new(AtomicUsize::new(0));
+            let headers = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let server_headers = headers.clone();
             let server_done = is_done.clone();
             let server_requests = requests.clone();
             let thread = std::thread::spawn(move || {
@@ -479,12 +576,15 @@ mod tests {
                         .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                         .unwrap();
                     let mut reader = BufReader::new(&stream);
+                    let mut headers = String::new();
                     loop {
                         let mut line = String::new();
                         if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
                             break;
                         }
+                        headers.push_str(&line);
                     }
+                    server_headers.lock().unwrap().push(headers.to_lowercase());
                     let request = server_requests.fetch_add(1, Ordering::SeqCst);
                     let response = responses[request.min(responses.len() - 1)];
                     stream.write_all(response.as_bytes()).unwrap();
@@ -494,6 +594,7 @@ mod tests {
                 url,
                 is_done,
                 requests,
+                headers,
                 thread: Some(thread),
             }
         }
@@ -520,6 +621,64 @@ mod tests {
         "HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     const PARTIAL: &str =
         "HTTP/1.1 200 OK\r\nContent-Length: 50\r\nConnection: close\r\n\r\npartial";
+
+    const ETAG_SUCCESS: &str =
+        "HTTP/1.1 200 OK\r\nETag: \"v1\"\r\nContent-Length: 7\r\nConnection: close\r\n\r\narchive";
+    const NOT_MODIFIED: &str = "HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n";
+
+    #[test]
+    fn unpinned_download_revalidates_cached_content_across_instances() {
+        let root = tempfile::tempdir().unwrap();
+        let server = HttpServer::new(vec![ETAG_SUCCESS, NOT_MODIFIED, SUCCESS]);
+        let first = DownloadCache::new(root.path())
+            .materialize(&server.url, None)
+            .unwrap();
+        let second = DownloadCache::new(root.path())
+            .materialize(&server.url, None)
+            .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(fs::read(&second.path).unwrap(), b"archive");
+        assert!(server.headers.lock().unwrap()[1].contains("if-none-match: \"v1\""));
+        fs::write(&second.path, b"corrupted").unwrap();
+        DownloadCache::new(root.path())
+            .materialize(&server.url, None)
+            .unwrap();
+        assert!(!server.headers.lock().unwrap()[2].contains("if-none-match"));
+        assert_eq!(fs::read(&first.path).unwrap(), b"archive");
+    }
+
+    #[test]
+    fn unpinned_download_accepts_changed_content_and_new_validators() {
+        let root = tempfile::tempdir().unwrap();
+        let server =
+            HttpServer::new(vec![ETAG_SUCCESS,
+            "HTTP/1.1 200 OK\r\nETag: \"v2\"\r\nContent-Length: 3\r\nConnection: close\r\n\r\nnew",
+            NOT_MODIFIED]);
+        let cache = DownloadCache::new(root.path());
+        let first = cache.materialize(&server.url, None).unwrap();
+        let second = cache.materialize(&server.url, None).unwrap();
+        assert_ne!(first.sha256, second.sha256);
+        assert_eq!(fs::read(&second.path).unwrap(), b"new");
+        assert_eq!(cache.materialize(&server.url, None).unwrap(), second);
+        assert!(server.headers.lock().unwrap()[2].contains("if-none-match: \"v2\""));
+    }
+
+    #[test]
+    fn unpinned_download_uses_last_modified_and_rejects_unexpected_304() {
+        let root = tempfile::tempdir().unwrap();
+        let server = HttpServer::new(vec![
+            "HTTP/1.1 200 OK\r\nLast-Modified: Wed, 16 Sep 2026 12:00:00 GMT\r\nContent-Length: 7\r\nConnection: close\r\n\r\narchive",
+            NOT_MODIFIED]);
+        let cache = DownloadCache::new(root.path());
+        let first = cache.materialize(&server.url, None).unwrap();
+        assert_eq!(cache.materialize(&server.url, None).unwrap(), first);
+        assert!(server.headers.lock().unwrap()[1].contains("if-modified-since:"));
+        let empty = tempfile::tempdir().unwrap();
+        assert!(DownloadCache::new(empty.path())
+            .materialize(&server.url, None)
+            .is_err());
+        assert_eq!(fs::read_dir(empty.path()).unwrap().count(), 0);
+    }
 
     #[test]
     fn retry_backoff_is_bounded_and_preserves_server_minimum() {

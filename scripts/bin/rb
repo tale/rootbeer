@@ -1,0 +1,3 @@
+#!/bin/sh
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd) || exit
+exec cargo run --manifest-path "$root/Cargo.toml" -p rootbeer-cli --bin rb -- "$@"

@@ -16,6 +16,7 @@ use crate::Runtime;
 
 fn runtime(script_dir: PathBuf, profile: Option<String>) -> Runtime {
     Runtime {
+        tools: Default::default(),
         script_dir,
         script_name: "test.lua".into(),
         lua_dir: PathBuf::from(env!("ROOTBEER_LUA_DIR")),

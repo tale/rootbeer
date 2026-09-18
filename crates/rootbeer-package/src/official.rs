@@ -111,17 +111,23 @@ impl OfficialIndexSource {
                 return Err("official index rollback or conflicting sequence detected".into());
             }
         }
-        let bytes = match fetch(&manifest.index.url, 16 * 1024 * 1024) {
+        let downloads = state.join("downloads");
+        let snapshot_path = downloads.join(format!("sha256-{}", manifest.index.sha256));
+        let bytes = match fs::read(&snapshot_path) {
             Ok(bytes) => bytes,
-            Err(error) => return fallback(error, cached, should_refresh),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let bytes = match fetch(&manifest.index.url, 16 * 1024 * 1024) {
+                    Ok(bytes) => bytes,
+                    Err(error) => return fallback(error, cached, should_refresh),
+                };
+                verify_index(&manifest.index, &bytes)?;
+                fs::create_dir_all(&downloads).map_err(|error| error.to_string())?;
+                atomic_write(&snapshot_path, &bytes)?;
+                bytes
+            }
+            Err(error) => return Err(error.to_string()),
         };
         verify_index(&manifest.index, &bytes)?;
-        let downloads = state.join("downloads");
-        fs::create_dir_all(&downloads).map_err(|e| e.to_string())?;
-        atomic_write(
-            &downloads.join(format!("sha256-{}", manifest.index.sha256)),
-            &bytes,
-        )?;
         let pin = manifest.index.clone();
         let snapshot = CachedSnapshot {
             manifest,
@@ -363,7 +369,7 @@ mod tests {
         assert!(source
             .select_with(&state, false, |url, _| Ok(
                 if url.ends_with("latest.json") {
-                    signed.clone()
+                    manifest(&key, &[bytes.as_slice(), b"\n"].concat(), 3)
                 } else {
                     b"tampered".to_vec()
                 }
@@ -377,6 +383,34 @@ mod tests {
                 .input,
             selected.input
         );
+    }
+
+    #[test]
+    fn refresh_reuses_verified_snapshot_but_still_fetches_manifest() {
+        let root = tempfile::tempdir().unwrap();
+        let (source, key, bytes) = fixture(root.path());
+        let state = root.path().join("state");
+        source
+            .select_with(&state, true, |url, _| {
+                Ok(if url.ends_with("latest.json") {
+                    manifest(&key, &bytes, 1)
+                } else {
+                    bytes.clone()
+                })
+            })
+            .unwrap();
+        let mut requests = 0;
+        source
+            .select_with(&state, true, |url, _| {
+                requests += 1;
+                assert!(
+                    url.ends_with("latest.json"),
+                    "unchanged snapshot was downloaded again"
+                );
+                Ok(manifest(&key, &bytes, 2))
+            })
+            .unwrap();
+        assert_eq!(requests, 1);
     }
 
     #[test]

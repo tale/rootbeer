@@ -1,25 +1,19 @@
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
-use std::process::Command;
 
 use age::secrecy::zeroize::Zeroize;
 
 use crate::plan::AgeIdentity;
 
-fn identities(source: &AgeIdentity) -> io::Result<Vec<age::x25519::Identity>> {
+fn identities(
+    source: &AgeIdentity,
+    tools: &crate::tools::ToolRuntime,
+) -> io::Result<Vec<age::x25519::Identity>> {
     let mut text = match source {
         AgeIdentity::File(path) => fs::read_to_string(path)?,
-        AgeIdentity::OnePassword(reference) => {
-            let output = Command::new("op")
-                .args(["read", "--no-newline", reference])
-                .output()?;
-            if !output.status.success() {
-                return Err(io::Error::other("age identity: op read failed"));
-            }
-            String::from_utf8(output.stdout)
-                .map_err(|_| io::Error::other("age identity is not UTF-8"))?
-        }
+        AgeIdentity::OnePassword(reference) => crate::one_password::read(tools, reference)
+            .map_err(|_| io::Error::other("age identity: op read failed"))?,
     };
     let result = text
         .lines()
@@ -38,8 +32,12 @@ fn identities(source: &AgeIdentity) -> io::Result<Vec<age::x25519::Identity>> {
     Ok(keys)
 }
 
-pub(crate) fn decrypt(path: &Path, identity: &AgeIdentity) -> io::Result<Vec<u8>> {
-    let keys = identities(identity)?;
+pub(crate) fn decrypt(
+    path: &Path,
+    identity: &AgeIdentity,
+    tools: &crate::tools::ToolRuntime,
+) -> io::Result<Vec<u8>> {
+    let keys = identities(identity, tools)?;
     let input = age::armor::ArmoredReader::new(fs::File::open(path)?);
     let decryptor = age::Decryptor::new(input).map_err(io::Error::other)?;
     let mut reader = decryptor
@@ -54,6 +52,10 @@ pub(crate) fn decrypt(path: &Path, identity: &AgeIdentity) -> io::Result<Vec<u8>
 pub(crate) mod tests {
     use super::*;
     use age::secrecy::ExposeSecret;
+
+    fn decrypt(path: &Path, identity: &AgeIdentity) -> io::Result<Vec<u8>> {
+        super::decrypt(path, identity, &crate::tools::ToolRuntime::default())
+    }
 
     pub(crate) fn fixture(dir: &Path, plaintext: &[u8], armored: bool) -> AgeIdentity {
         let key = age::x25519::Identity::generate();

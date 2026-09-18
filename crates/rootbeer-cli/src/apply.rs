@@ -135,6 +135,9 @@ impl ExecutionHandler for CliHandler {
                     eprintln!("  {} {name}@{version}", "package".green());
                 }
             }
+            OpResult::PackageUnchanged { name, version } => {
+                eprintln!("  {} {name}@{version} (unchanged)", "skip".dimmed());
+            }
             OpResult::PackagePlanned { spec } => {
                 eprintln!("  {} {spec}", "package".green());
             }

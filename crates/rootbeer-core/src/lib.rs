@@ -2,10 +2,12 @@ pub use rootbeer_store::deterministic;
 mod age;
 mod executor;
 mod lua;
+mod one_password;
 pub mod package;
 mod pipeline;
 mod plan;
 pub mod profile;
+mod tools;
 pub use rootbeer_store as store;
 
 pub use executor::{ExecutionHandler, ExecutionReport, OpResult};
@@ -30,6 +32,7 @@ use package::LockBuildError;
 
 #[derive(Debug)]
 pub(crate) struct Runtime {
+    pub tools: std::sync::Arc<tools::ToolRuntime>,
     pub script_dir: PathBuf,
     pub script_name: String,
     pub lua_dir: PathBuf,

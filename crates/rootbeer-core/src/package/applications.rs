@@ -34,6 +34,24 @@ impl Applications {
         Self { state, directory }
     }
 
+    pub(crate) fn contains_exports(&self, owner: &str, desired: &Exports) -> io::Result<bool> {
+        if desired.is_empty() {
+            return Ok(true);
+        }
+        let ownership: Ownership = match fs::read(self.state.join("owners.json")) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let Some(owned) = ownership.owners.get(owner) else {
+            return Ok(false);
+        };
+        Ok(desired.iter().all(|(name, target)| {
+            owned.get(name) == Some(target)
+                && fs::read_link(self.directory.join(name)).ok().as_ref() == Some(target)
+        }))
+    }
+
     pub(crate) fn synchronize(&self, owner: &str, desired: &Exports) -> io::Result<()> {
         self.synchronize_with(owner, desired, || Ok(()))
     }

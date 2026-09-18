@@ -11,7 +11,7 @@
 ---   phase — used when the secret is a binary blob (SSH key, certificate,
 ---   GPG key, …) that should never transit Lua memory or the plan log.
 ---
---- 1Password requires an installed, authenticated `op` CLI. Age decryption
+--- Rootbeer provisions a pinned `op` CLI; normal 1Password authentication is required. Age decryption
 --- is built in and needs a native identity file or a 1Password key field.
 ---
 --- ```lua
@@ -33,8 +33,8 @@
 
 --- Reads a secret from 1Password via the `op` CLI. Runs **synchronously at
 --- plan time** so the value can be embedded into strings, file contents,
---- or other config you compose in Lua. The `op` CLI must be installed and
---- authenticated (Touch ID / biometrics may prompt).
+--- or other config you compose in Lua. Rootbeer prepares its packaged CLI on
+--- first use; authentication may prompt for Touch ID / biometrics.
 ---
 --- Use the sync form when you need the value *in Lua* (templating, config
 --- composition). For raw binary files that should never enter Lua memory,

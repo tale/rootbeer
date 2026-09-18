@@ -52,6 +52,10 @@ pub enum OpResult {
         version: String,
         store_path: Option<PathBuf>,
     },
+    PackageUnchanged {
+        name: String,
+        version: String,
+    },
     PackagePlanned {
         spec: String,
     },

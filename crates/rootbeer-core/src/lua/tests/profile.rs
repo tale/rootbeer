@@ -17,6 +17,7 @@ fn run(source: &str, profile: Option<&str>) -> Result<Vec<Op>, ProfileError> {
     fs::write(&script_path, &wrapped).unwrap();
 
     let runtime = crate::Runtime {
+        tools: Default::default(),
         script_dir: path.clone(),
         script_name: "test.lua".into(),
         lua_dir: std::path::PathBuf::from(env!("ROOTBEER_LUA_DIR")),

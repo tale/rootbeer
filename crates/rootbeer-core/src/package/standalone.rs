@@ -71,8 +71,8 @@ pub fn prepare_with_resolver(
             serde_json::to_vec(&(ResolveContext::current(), request)).map_err(|e| e.to_string())?;
         let lock_path = root.join("requests").join(hash_bytes(&identity));
         let cached = read_lock(&lock_path).map_err(|e| e.to_string())?;
-        let lock = match cached {
-            Some(lock) if !should_update => lock,
+        let lock = match cached.as_ref() {
+            Some(lock) if !should_update => lock.clone(),
             _ if is_offline => {
                 return Err(format!(
                     "{request} is not cached; run without --offline first"
@@ -102,7 +102,9 @@ pub fn prepare_with_resolver(
                     inputs,
                     vec![PackageIntent::request(request.clone())],
                 );
-                let lock = builder.build(&input).map_err(|e| e.to_string())?;
+                let lock = builder
+                    .build_with_previous(&input, cached.as_ref())
+                    .map_err(|e| e.to_string())?;
                 write_lock(&lock, &lock_path).map_err(|e| e.to_string())?;
                 lock
             }
