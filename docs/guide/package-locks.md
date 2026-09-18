@@ -57,17 +57,31 @@ This refreshes unpinned packages declared in your configuration and saves the
 results in `rootbeer.lock`. Review and commit that file alongside `init.lua`.
 Exact versions in your configuration stay fixed, though packaging details may change.
 
-| Command              | Behavior                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------ |
-| `rb apply`           | Use saved versions. Update the lock if your package configuration or platform changed.                 |
-| `rb apply --update`  | Fetch current package information and refresh unpinned packages. Requires internet access.             |
-| `rb apply --locked`  | Require the lock to match your configuration and platform. Missing package contents may be downloaded. |
-| `rb apply --offline` | Require a matching lock and packages already installed or cached on this machine.                      |
+| Command | Versions and lockfile | Package network access |
+| --- | --- | --- |
+| `rb apply` | Preserve unchanged resolutions; add, remove, or resolve explicitly changed declarations. | Allowed when needed. |
+| `rb apply --update` | Refresh existing resolutions, respecting explicit version pins. | Allowed; verified downloads are reused. |
+| `rb apply --locked` | Require an existing matching lock; never write it. | Allowed to obtain locked artifacts. |
+| `rb apply --offline` | Reconcile using cached resolutions and metadata; fail if required data is unavailable. | None. |
+| `rb apply --locked --offline` | Require an existing matching lock and cached contents. | None. |
+
+`--locked` and `--offline` are independent. `--update` conflicts with either.
+Adding a package during plain apply does not upgrade unrelated packages. Removing
+packages updates the lock, including when the final package is removed. Changing
+an explicit version or index pin can resolve the affected declarations again.
+
+Offline reconciliation can reuse matching lock entries, saved standalone request
+resolutions, and verified cached binary index snapshots. Resolving an uncached
+Aqua/GitHub request or a source build requires an online run first.
+
+Lockfiles are written atomically, and identical contents are not rewritten.
+Malformed JSON or unresolved merge conflicts fail with the filename and parse
+location in every mode, including `--update`; resolve the conflict explicitly.
 
 If you [selected a custom index](/guide/package-sources#use-another-index),
 updates keep using that snapshot until you change its URL and checksum.
 
-`rb update` selects the latest published Rootbeer package from the signed index,
+`rb self-update` (also available as `rb update`) selects the latest published Rootbeer package from the signed index,
 rather than the separate nightly download channel:
 
 - Standalone installations replace only their `rb` executable, atomically.

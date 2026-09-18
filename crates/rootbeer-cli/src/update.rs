@@ -39,7 +39,7 @@ fn update() -> Result<(), String> {
     let request = if is_persistent {
         standalone::installed_request(&user_profile, "rootbeer")
             .map_err(|error| error.to_string())?
-            .ok_or("this profile predates saved package requests; explicitly select your desired version with `rb use rootbeer --update` (or rootbeer@VERSION) before using `rb update`")?
+            .ok_or("this profile predates saved package requests; explicitly select your desired version with `rb use rootbeer --update` (or rootbeer@VERSION) before using `rb self-update`")?
     } else {
         PackageRequest::parse("rootbeer")
     };

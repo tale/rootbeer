@@ -75,6 +75,19 @@ impl OfficialIndexSource {
         self.select_with(state, should_refresh, fetch)
     }
 
+    /// Selects a verified cached snapshot without contacting the index server.
+    pub fn select_offline(&self, state: &Path) -> Result<IndexSelection, String> {
+        self.validate()?;
+        let identity = hash_bytes(&serde_json::to_vec(self).map_err(|e| e.to_string())?);
+        let snapshot = self
+            .cached(&state.join("indexes").join(identity), state)?
+            .ok_or_else(|| "official package index is not cached; run online first".to_string())?;
+        Ok(IndexSelection {
+            input: ResolverInput::OfficialIndex(snapshot.manifest.index),
+            notice: None,
+        })
+    }
+
     fn select_with(
         &self,
         state: &Path,
@@ -182,6 +195,13 @@ impl OfficialIndexSource {
         verify_index(&snapshot.manifest.index, &bytes)?;
         Ok(Some(snapshot))
     }
+}
+
+/// Selects the configured official index using only verified cached metadata.
+pub fn select_default_offline() -> Result<IndexSelection, String> {
+    let source = OfficialIndexSource::configured()?
+        .ok_or_else(|| "official package index is not configured".to_string())?;
+    source.select_offline(&crate::state_dir())
 }
 
 pub fn select_default(should_refresh: bool) -> Result<IndexSelection, String> {
@@ -344,6 +364,8 @@ mod tests {
             .unwrap();
         assert!(matches!(selected.input, ResolverInput::OfficialIndex(_)));
         assert!(selected.notice.is_none());
+        assert_eq!(source.select_offline(&state).unwrap().input, selected.input);
+        assert!(source.select_offline(&root.path().join("empty")).is_err());
         let cached = source.select_with(&state, false, unavailable).unwrap();
         assert_eq!(selected.input, cached.input);
         assert!(cached.notice.unwrap().contains("verified cached"));

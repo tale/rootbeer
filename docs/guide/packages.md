@@ -60,7 +60,7 @@ To keep a declared app export available in `~/Applications`, install its package
 rb use bobrwm
 ```
 
-If you installed Bobrwm before app exports were added, run `rb update`, then
+If you installed Bobrwm before app exports were added, run `rb self-update`, then
 `rb use bobrwm --update` to refresh its package metadata.
 
 Or declare `rb.package("bobrwm")` in Lua and run `rb apply`. Both manage a

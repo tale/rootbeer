@@ -19,12 +19,12 @@ pub struct Args {
     #[arg(long)]
     pub locked: bool,
 
-    /// Do not use the network; require rootbeer.lock and cached package sources/store outputs
+    /// Use only cached package resolutions and contents; allow lock reconciliation
     #[arg(long)]
     pub offline: bool,
 
-    /// Refresh pinned resolver inputs and rewrite rootbeer.lock before applying
-    #[arg(long)]
+    /// Refresh existing package resolutions, respecting explicit version pins
+    #[arg(long, conflicts_with_all = ["locked", "offline"])]
     pub update: bool,
 
     /// Path to a .lua script to execute (default: data_dir/source/rootbeer.lua)
@@ -37,10 +37,13 @@ pub struct Args {
     pub profile: Option<String>,
 }
 
-struct CliHandler;
+struct CliHandler {
+    progress: Option<crate::progress::Progress>,
+}
 
 impl ExecutionHandler for CliHandler {
     fn on_start(&mut self, op: &Op) {
+        self.progress.take();
         match op {
             Op::Exec { cmd, args, .. } => {
                 let display = std::iter::once(cmd.as_str())
@@ -62,10 +65,12 @@ impl ExecutionHandler for CliHandler {
     }
 
     fn on_output(&mut self, line: &str) {
+        self.progress.take();
         eprintln!("    {}", line.dimmed());
     }
 
     fn on_result(&mut self, result: &OpResult) {
+        self.progress.take();
         match result {
             OpResult::FileWritten { path, bytes } => {
                 let suffix = match bytes {
@@ -170,14 +175,10 @@ pub fn run(args: Args, lua_dir: Option<&PathBuf>) {
     };
     opts.force = args.force;
     opts.profile = args.profile;
-    opts.package_lock = if args.update {
-        rootbeer_core::PackageLockMode::Update
-    } else if args.offline {
-        rootbeer_core::PackageLockMode::Offline
-    } else if args.locked {
-        rootbeer_core::PackageLockMode::Locked
-    } else {
-        rootbeer_core::PackageLockMode::Auto
+    opts.package_lock = rootbeer_core::PackageLockOptions {
+        should_update: args.update,
+        is_locked: args.locked,
+        is_offline: args.offline,
     };
 
     if let Some(lua_dir) = lua_dir {
@@ -193,7 +194,11 @@ pub fn run(args: Args, lua_dir: Option<&PathBuf>) {
         if pipeline.force() { " [force]" } else { "" }
     );
 
-    let planned = pipeline.plan().unwrap_or_else(|e| {
+    let plan_result = {
+        let _progress = crate::progress::Progress::new("evaluating configuration");
+        pipeline.plan()
+    };
+    let planned = plan_result.unwrap_or_else(|e| {
         match &e {
             rootbeer_core::Error::Profile(pe) => {
                 eprintln!("{} {pe}", "✗".red().bold());
@@ -206,9 +211,12 @@ pub fn run(args: Args, lua_dir: Option<&PathBuf>) {
         std::process::exit(1);
     });
 
-    let mut handler = CliHandler;
+    let mut handler = CliHandler {
+        progress: (!args.dry_run).then(|| crate::progress::Progress::new("resolving packages")),
+    };
 
     let result = planned.execute(&mut handler);
+    handler.progress.take();
 
     match result {
         Ok(report) => {

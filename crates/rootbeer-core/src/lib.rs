@@ -11,7 +11,7 @@ mod tools;
 pub use rootbeer_store as store;
 
 pub use executor::{ExecutionHandler, ExecutionReport, OpResult};
-pub use pipeline::{Mode, Options, PackageLockMode, Pipeline, PlannedPipeline};
+pub use pipeline::{Mode, Options, PackageLockOptions, Pipeline, PlannedPipeline};
 pub use plan::{AgeIdentity, Op, WriteSource};
 pub use profile::ProfileError;
 

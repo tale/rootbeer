@@ -18,18 +18,10 @@ pub enum Mode {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum PackageLockMode {
-    #[default]
-    Auto,
-    Locked,
-    Offline,
-    Update,
-}
-
-impl PackageLockMode {
-    pub fn offline(self) -> bool {
-        matches!(self, Self::Offline)
-    }
+pub struct PackageLockOptions {
+    pub should_update: bool,
+    pub is_locked: bool,
+    pub is_offline: bool,
 }
 
 impl Display for Mode {
@@ -49,7 +41,7 @@ pub struct Options {
     pub profile: Option<String>,
     pub mode: Mode,
     pub force: bool,
-    pub package_lock: PackageLockMode,
+    pub package_lock: PackageLockOptions,
 }
 
 impl Options {
@@ -78,7 +70,7 @@ impl Options {
             profile: None,
             mode: Mode::default(),
             force: false,
-            package_lock: PackageLockMode::default(),
+            package_lock: PackageLockOptions::default(),
         })
     }
 }
@@ -116,8 +108,17 @@ impl Pipeline {
 
     /// Evaluate the Lua script and advance to the planned phase.
     pub fn plan(self) -> Result<PlannedPipeline, Error> {
+        if self.opts.package_lock.should_update
+            && (self.opts.package_lock.is_locked || self.opts.package_lock.is_offline)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--update cannot be combined with --locked or --offline",
+            )
+            .into());
+        }
         let tools = std::sync::Arc::new(crate::tools::ToolRuntime::new(
-            self.opts.package_lock.offline(),
+            self.opts.package_lock.is_offline,
         ));
         let runtime = Runtime {
             tools: tools.clone(),
@@ -189,7 +190,7 @@ impl PlannedPipeline {
                     self.opts.force,
                     handler,
                     ApplyOptions {
-                        package_offline: self.opts.package_lock.offline(),
+                        package_offline: self.opts.package_lock.is_offline,
                     },
                 )?
             }
@@ -200,21 +201,17 @@ impl PlannedPipeline {
     }
 
     fn locked_ops_for_apply(&self, notice: &mut dyn FnMut(&str)) -> Result<Vec<Op>, Error> {
-        if !crate::package::lockfile::has_package_ops(&self.ops) {
+        let path = self.opts.script_dir.join("rootbeer.lock");
+        if !crate::package::lockfile::has_package_ops(&self.ops) && !path.exists() {
             return Ok(self.ops.clone());
         }
-
-        let path = self.opts.script_dir.join("rootbeer.lock");
         let existing = if path.exists() {
             Some(RootbeerLock::read(&path)?)
         } else {
             None
         };
 
-        if matches!(
-            self.opts.package_lock,
-            PackageLockMode::Locked | PackageLockMode::Offline
-        ) {
+        if self.opts.package_lock.is_locked {
             let Some(lock) = existing.as_ref() else {
                 return Err(LockError::MissingLockfile { path }.into());
             };
@@ -226,7 +223,7 @@ impl PlannedPipeline {
             return crate::package::lockfile::apply_to_ops(lock, &self.ops).map_err(Into::into);
         }
 
-        if !matches!(self.opts.package_lock, PackageLockMode::Update) {
+        if !self.opts.package_lock.should_update {
             if let Some(lock) = existing.as_ref() {
                 if self.lock_matches_plan(lock)? {
                     match crate::package::lockfile::apply_to_ops(lock, &self.ops) {
@@ -240,7 +237,7 @@ impl PlannedPipeline {
             }
         }
 
-        let should_refresh = self.opts.package_lock == PackageLockMode::Update;
+        let should_refresh = self.opts.package_lock.should_update;
         let mut inputs = if should_refresh {
             PackageResolverInputs::default()
         } else {
@@ -254,14 +251,20 @@ impl PlannedPipeline {
                 "rootbeer".into(),
                 ResolverInput::PublishedIndex(pin.clone()),
             );
-        } else if self.has_canonical_requests() {
-            let selection = crate::package::official::select_default(should_refresh)
-                .map_err(io::Error::other)?;
+        } else if self.has_canonical_requests()
+            && (should_refresh || inputs.package_index().is_none())
+        {
+            let selection = if self.opts.package_lock.is_offline {
+                crate::package::official::select_default_offline()
+            } else {
+                crate::package::official::select_default(should_refresh)
+            }
+            .map_err(io::Error::other)?;
             if let Some(message) = &selection.notice {
                 notice(message);
             }
             inputs.resolvers.insert("rootbeer".into(), selection.input);
-        } else {
+        } else if !self.has_canonical_requests() {
             inputs.resolvers.remove("rootbeer");
         }
         let needs_aqua = self.ops.iter().any(|op| {
@@ -270,7 +273,10 @@ impl PlannedPipeline {
                     if request.resolver.as_deref() == Some("aqua")
             )
         });
-        if needs_aqua && (should_refresh || inputs.aqua_registry().is_none()) {
+        if needs_aqua
+            && !self.opts.package_lock.is_offline
+            && (should_refresh || inputs.aqua_registry().is_none())
+        {
             let current = PackageResolverInputs::resolve_current()?;
             inputs
                 .resolvers
@@ -278,12 +284,20 @@ impl PlannedPipeline {
         }
         let builder = PackageLockBuilder::new_with_inputs(
             (self.package_resolver)(&inputs),
-            crate::package::PackageRealizer::default(),
+            if self.opts.package_lock.is_offline {
+                crate::package::PackageRealizer::offline(crate::store::Store::default())
+            } else {
+                crate::package::PackageRealizer::default()
+            },
             crate::package::ResolveContext::current(),
             inputs,
         );
         let input = builder.lock_input_from_ops(&self.ops);
-        let lock = builder.build_with_previous(&input, existing.as_ref())?;
+        let lock = if should_refresh {
+            builder.build_with_previous(&input, existing.as_ref())?
+        } else {
+            builder.reconcile(&input, existing.as_ref(), self.opts.package_lock.is_offline)?
+        };
         lock.write(&path)?;
         Ok(crate::package::lockfile::apply_to_ops(&lock, &self.ops)?)
     }
@@ -293,7 +307,12 @@ impl PlannedPipeline {
             return Ok(false);
         }
         let Some(expected) = lock.input_fingerprint.as_deref() else {
-            return Ok(true);
+            let package_count = self
+                .ops
+                .iter()
+                .filter(|op| matches!(op, Op::Package { .. } | Op::RealizePackage { .. }))
+                .count();
+            return Ok(package_count == lock.packages.len());
         };
 
         let builder = PackageLockBuilder::current_system_with_inputs(lock.inputs.clone());
@@ -338,7 +357,7 @@ mod tests {
             profile: None,
             mode,
             force: false,
-            package_lock: PackageLockMode::Auto,
+            package_lock: PackageLockOptions::default(),
         }
     }
 
@@ -444,7 +463,10 @@ mod tests {
     fn locked_mode_requires_existing_lock() {
         let tmp = tempfile::tempdir().unwrap();
         let mut opts = opts(tmp.path().to_path_buf(), Mode::Apply);
-        opts.package_lock = PackageLockMode::Locked;
+        opts.package_lock = PackageLockOptions {
+            is_locked: true,
+            ..Default::default()
+        };
         let planned = PlannedPipeline {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
@@ -474,7 +496,10 @@ mod tests {
             .write(tmp.path().join("rootbeer.lock"))
             .unwrap();
         let mut opts = opts(tmp.path().to_path_buf(), Mode::Apply);
-        opts.package_lock = PackageLockMode::Locked;
+        opts.package_lock = PackageLockOptions {
+            is_locked: true,
+            ..Default::default()
+        };
         let planned = PlannedPipeline {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
@@ -493,7 +518,11 @@ mod tests {
         let script = directory.join("init.lua");
         fs::write(&script, source).unwrap();
         let mut options = Options::from_script(&script).unwrap();
-        options.package_lock = PackageLockMode::Offline;
+        options.package_lock = PackageLockOptions {
+            is_locked: true,
+            is_offline: true,
+            ..Default::default()
+        };
         Pipeline::new(options).plan().unwrap()
     }
 
@@ -600,15 +629,91 @@ mod tests {
         );
         lock.write(root.path().join("rootbeer.lock")).unwrap();
         for mode in [
-            PackageLockMode::Auto,
-            PackageLockMode::Locked,
-            PackageLockMode::Offline,
+            PackageLockOptions::default(),
+            PackageLockOptions {
+                is_locked: true,
+                ..Default::default()
+            },
+            PackageLockOptions {
+                is_offline: true,
+                ..Default::default()
+            },
         ] {
             planned.opts.package_lock = mode;
             let ops = planned
                 .locked_ops_for_apply(&mut |_| panic!("matching lock attempted catalog selection"))
                 .unwrap();
             assert!(matches!(ops.as_slice(), [Op::RealizePackage { .. }]));
+        }
+    }
+    #[test]
+    fn offline_reconciles_removal_but_locked_offline_rejects_it() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("rootbeer.lock");
+        RootbeerLock::from_packages([package()])
+            .unwrap()
+            .with_input_fingerprint("stale")
+            .write(&path)
+            .unwrap();
+        let original = fs::read(&path).unwrap();
+        let mut options = opts(root.path().into(), Mode::Apply);
+        options.package_lock = PackageLockOptions {
+            is_offline: true,
+            is_locked: true,
+            should_update: false,
+        };
+        let mut planned = PlannedPipeline {
+            tools: Default::default(),
+            package_resolver: crate::package::resolver_stack_for_inputs,
+            package_index: None,
+            opts: options,
+            ops: vec![],
+        };
+        assert!(planned.locked_ops_for_apply(&mut |_| {}).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        planned.opts.package_lock.is_locked = false;
+        assert!(planned
+            .locked_ops_for_apply(&mut |_| {})
+            .unwrap()
+            .is_empty());
+        assert!(RootbeerLock::read(&path).unwrap().packages.is_empty());
+    }
+
+    #[test]
+    fn malformed_lock_is_preserved_in_every_mode() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("rootbeer.lock");
+        fs::write(&path, "{\n<<<<<<< conflict").unwrap();
+        for package_lock in [
+            PackageLockOptions::default(),
+            PackageLockOptions {
+                should_update: true,
+                ..Default::default()
+            },
+            PackageLockOptions {
+                is_offline: true,
+                ..Default::default()
+            },
+            PackageLockOptions {
+                is_locked: true,
+                ..Default::default()
+            },
+        ] {
+            let mut options = opts(root.path().into(), Mode::Apply);
+            options.package_lock = package_lock;
+            let planned = PlannedPipeline {
+                tools: Default::default(),
+                package_resolver: crate::package::resolver_stack_for_inputs,
+                package_index: None,
+                opts: options,
+                ops: vec![],
+            };
+            assert!(planned
+                .locked_ops_for_apply(&mut |_| {})
+                .unwrap_err()
+                .to_string()
+                .contains("invalid package lock"));
+            assert_eq!(fs::read_to_string(&path).unwrap(), "{\n<<<<<<< conflict");
         }
     }
 }

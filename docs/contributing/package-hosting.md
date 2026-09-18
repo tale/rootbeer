@@ -53,7 +53,7 @@ The active catalog uses `--manifest current.json`. CLI and website builds use
 Intel macOS is unsupported. Publish the three supported platforms through
 `current.json`; retired Intel binaries and catalog channels are no longer served.
 Retain immutable snapshots, receipts, and package archives for existing locks.
-Clients on supported platforms should run `rb update` to use the current channel.
+Clients on supported platforms should run `rb self-update` to use the current channel.
 
 Manifest signatures keep the same format; rollback sequences are checked per
 endpoint. Publish and verify a new channel before switching the public CLI and

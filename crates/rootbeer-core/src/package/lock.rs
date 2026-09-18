@@ -120,13 +120,59 @@ where
         input: &PackageLockInput,
         previous: Option<&RootbeerLock>,
     ) -> Result<RootbeerLock, LockBuildError> {
+        self.build_selected(input, previous, true, false)
+    }
+
+    /// Reconciles declarations while preserving resolutions of unchanged requests.
+    pub fn reconcile(
+        &self,
+        input: &PackageLockInput,
+        previous: Option<&RootbeerLock>,
+        is_offline: bool,
+    ) -> Result<RootbeerLock, LockBuildError> {
+        self.build_selected(input, previous, false, is_offline)
+    }
+
+    fn build_selected(
+        &self,
+        input: &PackageLockInput,
+        previous: Option<&RootbeerLock>,
+        should_update: bool,
+        is_offline: bool,
+    ) -> Result<RootbeerLock, LockBuildError> {
         let input_fingerprint = self.fingerprint_input(input)?;
 
         let mut entries = Vec::new();
         for intent in &input.intents {
             let entry = match intent {
                 PackageIntent::Request(request) => {
-                    let mut resolution = self.resolve_request(request, &input.context)?;
+                    let can_reuse = !should_update
+                        && previous.is_some_and(|lock| {
+                            request
+                                .resolver
+                                .as_deref()
+                                .is_some_and(|name| name != "rootbeer")
+                                || lock.inputs.explicit_package_index()
+                                    == input.resolver_inputs.explicit_package_index()
+                        });
+                    let saved = if can_reuse {
+                        previous
+                            .unwrap()
+                            .resolution_for_request(request, &input.context)?
+                    } else {
+                        None
+                    };
+                    let mut resolution = match saved {
+                        Some(resolution) => resolution,
+                        None if is_offline => {
+                            offline_resolution(request, &input.context, &input.resolver_inputs)
+                                .map_err(|source| LockBuildError::Resolve {
+                                    request: Box::new(request.clone()),
+                                    source: Box::new(source),
+                                })?
+                        }
+                        None => self.resolve_request(request, &input.context)?,
+                    };
                     resolution.package =
                         self.realize_locked_package(&resolution.package, previous)?;
                     PackageLockEntry::resolved(request, &input.context, resolution)?
@@ -182,6 +228,51 @@ where
         locked.output_sha256 = Some(realized.store_entry.output_sha256);
         Ok(locked)
     }
+}
+
+fn offline_resolution(
+    request: &PackageRequest,
+    context: &ResolveContext,
+    inputs: &PackageResolverInputs,
+) -> Result<PackageResolution, ResolveError> {
+    let result = (|| -> Result<PackageResolution, String> {
+        let is_canonical = request
+            .resolver
+            .as_deref()
+            .is_none_or(|name| name == "rootbeer");
+        if let Some(saved) = super::standalone::cached_resolution(request, context)
+            .map_err(|error| error.to_string())?
+        {
+            let matches_index = match (&saved.proof, inputs.explicit_package_index()) {
+                (super::ResolutionProof::PublishedIndex(proof), Some(pin)) => &proof.index == pin,
+                (_, Some(_)) if is_canonical => false,
+                _ => true,
+            };
+            if matches_index {
+                return Ok(saved);
+            }
+        }
+        if is_canonical {
+            if let Some(pin) = inputs.package_index() {
+                use super::PackageResolver;
+                if let Some(resolution) =
+                    super::index::IndexResolver::offline(pin).resolve(request, context)?
+                {
+                    return Ok(resolution);
+                }
+            }
+        }
+        Err(format!(
+            "{request} has no cached resolution; run without --offline first"
+        ))
+    })();
+    result.map_err(|reason| ResolveError::NotFound {
+        request: Box::new(request.clone()),
+        attempts: vec![super::ResolveAttempt {
+            resolver: "offline cache".into(),
+            reason,
+        }],
+    })
 }
 
 fn package_intents(ops: &[Op]) -> Vec<PackageIntent> {
@@ -390,5 +481,97 @@ mod tests {
         assert!(lock.input_fingerprint.is_some());
         assert_eq!(lock.resolutions.len(), 1);
         assert_eq!(lock.resolutions.values().next().unwrap().proof, proof());
+    }
+    struct TrackingResolver {
+        calls: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl PackageRequestResolver for TrackingResolver {
+        fn resolve_package(
+            &self,
+            request: &PackageRequest,
+            _: &ResolveContext,
+        ) -> Result<PackageResolution, ResolveError> {
+            self.calls.borrow_mut().push(request.to_string());
+            let mut resolved = package();
+            resolved.name = request.name.clone();
+            resolved.version = request.version.clone().unwrap_or_else(|| "2.0.0".into());
+            Ok(PackageResolution::new(resolved, proof()))
+        }
+    }
+
+    #[test]
+    fn reconciliation_preserves_unchanged_requests_and_refresh_is_explicit() {
+        let context = ResolveContext::new("test-system");
+        let request = PackageRequest::parse("fake:demo");
+        let previous = RootbeerLock::from_package_entries([PackageLockEntry::resolved(
+            &request,
+            &context,
+            PackageResolution::new(package(), proof()),
+        )
+        .unwrap()])
+        .unwrap();
+        let builder = PackageLockBuilder::new(
+            TrackingResolver {
+                calls: Default::default(),
+            },
+            FakeRealizer,
+            context.clone(),
+        );
+        let input = PackageLockInput::with_resolver_inputs(
+            context.clone(),
+            Default::default(),
+            vec![
+                PackageIntent::request(request.clone()),
+                PackageIntent::request(PackageRequest::parse("fake:added")),
+            ],
+        );
+        let reconciled = builder.reconcile(&input, Some(&previous), false).unwrap();
+        assert_eq!(
+            reconciled
+                .package_for_request(&request, &context)
+                .unwrap()
+                .version,
+            "1.0.0"
+        );
+        assert_eq!(*builder.resolver.calls.borrow(), ["fake:added"]);
+        let removed_input = PackageLockInput::with_resolver_inputs(
+            context.clone(),
+            Default::default(),
+            vec![PackageIntent::request(request.clone())],
+        );
+        let offline = builder
+            .reconcile(&removed_input, Some(&reconciled), true)
+            .unwrap();
+        assert_eq!(offline.packages.len(), 1);
+        assert_eq!(*builder.resolver.calls.borrow(), ["fake:added"]);
+        assert!(builder.reconcile(&input, Some(&previous), true).is_err());
+        assert_eq!(*builder.resolver.calls.borrow(), ["fake:added"]);
+        let updated = builder
+            .build_with_previous(&removed_input, Some(&previous))
+            .unwrap();
+        assert_eq!(
+            updated
+                .package_for_request(&request, &context)
+                .unwrap()
+                .version,
+            "2.0.0"
+        );
+        let pinned_request = request.version("3.0.0");
+        let pinned_input = PackageLockInput::with_resolver_inputs(
+            context.clone(),
+            Default::default(),
+            vec![PackageIntent::request(pinned_request.clone())],
+        );
+        let pinned = builder
+            .reconcile(&pinned_input, Some(&updated), false)
+            .unwrap();
+        assert_eq!(
+            pinned
+                .package_for_request(&pinned_request, &context)
+                .unwrap()
+                .version,
+            "3.0.0"
+        );
     }
 }

@@ -2,6 +2,7 @@ mod apply;
 mod cd;
 mod edit;
 mod init;
+mod progress;
 mod remote;
 mod run;
 mod typegen;
@@ -70,7 +71,8 @@ enum Commands {
     Remote(remote::Args),
 
     /// Update Rootbeer through its installation owner
-    Update,
+    #[command(visible_alias = "update")]
+    SelfUpdate,
 }
 
 fn main() {
@@ -92,6 +94,33 @@ fn main() {
         Commands::Apply(args) => apply::run(args, cli.lua_dir.as_ref()),
         Commands::Env => print!("{}", rootbeer_core::package::profile::env_contents()),
         Commands::Remote(args) => remote::run(args),
-        Commands::Update => update::run(),
+        Commands::SelfUpdate => update::run(),
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn self_update_keeps_legacy_alias() {
+        for command in ["self-update", "update"] {
+            assert!(matches!(
+                Cli::try_parse_from(["rb", command]).unwrap().command,
+                Commands::SelfUpdate
+            ));
+        }
+    }
+
+    #[test]
+    fn apply_controls_are_independent() {
+        let cli = Cli::try_parse_from(["rb", "apply", "--locked", "--offline"]).unwrap();
+        let Commands::Apply(args) = cli.command else {
+            panic!("expected apply")
+        };
+        assert!(args.locked && args.offline && !args.update);
+        for flag in ["--locked", "--offline"] {
+            assert!(Cli::try_parse_from(["rb", "apply", "--update", flag]).is_err());
+        }
     }
 }

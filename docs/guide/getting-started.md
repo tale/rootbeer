@@ -89,7 +89,7 @@ modules, and keep settings in Git.
 
 ## Update
 
-Run `rb update` to update Rootbeer through the signed package index. If Rootbeer
+Run `rb self-update` to update Rootbeer through the signed package index. If Rootbeer
 is declared in your Lua configuration, use `rb apply --update` instead.
 To update tools installed with `rb use`, name them explicitly:
 

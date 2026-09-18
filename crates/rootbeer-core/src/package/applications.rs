@@ -38,8 +38,17 @@ impl Applications {
         if desired.is_empty() {
             return Ok(true);
         }
-        let ownership: Ownership = match fs::read(self.state.join("owners.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
+        let manifest = self.state.join("owners.json");
+        let ownership: Ownership = match fs::read(&manifest) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid application ownership {}: {error}",
+                        manifest.display()
+                    ),
+                )
+            })?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error),
         };
@@ -91,7 +100,15 @@ impl Applications {
         guard.lock()?;
         let manifest = self.state.join("owners.json");
         let mut ownership: Ownership = match fs::read(&manifest) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid application ownership {}: {error}",
+                        manifest.display()
+                    ),
+                )
+            })?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ownership::default(),
             Err(error) => return Err(error),
         };

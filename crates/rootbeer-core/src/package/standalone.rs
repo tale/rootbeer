@@ -139,6 +139,21 @@ pub fn prepare_with_resolver(
     })
 }
 
+pub(crate) fn cached_resolution(
+    request: &PackageRequest,
+    context: &ResolveContext,
+) -> io::Result<Option<super::PackageResolution>> {
+    let identity = serde_json::to_vec(&(context, request))?;
+    let path = crate::state_dir()
+        .join("standalone/requests")
+        .join(hash_bytes(&identity));
+    let Some(lock) = read_lock(&path)? else {
+        return Ok(None);
+    };
+    lock.resolution_for_request(request, context)
+        .map_err(io::Error::other)
+}
+
 fn install_profile(
     root: &Path,
     profile: &Path,
@@ -345,8 +360,14 @@ pub fn installed_request(profile: &Path, name: &str) -> io::Result<Option<Packag
 }
 
 fn read_requests(profile: &Path) -> io::Result<BTreeMap<String, PackageRequest>> {
-    match fs::read(profile.join("requests.json")) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
+    let path = profile.join("requests.json");
+    match fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid package requests {}: {error}", path.display()),
+            )
+        }),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(BTreeMap::new()),
         Err(error) => Err(error),
     }

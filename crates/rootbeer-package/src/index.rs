@@ -364,6 +364,15 @@ impl IndexResolver {
         }
     }
 
+    /// Resolves only from a verified snapshot already in the download cache.
+    pub fn offline(pin: &PackageIndexPin) -> Self {
+        Self {
+            pin: pin.clone(),
+            downloads: DownloadCache::offline(crate::state_dir().join("downloads")),
+            index: OnceLock::new(),
+        }
+    }
+
     pub fn index(&self) -> Result<&ArtifactIndex, String> {
         self.index
             .get_or_init(|| {

@@ -224,6 +224,28 @@ impl RootbeerLock {
         })
     }
 
+    /// Returns a resolution only for an identical request and platform.
+    pub fn resolution_for_request(
+        &self,
+        request: &PackageRequest,
+        context: &ResolveContext,
+    ) -> Result<Option<PackageResolution>, LockError> {
+        let fingerprint = resolution_fingerprint(request, context)?;
+        let Some(resolution) = self.resolutions.get(&fingerprint) else {
+            return Ok(None);
+        };
+        let package =
+            self.packages
+                .get(&resolution.package)
+                .ok_or_else(|| LockError::MissingPackage {
+                    id: resolution.package.clone(),
+                })?;
+        Ok(Some(PackageResolution::new(
+            package.clone(),
+            resolution.proof.clone(),
+        )))
+    }
+
     fn package_for_locked_spec(
         &self,
         package: &LockedPackage,
@@ -258,8 +280,14 @@ impl RootbeerLock {
     }
 
     pub fn read(path: impl AsRef<Path>) -> io::Result<Self> {
+        let path = path.as_ref();
         let bytes = fs::read(path)?;
-        let lock: Self = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let lock: Self = serde_json::from_slice(&bytes).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid package lock {}: {error}", path.display()),
+            )
+        })?;
         if !matches!(lock.schema, 1..=3) {
             return Err(io::Error::other(
                 "unsupported package lock schema; update Rootbeer",
@@ -283,7 +311,23 @@ impl RootbeerLock {
         }
 
         let json = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
-        fs::write(path, format!("{json}\n"))
+        let bytes = format!("{json}\n").into_bytes();
+        match fs::read(path) {
+            Ok(existing) if existing == bytes => return Ok(()),
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        use io::Write;
+        temporary.write_all(&bytes)?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(path).map_err(|error| error.error)?;
+        Ok(())
     }
 }
 
@@ -310,4 +354,43 @@ fn resolution_fingerprint(
             kind: "package.resolution",
             error: e.to_string(),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_json_reports_lock_path_and_location() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("rootbeer.lock");
+        let contents = format!("{{\n{}not-json\n}}", "\n".repeat(16));
+        fs::write(&path, &contents).unwrap();
+        let error = RootbeerLock::read(&path).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains(&path.display().to_string()));
+        assert!(error.to_string().contains("line 18 column 1"));
+        assert_eq!(fs::read_to_string(path).unwrap(), contents);
+    }
+    #[test]
+    fn writes_are_atomic_and_unchanged_locks_keep_their_inode() {
+        use std::os::unix::fs::MetadataExt;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("rootbeer.lock");
+        let mut lock = RootbeerLock::from_packages([]).unwrap();
+        lock.write(&path).unwrap();
+        let inode = fs::metadata(&path).unwrap().ino();
+        lock.write(&path).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+        let original = root.path().join("original");
+        fs::hard_link(&path, &original).unwrap();
+        lock.input_fingerprint = Some("changed".into());
+        lock.write(&path).unwrap();
+        assert_ne!(fs::metadata(&path).unwrap().ino(), inode);
+        assert_eq!(
+            RootbeerLock::read(&original).unwrap().input_fingerprint,
+            None
+        );
+        assert_eq!(RootbeerLock::read(&path).unwrap(), lock);
+    }
 }
