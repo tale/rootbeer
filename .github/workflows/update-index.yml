@@ -7,17 +7,46 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: notify-package-index
+  cancel-in-progress: false
+
 jobs:
   notify:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-24.04
     steps:
-      - name: Request a Rootbeer update
+      - name: Check notification key
+        id: key
         env:
-          GH_TOKEN: ${{ secrets.INDEX_UPDATE_TOKEN }}
+          INDEX_KEY: ${{ secrets.INDEX_UPDATE_SSH_KEY }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "Index polling will pick up this successful build; set INDEX_UPDATE_TOKEN for immediate dispatch."
-            exit 0
+          if [ -n "$INDEX_KEY" ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Index polling will pick up this successful build.'
           fi
-          gh api --method POST repos/tale/rootbeer-index/dispatches -f event_type=rootbeer-update
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.key.outputs.available == 'true'
+        with:
+          repository: tale/rootbeer-index
+          ref: main
+          ssh-key: ${{ secrets.INDEX_UPDATE_SSH_KEY }}
+      - name: Request a Rootbeer update
+        if: steps.key.outputs.available == 'true'
+        env:
+          SOURCE_REVISION: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            printf '%s\n' "$SOURCE_REVISION" > rootbeer-update
+            git add rootbeer-update
+            if git diff --cached --quiet; then exit 0; fi
+            git commit -m 'ci(rootbeer): request update'
+            if git push origin HEAD:main; then exit 0; fi
+          done
+          exit 1

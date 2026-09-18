@@ -558,16 +558,17 @@ whose catalog, engine, or pipeline inputs changed during verification are discar
 the next scan retries against current inputs. Discovery errors remain in the report
 while successful candidates continue independently.
 
-Rootbeer has a separate main-branch update path. Successful engine CI can send a
-`rootbeer-update` repository dispatch to the index; a 15-minute scheduled poll is the
+Rootbeer has a separate main-branch update path. Successful engine CI pushes a
+`rootbeer-update` request file to the index; a 15-minute scheduled poll is the
 fallback. Both resolve the current main commit and require successful `CI` checks,
 hash its source archive, and retain existing version recipes. Index qualification
 still builds and checks the new package on each supported platform. The package
 update does not advance `engine-revision`.
 
-For immediate dispatch, set `INDEX_UPDATE_TOKEN` in the Rootbeer repository to a
-fine-grained token with Contents write access to `tale/rootbeer-index` (required by
-GitHub's repository-dispatch endpoint). Without it, polling remains active. The
+The notification workflow uses `INDEX_UPDATE_SSH_KEY`, a writable deploy key scoped
+to the index repository. It only commits the update request; discovery independently
+checks the current source revision and CI result. The index also accepts a
+`rootbeer-update` repository dispatch. Without the key, polling remains active. The
 index's existing `PUBLISH_INDEX` switch controls automatic promotion and publication.
 Packages without discovery rules remain listed as untracked in the report.
 
