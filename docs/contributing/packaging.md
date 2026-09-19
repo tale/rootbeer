@@ -685,8 +685,8 @@ do not silently rebuild the catalog or manufacture qualifications from archives.
 
 ## Qualify packages in parallel
 
-Each platform job builds its engine, then immediately exports the catalog with a
-bounded worker queue:
+Each platform job installs its commit-pinned, attested Forge binary, then exports
+the catalog with a bounded worker queue:
 
 ```sh
 rootbeer-forge --catalog packages export --registry tale/rootbeer-index \
@@ -705,8 +705,8 @@ and changes to job allocation do not invalidate compiled outputs. Successful
 results survive failures elsewhere, so retries can reuse verified work.
 
 Assembly combines the three platform bundles and requires every declared version
-and platform before publication. Pin `ROOTBEER_REV` to an engine commit supporting
-these flags before deploying the workflow.
+and platform before publication. The index's `engine-revision` pins the Forge
+release used throughout verification and publication.
 
 ## Publish independently
 
