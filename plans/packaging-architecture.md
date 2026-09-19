@@ -9,7 +9,7 @@ phases; package definitions and the existing build executor are preserved.
 Phase 1 is implemented: archive the unmerged GitHub-specific CI draft and add
 `rootbeer-forge --catalog packages verify-bundle bundle`. This exposes the existing
 publication validation as a local operation, including expected-catalog matching.
-The index's run-selection and promotion helpers remain the active integration.
+That phase preserved the index's existing integration while exposing portable validation.
 
 Validation: packaging and Forge tests pass (54 tests), including catalog mismatch,
 coverage, and missing/corrupt/symlinked content; targeted all-target Clippy passes.
@@ -33,11 +33,10 @@ macOS isolation. All-target Clippy passes. A Forge CLI plan against an unavailab
 fixture source returns the expected miss without creating the cache or running
 package work.
 
-Phase 3's Actions handoff is implemented on the index's companion
+Phase 3a's Actions handoff was committed on the index's companion
 `refactor/package-ci` branch at `2f09341`. It incorporates the existing workflow
 deduplication draft without changing the original checkout's staged files. The
-index pins engine commit `4aa5864511bdfef3d21ab13fc86386d8b2d882a2`; that engine
-commit must be available remotely before the index integration can run.
+initial engine pin was `4aa5864511bdfef3d21ab13fc86386d8b2d882a2`.
 
 Platform jobs emit Forge's plan and retain per-attempt checkpoints for 14 days,
 including successful qualification and compilation results after another package
@@ -51,13 +50,49 @@ also compares helper-script trees when establishing equivalent workflow inputs.
 Validation: 18 index tests pass, including a real two-package Forge export with a
 transient failure, complete cache loss, checkpoint restoration, and a retry that
 rebuilds only the failed package while retaining the successful receipt.
-Actionlint passes. No production recipes changed, branches were pushed, or catalog
-CI runs were started. Live Actions retry validation is still pending deployment.
+Actionlint passed. That slice changed no production recipes and started no catalog
+CI. Live Actions retry validation remains pending deployment.
 
-This is temporary same-run retention, not durable OCI storage or cross-run
-producer admission. Cancellation before checkpoint upload still loses that
-attempt's latest results. OCI retention, producer admission, and finer
-backend/qualification invalidation remain the next phases.
+Phase 3b adds portable qualification evidence in engine commit `e5bdf06` and durable
+Actions integration in index commits `af8ed78` and `9614c45`. Both feature branches
+are pushed; neither is merged. The index pins the engine implementation commit.
+Production recipes and the original index checkout's staged changes are unchanged.
+
+Forge exports content-addressed qualification records alongside receipts and
+archives. `verify-candidate` requires complete record coverage and exact agreement
+with the selected catalog and index artifacts. `import-results` verifies the bundle
+and imports an already admitted candidate into a trusted cache without package
+execution. Producer identity and catalog approval remain the caller's policy.
+
+A separate main-only collector admits unchanged verification tooling from
+same-repository PRs or allowed main events, checks Actions artifact digests, and
+stores raw candidate files in GHCR. GitHub attestations bind admission to the
+collector workflow on main. Publication resolves an explicit digest, compares the
+catalog and engine pin to current main, and publishes those bytes. It then attests
+catalog approval; cross-run cache imports require both attestations. Mutable tags
+are locators, not trust. The old Git-history bundle selector and ZIP downloader are
+removed. Missing or stale evidence never starts an automatic catalog build.
+
+Validation: the full engine workspace suite and Clippy pass; 31 index tests cover
+admission, artifact transport, publication decisions, checkpoint recovery, updates,
+and promotion. Actionlint passes. A real ORAS local-layout round trip preserved
+exact bytes and reused the qualification after deleting the entire cache and source.
+The [live GHCR fixture](https://github.com/tale/rootbeer-index/actions/runs/35425179884)
+also passed OCI transport, attestation verification, empty-cache reuse, and rejection
+by the production signer policy. The final fixture separates its read-only package
+build from registry writes. No catalog CI or production publication was started.
+
+Rollout remains explicit: review and merge the coordinated branches, inspect reuse
+before any catalog qualification, then enable `DURABLE_PACKAGE_RESULTS` only after
+the first approved candidate exists. See the index README for recovery steps.
+Historical bundles without qualification records are not silently upgraded.
+
+Remaining limits: interrupted/failed runs retain partial work in 14-day Actions
+checkpoints; durable OCI candidates currently require complete assembly. Seeding
+imports the whole accepted candidate, and publication still requires an exact
+catalog match. Combining independently admitted candidates and reducing per-platform
+transfer are follow-ups. Broad engine invalidation is still phase 4 work and should
+be addressed before using this rollout to justify another full-catalog build.
 
 ## Recommendation
 
