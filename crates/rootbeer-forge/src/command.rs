@@ -52,6 +52,9 @@ enum Command {
     },
     /// Build, check, and export the current platform's package recipes
     Export {
+        /// Write a JSON reuse plan to --output without executing packages
+        #[arg(long)]
+        plan: bool,
         /// Pinned tools, SDK/sysroot inputs, and build variables
         #[arg(long)]
         environment: Option<PathBuf>,
@@ -333,6 +336,7 @@ fn execute(args: Args) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         }
         Command::Export {
+            plan,
             environment,
             isolate,
             registry,
@@ -350,22 +354,39 @@ fn execute(args: Args) -> Result<(), String> {
                 context: cache_context.unwrap(),
                 recheck,
             });
+            let options = rootbeer_packaging::BuildOptions {
+                jobs,
+                environment: read_environment(environment)?,
+                is_isolated: isolate,
+                ..Default::default()
+            };
+            let shard = shard.map(|index| rootbeer_packaging::ExportShard {
+                index,
+                count: shards.unwrap(),
+            });
+            if plan {
+                let result = rootbeer_packaging::plan_export(
+                    catalog()?,
+                    &registry,
+                    &options,
+                    cache.as_ref(),
+                    shard,
+                )?;
+                std::fs::write(
+                    output,
+                    serde_json::to_vec_pretty(&result).map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())?;
+                return Ok(());
+            }
             rootbeer_packaging::export_catalog_with_workers(
                 catalog()?,
                 &registry,
                 &output,
-                &rootbeer_packaging::BuildOptions {
-                    jobs,
-                    environment: read_environment(environment)?,
-                    is_isolated: isolate,
-                    ..Default::default()
-                },
+                &options,
                 workers,
                 cache.as_ref(),
-                shard.map(|index| rootbeer_packaging::ExportShard {
-                    index,
-                    count: shards.unwrap(),
-                }),
+                shard,
             )?;
         }
         Command::Assemble { inputs, output } => {

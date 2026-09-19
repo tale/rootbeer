@@ -14,6 +14,87 @@ use rootbeer_build::scheduler;
 
 pub use cache::ExportCache;
 
+/// Current-platform qualification decisions against a trusted local result cache.
+#[derive(Debug, serde::Serialize)]
+pub struct ExportPlan {
+    pub schema: u32,
+    pub catalog_sha256: String,
+    pub system: String,
+    pub packages: BTreeMap<String, ExportDecision>,
+}
+
+/// Reuses intact qualification evidence or schedules qualification for unmatched inputs.
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum ExportDecision {
+    Reuse {
+        qualification_sha256: String,
+        receipt_sha256: String,
+    },
+    Qualify {
+        qualification_sha256: Option<String>,
+        reason: &'static str,
+    },
+}
+
+/// Inspects local qualification evidence without downloads, builds, or package execution.
+pub fn plan_export(
+    catalog: &PackageCatalog,
+    registry: &str,
+    build_options: &BuildOptions,
+    cache_options: Option<&ExportCache>,
+    shard: Option<ExportShard>,
+) -> Result<ExportPlan, String> {
+    validate_export(catalog, registry, build_options, 1, shard)?;
+    let system = ResolveContext::current().system;
+    let cache = cache_options
+        .map(|options| cache::Cache::new(options, build_options))
+        .transpose()?;
+    let mut packages = BTreeMap::new();
+    for package in catalog.packages.values() {
+        for (version, recipe) in &package.versions {
+            let key = format!("{}@{version}", package.name);
+            if !recipe.systems.contains(&system) || shard.is_some_and(|shard| !shard.contains(&key))
+            {
+                continue;
+            }
+            let Some(cache) = &cache else {
+                packages.insert(
+                    key,
+                    ExportDecision::Qualify {
+                        qualification_sha256: None,
+                        reason: "cache_disabled",
+                    },
+                );
+                continue;
+            };
+            let inputs = cache.inputs(catalog, &key, &system, registry)?;
+            let qualification_sha256 = inputs.fingerprint()?;
+            let decision = match cache.inspect(&inputs)? {
+                Some(artifact) => ExportDecision::Reuse {
+                    qualification_sha256,
+                    receipt_sha256: artifact.receipt_sha256,
+                },
+                None => ExportDecision::Qualify {
+                    qualification_sha256: Some(qualification_sha256),
+                    reason: if cache_options.is_some_and(|options| options.recheck) {
+                        "explicit_recheck"
+                    } else {
+                        "no_matching_result"
+                    },
+                },
+            };
+            packages.insert(key, decision);
+        }
+    }
+    Ok(ExportPlan {
+        schema: 1,
+        catalog_sha256: catalog.sha256(),
+        system,
+        packages,
+    })
+}
+
 /// A zero-based partition of package versions, stable when unrelated recipes change.
 #[derive(Clone, Copy, Debug)]
 pub struct ExportShard {
@@ -34,6 +115,36 @@ impl ExportShard {
         let value = u64::from_str_radix(&digest[..16], 16).unwrap();
         value % self.count as u64 == self.index as u64
     }
+}
+
+fn validate_export(
+    catalog: &PackageCatalog,
+    registry: &str,
+    build_options: &BuildOptions,
+    workers: usize,
+    shard: Option<ExportShard>,
+) -> Result<(), String> {
+    catalog.validate()?;
+    rootbeer_package::ghcr::validate_repository(registry)?;
+    if build_options.jobs == 0 || build_options.jobs > 64 {
+        return Err("jobs must be between 1 and 64".into());
+    }
+    if workers == 0 || workers > 64 {
+        return Err("workers must be between 1 and 64".into());
+    }
+    if let Some(shard) = shard {
+        shard.validate()?;
+    }
+    if build_options.is_isolated && build_options.environment.is_none() {
+        return Err("isolated export requires a pinned environment".into());
+    }
+    if build_options.is_isolated {
+        rootbeer_build::Sandbox::identity()?;
+    }
+    if let Some(lock) = &build_options.environment {
+        rootbeer_build::verify_environment(lock)?;
+    }
+    Ok(())
 }
 
 /// Builds or imports the current platform's recipes and tests their locked offline outputs.
@@ -91,31 +202,14 @@ pub fn export_catalog_with_workers(
     cache_options: Option<&ExportCache>,
     shard: Option<ExportShard>,
 ) -> Result<(), String> {
-    catalog.validate()?;
-    rootbeer_package::ghcr::validate_repository(registry)?;
-    if build_options.jobs == 0 || build_options.jobs > 64 {
-        return Err("jobs must be between 1 and 64".into());
-    }
-    if workers == 0 || workers > 64 {
-        return Err("workers must be between 1 and 64".into());
-    }
-    if let Some(shard) = shard {
-        shard.validate()?;
-    }
-    if build_options.is_isolated && build_options.environment.is_none() {
-        return Err("isolated export requires a pinned environment".into());
-    }
-    if build_options.is_isolated {
-        rootbeer_build::Sandbox::identity()?;
-    }
-    if let Some(lock) = &build_options.environment {
-        rootbeer_build::verify_environment(lock)?;
-    }
+    validate_export(catalog, registry, build_options, workers, shard)?;
     let staging = publication::staging(output)?;
     let destination = staging.path().join("bundle");
     publication::create_bundle(&destination)?;
     let context = ResolveContext::current();
-    let cache = cache_options.map(cache::Cache::new).transpose()?;
+    let cache = cache_options
+        .map(|options| cache::Cache::new(options, build_options))
+        .transpose()?;
     let mut index = ArtifactIndex {
         schema: ArtifactIndex::schema_for(catalog),
         catalog: catalog.clone(),
@@ -133,18 +227,15 @@ pub fn export_catalog_with_workers(
                 continue;
             }
             let cached = (|| {
-                let fingerprint = cache
+                let inputs = cache
                     .as_ref()
-                    .filter(|_| recipe.build.is_none() && !build_options.is_isolated)
-                    .map(|cache| cache.fingerprint(catalog, &key, &context.system, registry))
+                    .map(|cache| cache.inputs(catalog, &key, &context.system, registry))
                     .transpose()?;
-                let restored = match (&cache, &fingerprint) {
-                    (Some(cache), Some(fingerprint)) => {
-                        cache.restore(fingerprint, &key, &context.system, recipe, &destination)?
-                    }
+                let restored = match (&cache, &inputs) {
+                    (Some(cache), Some(inputs)) => cache.restore(inputs, &destination)?,
                     _ => None,
                 };
-                Ok::<_, String>((fingerprint, restored))
+                Ok::<_, String>((inputs, restored))
             })();
             match cached {
                 Ok((_, Some(artifact))) => {
@@ -155,10 +246,9 @@ pub fn export_catalog_with_workers(
                         .insert(context.system.clone(), artifact);
                     eprintln!("REUSE {key} on {}", context.system);
                 }
-                Ok((fingerprint, None)) => tasks.push((
-                    recipe.build.is_some(),
-                    (key, &package.name, recipe, fingerprint),
-                )),
+                Ok((inputs, None)) => {
+                    tasks.push((recipe.build.is_some(), (key, &package.name, recipe, inputs)))
+                }
                 Err(error) => {
                     failures.insert(key, error);
                 }
@@ -197,7 +287,7 @@ pub fn export_catalog_with_workers(
             .collect();
         let metadata: BTreeMap<_, _> = tasks
             .into_iter()
-            .map(|(_, (key, name, recipe, fingerprint))| (key, (name, recipe, fingerprint)))
+            .map(|(_, (key, name, recipe, inputs))| (key, (name, recipe, inputs)))
             .collect();
         scheduler::run(
             scheduled,
@@ -228,7 +318,7 @@ pub fn export_catalog_with_workers(
                 Ok((work, artifact))
             },
             |key, result| {
-                let (_, recipe, fingerprint) = &metadata[&key];
+                let (_, _, inputs) = &metadata[&key];
                 let result = result.and_then(|(work, artifact)| {
                     let bundle = work.path().join("bundle");
                     for (directory, extension) in [("receipts", ".json"), ("artifacts", ".tar.gz")]
@@ -243,15 +333,8 @@ pub fn export_catalog_with_workers(
                             )?;
                         }
                     }
-                    if let (Some(cache), Some(fingerprint)) = (&cache, &fingerprint) {
-                        cache.save(
-                            fingerprint,
-                            &key,
-                            &context.system,
-                            recipe,
-                            &artifact,
-                            &bundle,
-                        )?;
+                    if let (Some(cache), Some(inputs)) = (&cache, &inputs) {
+                        cache.save(catalog, inputs, &artifact, &bundle)?;
                     }
                     Ok(artifact)
                 });
@@ -601,7 +684,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shared_dependencies_compile_once_per_export_including_rechecks_and_temporary_caches() {
+    fn source_qualification_reuses_results_and_requalifies_changed_inputs() {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("source");
         fs::create_dir_all(source.join("fixture")).unwrap();
@@ -618,7 +701,7 @@ check:
 	true
 install:
 	mkdir -p $(DESTDIR)/bin
-	printf '#!/bin/sh\nexit 0\n' > $(DESTDIR)/bin/xz
+	printf '#!/bin/sh\n[ "$$1" != "--fail" ]\n' > $(DESTDIR)/bin/xz
 	chmod +x $(DESTDIR)/bin/xz
 MAKE
 "#,
@@ -659,23 +742,19 @@ MAKE
                 .dependencies = vec![format!("xz@{}", package.default_version).into()];
             catalog.packages.insert(name.into(), consumer);
         }
-        let cache = ExportCache {
+        let mut cache = ExportCache {
             directory: root.path().join("cache"),
             context: "shared-test".into(),
-            recheck: true,
+            recheck: false,
         };
         let options = BuildOptions {
             jobs: 3,
             downloads,
             ..Default::default()
         };
-        for (name, cache, expected) in [
-            ("first", Some(&cache), 3),
-            ("recheck", Some(&cache), 6),
-            ("temporary", None, 9),
-        ] {
+        let export = |catalog: &PackageCatalog, name, cache: Option<&ExportCache>, expected| {
             export_catalog_with_workers(
-                &catalog,
+                catalog,
                 "owner/index",
                 &root.path().join(name),
                 &options,
@@ -689,7 +768,131 @@ MAKE
                 expected,
                 "{name}"
             );
+            publication::read_json::<ArtifactIndex>(&root.path().join(name).join("index.json"))
+                .unwrap()
+        };
+        let missing = plan_export(&catalog, "owner/index", &options, Some(&cache), None).unwrap();
+        assert!(missing.packages.values().all(|decision| matches!(
+            decision,
+            ExportDecision::Qualify {
+                reason: "no_matching_result",
+                ..
+            }
+        )));
+        assert!(!counter.exists());
+        let first = export(&catalog, "first", Some(&cache), 3);
+        let reusable = plan_export(&catalog, "owner/index", &options, Some(&cache), None).unwrap();
+        assert!(reusable
+            .packages
+            .values()
+            .all(|decision| matches!(decision, ExportDecision::Reuse { .. })));
+        let repeated = export(&catalog, "repeated", Some(&cache), 3);
+        assert_eq!(
+            serde_json::to_value(&first).unwrap(),
+            serde_json::to_value(&repeated).unwrap()
+        );
+
+        catalog
+            .packages
+            .get_mut("consumer-a")
+            .unwrap()
+            .versions
+            .get_mut("5.8.3")
+            .unwrap()
+            .checks
+            .push(vec!["xz".into(), "--help".into()]);
+        let planned = plan_export(&catalog, "owner/index", &options, Some(&cache), None).unwrap();
+        assert!(matches!(
+            planned.packages["consumer-a@5.8.3"],
+            ExportDecision::Qualify { .. }
+        ));
+        assert!(matches!(
+            planned.packages["consumer-b@5.8.3"],
+            ExportDecision::Reuse { .. }
+        ));
+        let changed = export(&catalog, "checks", Some(&cache), 3);
+        let system = ResolveContext::current().system;
+        assert_ne!(
+            first.artifacts["consumer-a@5.8.3"][&system].receipt_sha256,
+            changed.artifacts["consumer-a@5.8.3"][&system].receipt_sha256
+        );
+        for key in ["xz@5.8.3", "consumer-b@5.8.3"] {
+            assert_eq!(
+                first.artifacts[key][&system].receipt_sha256,
+                changed.artifacts[key][&system].receipt_sha256
+            );
         }
+        export(&catalog, "checks-repeated", Some(&cache), 3);
+
+        catalog
+            .packages
+            .get_mut("consumer-a")
+            .unwrap()
+            .versions
+            .get_mut("5.8.3")
+            .unwrap()
+            .checks
+            .push(vec!["xz".into(), "--fail".into()]);
+        let failed_output = root.path().join("failed-checks");
+        let error = export_catalog_with_workers(
+            &catalog,
+            "owner/index",
+            &failed_output,
+            &options,
+            2,
+            Some(&cache),
+            None,
+        )
+        .unwrap_err();
+        assert!(error.contains("consumer-a@5.8.3"), "{error}");
+        assert!(!failed_output.exists());
+        assert_eq!(fs::read_to_string(&counter).unwrap().lines().count(), 3);
+        let planned = plan_export(&catalog, "owner/index", &options, Some(&cache), None).unwrap();
+        assert!(matches!(
+            planned.packages["consumer-a@5.8.3"],
+            ExportDecision::Qualify { .. }
+        ));
+        catalog
+            .packages
+            .get_mut("consumer-a")
+            .unwrap()
+            .versions
+            .get_mut("5.8.3")
+            .unwrap()
+            .checks
+            .pop();
+
+        catalog
+            .packages
+            .get_mut("xz")
+            .unwrap()
+            .versions
+            .get_mut("5.8.3")
+            .unwrap()
+            .build
+            .as_mut()
+            .unwrap()
+            .configure
+            .push("--changed-input".into());
+        let dependency_changed = export(&catalog, "dependency-changed", Some(&cache), 4);
+        for key in ["xz@5.8.3", "consumer-a@5.8.3", "consumer-b@5.8.3"] {
+            assert_ne!(
+                changed.artifacts[key][&system].receipt_sha256,
+                dependency_changed.artifacts[key][&system].receipt_sha256
+            );
+        }
+
+        cache.recheck = true;
+        let planned = plan_export(&catalog, "owner/index", &options, Some(&cache), None).unwrap();
+        assert!(planned.packages.values().all(|decision| matches!(
+            decision,
+            ExportDecision::Qualify {
+                reason: "explicit_recheck",
+                ..
+            }
+        )));
+        export(&catalog, "recheck", Some(&cache), 7);
+        export(&catalog, "temporary", None, 10);
     }
 
     #[test]
@@ -780,6 +983,8 @@ MAKE
                 .count(),
             1
         );
+        let original_catalog_sha256 = catalog.sha256();
+        fs::remove_dir_all(options.directory.join("builds")).unwrap();
         catalog.packages.remove("a-failure");
         export_catalog_with_workers(
             &catalog,
@@ -807,6 +1012,9 @@ MAKE
         )
         .unwrap();
         assert!(receipt.build_key.is_some());
+        assert_eq!(receipt.catalog_sha256, original_catalog_sha256);
+        assert_ne!(receipt.catalog_sha256, catalog.sha256());
+        assert!(!options.directory.join("builds").exists());
         assert_eq!(
             receipt.build.sha256,
             catalog.packages["xz"].versions["5.8.3"]

@@ -62,6 +62,59 @@ impl Default for BuildOptions {
 }
 
 impl BuildOptions {
+    /// Identifies the effective tools, environment, and isolation for a recipe closure.
+    pub fn environment_identity(
+        &self,
+        catalog: &PackageCatalog,
+        request: &str,
+        context: &str,
+    ) -> Result<String, String> {
+        self.validate()?;
+        let graph = graph::DependencyGraph::new(
+            catalog,
+            &[request.into()],
+            &ResolveContext::current().system,
+        )?;
+        let recipes = graph
+            .order
+            .iter()
+            .map(|key| graph::find_recipe(catalog, key).map(|(_, _, recipe)| recipe))
+            .collect::<Result<Vec<_>, _>>()?;
+        if recipes.iter().all(|recipe| recipe.build.is_none()) {
+            if let Some(lock) = &self.environment {
+                verify_environment(lock)?;
+            }
+            let bytes = serde_json::to_vec(&(context, self.isolation()?, &self.environment))
+                .map_err(|error| error.to_string())?;
+            return Ok(rootbeer_store::hash_bytes(&bytes));
+        }
+        self.resolve_environment(recipes.into_iter())?
+            .identity(&format!("{context}\0{}", self.isolation()?))
+    }
+
+    fn resolve_environment<'a>(
+        &self,
+        mut recipes: impl Iterator<Item = &'a CatalogRecipe>,
+    ) -> Result<environment::Environment, String> {
+        let environment = environment::Environment::resolve(self.environment.as_ref())?;
+        if recipes.any(|recipe| {
+            recipe
+                .build
+                .as_ref()
+                .is_some_and(|build| matches!(build.backend, BuildBackend::Rust))
+        }) {
+            return environment.with_rust();
+        }
+        Ok(environment)
+    }
+
+    fn isolation(&self) -> Result<String, String> {
+        if self.is_isolated {
+            return Sandbox::identity();
+        }
+        Ok("host".into())
+    }
+
     fn validate(&self) -> Result<(), String> {
         if self.is_isolated && self.environment.is_none() {
             return Err("isolated builds require a pinned environment".into());
@@ -98,22 +151,8 @@ pub fn build_package(
 
 fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<BuildArtifact, String> {
     opts.validate()?;
-    let environment = environment::Environment::resolve(opts.environment.as_ref())?;
-    let environment = if plan.recipes.values().any(|recipe| {
-        recipe
-            .build
-            .as_ref()
-            .is_some_and(|build| matches!(build.backend, BuildBackend::Rust))
-    }) {
-        environment.with_rust()?
-    } else {
-        environment
-    };
-    let isolation = if opts.is_isolated {
-        Sandbox::identity()?
-    } else {
-        "host".into()
-    };
+    let environment = opts.resolve_environment(plan.recipes.values())?;
+    let isolation = opts.isolation()?;
     let context = opts.cache.as_ref().map_or("", |cache| &cache.context);
     let identity = environment.identity(&format!("{context}\0{isolation}"))?;
     let graph = &plan.graph;

@@ -86,11 +86,13 @@ pub(crate) fn key(
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
     let engine = env!("ROOTBEER_ENGINE_IDENTITY");
+    let mut compilation_recipe = recipe.clone();
+    compilation_recipe.checks.clear();
     let bytes = serde_json::to_vec(&(
-        "rootbeer-build-v2",
+        "rootbeer-build-v3",
         engine,
         name,
-        recipe,
+        compilation_recipe,
         system,
         outputs,
         context,
@@ -204,6 +206,13 @@ mod tests {
             .unwrap()
         };
         let original = digest(recipe, &dependencies);
+        let mut checks_changed = recipe.clone();
+        checks_changed
+            .checks
+            .push(vec!["xz".into(), "--help".into()]);
+        assert_eq!(original, digest(&checks_changed, &dependencies));
+        checks_changed.revision += 1;
+        assert_ne!(original, digest(&checks_changed, &dependencies));
         dependencies.get_mut("compiler@1").unwrap().source = LockedSource::File {
             path: "/second/compiler.tar.gz".into(),
             sha256: "c".repeat(64),

@@ -14,9 +14,29 @@ The index's run-selection and promotion helpers remain the active integration.
 Validation: packaging and Forge tests pass (54 tests), including catalog mismatch,
 coverage, and missing/corrupt/symlinked content; targeted all-target Clippy passes.
 
-Phases 2–5 are planned below. Switching index workflows requires a published
-engine revision with the new operation; that pin update is a later integration
-step. The index checkout's existing workflow deduplication is left intact.
+Phase 2's local package-tooling implementation adds versioned per-package
+qualification records to the trusted export cache and `export --plan` JSON output.
+Source and isolated qualifications can reuse matching results, including all
+runtime archives, without rewriting original receipts for a new catalog. Actual
+tools and pinned inputs contribute to the environment identity. Check edits rerun
+qualification against the build cache; revision bumps still invalidate compilation.
+Successful packages survive a failed export independently.
+
+The local regression fixture exercises reuse, changed checks, failed checks,
+changed dependency inputs, explicit rechecks, and recovery after deleting the
+entire compilation cache. Record/schema tampering and missing/corrupt runtime
+archives fail validation. Planning uses the same qualification input and content
+checks as export and does not execute packages.
+
+Validation: 96 targeted build, packaging, and Forge tests pass, including native
+macOS isolation. All-target Clippy passes. A Forge CLI plan against an unavailable
+fixture source returns the expected miss without creating the cache or running
+package work.
+
+Actions handoff and phases 3–5 remain ahead. Switching index workflows requires
+a published engine revision; the existing workflow edits remain intact. Current
+qualification records are trusted local evidence. Durable OCI retention, producer
+admission, and finer backend/qualification invalidation are not implemented yet.
 
 ## Recommendation
 
@@ -292,6 +312,10 @@ Measure builds, qualification executions, bytes transferred, engine setup time, 
 
 Prove the boundary with a small local catalog containing a source package and a dependency. Define a versioned qualification record using the existing build artifacts, retain the original receipt, and let assembly consume that record after unrelated catalog metadata changes. Change checks separately from build inputs and demonstrate that only qualification reruns. Use generic regression fixtures in Rootbeer; production recipes stay in `rootbeer-index`.
 
-Have the existing index verification workflow emit and consume those records. Exercise a failed package followed by an Actions retry and show that successful results survive. Keep existing publication gates until the result-based selection establishes equivalent producer trust and catalog approval. Durable OCI retention and broader workflow migration follow that proof.
+Next, have the existing index verification workflow emit and consume those records.
+Exercise a failed package followed by an Actions retry and show that successful
+results survive. Keep existing publication gates until the result-based selection
+establishes equivalent producer trust and catalog approval. Durable OCI retention
+and broader workflow migration follow that proof.
 
 This slice fixes reusable qualification and artifact handoff while retaining the current recipe model, build executor, and Actions orchestration. It introduces no general-purpose CI framework.

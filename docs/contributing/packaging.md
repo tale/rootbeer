@@ -27,10 +27,10 @@ fetching or building anything. Build execution resolves binary inputs up front,
 then uses those locked facts throughout the run.
 
 The build cache reuses individual dependencies across different root packages.
-Its key includes the recipe, verified dependency outputs and selected library
-exports, platform, build engine, job count, environment variables, and tool/input
+Its key includes compilation inputs and revision, verified dependency outputs and
+selected library exports, platform, build engine, environment variables, and tool/input
 hashes. The caller-supplied host identity also remains part of the key.
-Archive paths, unrelated catalog entries, and publication destinations do not
+Checks, job allocation, archive paths, unrelated catalog entries, and publication destinations do not
 change build keys. Receipts retain the key, environment lock, and host identity.
 
 ### Pinning a build environment
@@ -133,19 +133,19 @@ before and after execution, but other host processes can still change files.
 
 Cache keys distinguish host and isolated execution and include the launcher
 identity and policy implementation. Receipts record the selected isolation
-identity. Isolated exports bypass the outer qualification cache so package
-checks cannot be skipped.
+identity. Completed export qualifications can be reused in the same isolated
+environment; `--recheck` executes the checks again.
 
 Without a lock, trusted host builds remain available. Rootbeer hashes the
 selected host compiler and basic tools before lookup, but the host identity
 must still account for SDKs, libraries, and other utilities. `--recheck` rebuilds
 each node; `--phase-timeout SECONDS` sets the build command time limit.
 
-Successful outputs enter the cache only after input verification and checks;
-cache hits verify archive and output hashes and rerun package checks. Export's
-`--cache` enables the dependency cache under `builds/`. Source exports always
-pass through this executor; only binary qualification uses the outer export
-cache directly.
+Successful build outputs enter the cache only after input verification and checks;
+build-cache hits verify archive and output hashes and rerun package checks.
+Export's `--cache` also retains completed qualifications for both source and
+binary packages. A matching qualification reuses the original receipt and archives
+without entering the executor. The dependency build cache lives under `builds/`.
 
 Build environments set `SOURCE_DATE_EPOCH=1` and `ZERO_AR_DATE=1`; the latter
 prevents Apple archive-member timestamps from changing otherwise identical outputs.
@@ -597,15 +597,41 @@ recipes, platform, registry, engine, and build environment match. A new package
 must not force unrelated packages to rebuild. Original receipts stay intact when
 results are reused in a newer catalog snapshot.
 
+Each result has a versioned `record.json` binding its expanded recipe closure,
+engine, environment, and destination to the published artifact and original
+receipt digest. Source identities include the effective tools and Rust sysroot
+when needed; pinned environment files are verified before lookup. Runtime
+dependency archives travel with the result. Job allocation and presentation
+metadata do not affect qualification identity.
+
 ```sh
 rootbeer-forge --catalog packages export --registry tale/rootbeer-index --output result \
   --cache /tmp/rootbeer-package-results --cache-context "$BUILD_ENVIRONMENT_ID"
 ```
 
+Add `--plan --output plan.json` to inspect reuse without downloading sources or
+executing packages. The JSON contains each selected package's qualification input
+digest and either `reuse` with the original receipt digest or `qualify` with a
+reason: `no_matching_result`, `explicit_recheck`, or `cache_disabled`. A missing
+qualification may still reuse compilation through the separate build cache.
+Planning verifies local receipt and archive contents; corrupt evidence fails.
+
+Changing only checks reruns qualification against cached build outputs. Changing
+the recipe revision still invalidates compilation. Changed dependency recipes
+invalidate dependent qualifications; compilation can reuse dependencies with
+identical installed outputs and export contracts. Successful qualifications are
+saved per package, even when another package fails, so a retry retains completed
+work.
+
 Use a trusted cache and identify the OS image and tools in `BUILD_ENVIRONMENT_ID`.
 A missing entry runs full verification; corruption fails. `--recheck` bypasses
 persistent reuse, while shared dependencies still compile once per export invocation.
 CI keeps scheduled full checks to detect upstream and platform drift.
+
+These records are local trusted-cache evidence, not producer attestations. The
+workflow remains responsible for producer admission and durable retention. Old
+export-cache records miss the new versioned identity; they are not silently
+upgraded into source qualification evidence.
 
 ## Qualify packages in parallel
 

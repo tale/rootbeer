@@ -29,7 +29,7 @@ pub(super) fn create_bundle(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn copy_verified(source: &Path, destination: &Path, suffix: &str) -> Result<(), String> {
+pub(super) fn verify_file(source: &Path, suffix: &str) -> Result<String, String> {
     if !fs::symlink_metadata(source)
         .map_err(|e| e.to_string())?
         .is_file()
@@ -44,6 +44,12 @@ pub(super) fn copy_verified(source: &Path, destination: &Path, suffix: &str) -> 
     {
         return Err(format!("bundle digest mismatch: {}", source.display()));
     }
+    Ok(digest)
+}
+
+pub(super) fn copy_verified(source: &Path, destination: &Path, suffix: &str) -> Result<(), String> {
+    let digest = verify_file(source, suffix)?;
+    let name = format!("{digest}{suffix}");
     let target = destination.join(name);
     match fs::symlink_metadata(&target) {
         Ok(metadata) if !metadata.is_file() => {
