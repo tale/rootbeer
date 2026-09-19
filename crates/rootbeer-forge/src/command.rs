@@ -119,6 +119,8 @@ enum Command {
         #[arg(long)]
         complete: bool,
     },
+    /// Validate a complete bundle's local contents against the selected catalog
+    VerifyBundle { bundle: PathBuf },
     /// Sign a complete artifact index with an Ed25519 PKCS#8 DER key
     SignIndex {
         index: PathBuf,
@@ -402,6 +404,11 @@ fn execute(args: Args) -> Result<(), String> {
                 index.validate()?;
             }
             writeln!(output, "verified artifact index").map_err(|e| e.to_string())?;
+        }
+        Command::VerifyBundle { bundle } => {
+            rootbeer_packaging::verify_bundle(&bundle, catalog()?)?;
+            writeln!(output, "verified bundle against selected catalog")
+                .map_err(|e| e.to_string())?;
         }
         Command::SignIndex {
             index,

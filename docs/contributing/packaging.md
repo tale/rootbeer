@@ -640,6 +640,20 @@ access, and signs an immutable index snapshot. Imported binaries retain their
 upstream URLs. CI retains snapshots and receipts, then deploys the latest signed
 manifest through GitHub Pages.
 
+Before publication, validate a downloaded bundle against the selected recipes:
+
+```sh
+rootbeer-forge --catalog packages verify-bundle bundle
+```
+
+This checks catalog equality, publication coverage, and the hashes of referenced
+local receipts and GHCR archives without running package commands or downloading
+files. Coverage follows the index schema, including source alternatives.
+`verify-index` checks index metadata only. The index workflow remains responsible
+for trusting the producing run, approving recipes, and verifying the downloaded
+transport artifact's digest. GitHub run selection, Git commits, and deployment
+belong in index workflows and helpers.
+
 Source-build jobs receive no publication credentials. The separate publisher uses
 ORAS for uploads; users need neither ORAS nor a container runtime to install.
 Package publication does not create Rootbeer GitHub releases.

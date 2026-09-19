@@ -12,7 +12,7 @@ pub use export::{
     export_catalog, export_catalog_shard, export_catalog_with_cache, export_catalog_with_workers,
     ExportCache, ExportShard,
 };
-pub use publication::{assemble_indexes, publish_index, PublishOptions};
+pub use publication::{assemble_indexes, publish_index, verify_bundle, PublishOptions};
 
 mod sign;
 pub use sign::sign_index;

@@ -6,7 +6,7 @@ use std::process::Command;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use super::{ArtifactIndex, LockedSource};
+use super::{ArtifactIndex, LockedSource, PackageCatalog};
 use rootbeer_store::{hash_bytes, hash_file};
 
 pub(super) fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
@@ -96,6 +96,19 @@ fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Validates publication coverage and local bundle contents against the selected catalog.
+/// The caller must establish the bundle's producer trust separately.
+pub fn verify_bundle(bundle: &Path, catalog: &PackageCatalog) -> Result<(), String> {
+    catalog.validate()?;
+    let index: ArtifactIndex = read_json(&bundle.join("index.json"))?;
+    index.validate_complete()?;
+    if index.catalog_sha256 != catalog.sha256() {
+        return Err("bundle does not match the selected catalog".into());
+    }
+
+    check_files(&index, bundle)
 }
 
 #[derive(Deserialize)]
@@ -437,6 +450,88 @@ mod tests {
         let output = root.join("bundle");
         assemble_indexes(&inputs, &output).unwrap();
         output
+    }
+
+    #[test]
+    fn verifies_bundle_against_selected_catalog_without_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = complete(root.path());
+        let bytes = fs::read(bundle.join("index.json")).unwrap();
+        let index: ArtifactIndex = serde_json::from_slice(&bytes).unwrap();
+        verify_bundle(&bundle, &index.catalog).unwrap();
+
+        let mut changed = index.catalog.clone();
+        changed
+            .packages
+            .get_mut("xz")
+            .unwrap()
+            .description
+            .push_str(" changed");
+        let error = verify_bundle(&bundle, &changed).unwrap_err();
+        assert!(
+            error.contains("does not match the selected catalog"),
+            "{error}"
+        );
+        assert_eq!(bytes, fs::read(bundle.join("index.json")).unwrap());
+    }
+
+    #[test]
+    fn bundle_verification_requires_publication_coverage() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = fragment(root.path(), "aarch64-linux");
+        let index: ArtifactIndex = read_json(&bundle.join("index.json")).unwrap();
+        let error = verify_bundle(&bundle, &index.catalog).unwrap_err();
+        assert!(error.contains("incomplete publication"), "{error}");
+    }
+
+    #[test]
+    fn bundle_verification_rejects_missing_corrupt_and_symlinked_content() {
+        for folder in ["artifacts", "receipts"] {
+            for corruption in ["missing", "corrupt", "symlink"] {
+                let root = tempfile::tempdir().unwrap();
+                let bundle = complete(root.path());
+                let mut index: ArtifactIndex = read_json(&bundle.join("index.json")).unwrap();
+                for artifact in index
+                    .artifacts
+                    .values_mut()
+                    .flat_map(|systems| systems.values_mut())
+                {
+                    let LockedSource::Url { url, sha256 } = &mut artifact.package.source else {
+                        panic!("expected URL source");
+                    };
+                    *url = format!("ghcr://owner/index/xz@sha256:{sha256}");
+                }
+                write_json(&bundle.join("index.json"), &index).unwrap();
+                verify_bundle(&bundle, &index.catalog).unwrap();
+
+                let artifact = &index.artifacts.values().next().unwrap()["aarch64-linux"];
+                let LockedSource::Url { sha256, .. } = &artifact.package.source else {
+                    panic!("expected URL source");
+                };
+                let filename = if folder == "artifacts" {
+                    format!("{sha256}.tar.gz")
+                } else {
+                    format!("{}.json", artifact.receipt_sha256)
+                };
+                let file = bundle.join(folder).join(filename);
+                match corruption {
+                    "missing" => fs::remove_file(&file).unwrap(),
+                    "corrupt" => fs::write(&file, "tampered").unwrap(),
+                    "symlink" => {
+                        let original = root.path().join("original");
+                        fs::rename(&file, &original).unwrap();
+                        std::os::unix::fs::symlink(original, &file).unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+
+                let error = verify_bundle(&bundle, &index.catalog).unwrap_err();
+                assert!(
+                    error.contains(&file.display().to_string()),
+                    "{folder} {corruption}: {error}"
+                );
+            }
+        }
     }
 
     #[test]
