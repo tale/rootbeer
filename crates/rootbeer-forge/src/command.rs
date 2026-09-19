@@ -52,6 +52,9 @@ enum Command {
     },
     /// Build, check, and export the current platform's package recipes
     Export {
+        /// Write a JSON reuse plan to --output without executing packages
+        #[arg(long)]
+        plan: bool,
         /// Pinned tools, SDK/sysroot inputs, and build variables
         #[arg(long)]
         environment: Option<PathBuf>,
@@ -118,6 +121,27 @@ enum Command {
         index: PathBuf,
         #[arg(long)]
         complete: bool,
+    },
+    /// Validate a complete bundle's local contents against the selected catalog
+    VerifyBundle { bundle: PathBuf },
+    /// Validate complete artifacts and qualification evidence against the selected catalog
+    VerifyCandidate { bundle: PathBuf },
+    /// List required receipt/archive paths from authenticated candidate metadata
+    CandidateFiles {
+        bundle: PathBuf,
+        /// Defaults to the current platform
+        #[arg(long)]
+        system: Option<String>,
+    },
+    /// Import qualifications from a candidate whose producer and catalog the caller has approved
+    ImportResults {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        cache: PathBuf,
+        /// Import only this platform; other platforms' archive bytes may be absent
+        #[arg(long)]
+        system: Option<String>,
     },
     /// Sign a complete artifact index with an Ed25519 PKCS#8 DER key
     SignIndex {
@@ -331,6 +355,7 @@ fn execute(args: Args) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         }
         Command::Export {
+            plan,
             environment,
             isolate,
             registry,
@@ -348,22 +373,39 @@ fn execute(args: Args) -> Result<(), String> {
                 context: cache_context.unwrap(),
                 recheck,
             });
+            let options = rootbeer_packaging::BuildOptions {
+                jobs,
+                environment: read_environment(environment)?,
+                is_isolated: isolate,
+                ..Default::default()
+            };
+            let shard = shard.map(|index| rootbeer_packaging::ExportShard {
+                index,
+                count: shards.unwrap(),
+            });
+            if plan {
+                let result = rootbeer_packaging::plan_export(
+                    catalog()?,
+                    &registry,
+                    &options,
+                    cache.as_ref(),
+                    shard,
+                )?;
+                std::fs::write(
+                    output,
+                    serde_json::to_vec_pretty(&result).map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())?;
+                return Ok(());
+            }
             rootbeer_packaging::export_catalog_with_workers(
                 catalog()?,
                 &registry,
                 &output,
-                &rootbeer_packaging::BuildOptions {
-                    jobs,
-                    environment: read_environment(environment)?,
-                    is_isolated: isolate,
-                    ..Default::default()
-                },
+                &options,
                 workers,
                 cache.as_ref(),
-                shard.map(|index| rootbeer_packaging::ExportShard {
-                    index,
-                    count: shards.unwrap(),
-                }),
+                shard,
             )?;
         }
         Command::Assemble { inputs, output } => {
@@ -402,6 +444,37 @@ fn execute(args: Args) -> Result<(), String> {
                 index.validate()?;
             }
             writeln!(output, "verified artifact index").map_err(|e| e.to_string())?;
+        }
+        Command::VerifyBundle { bundle } => {
+            rootbeer_packaging::verify_bundle(&bundle, catalog()?)?;
+            writeln!(output, "verified bundle against selected catalog")
+                .map_err(|e| e.to_string())?;
+        }
+        Command::VerifyCandidate { bundle } => {
+            rootbeer_packaging::verify_candidate(&bundle, catalog()?)?;
+            writeln!(output, "verified candidate against selected catalog")
+                .map_err(|error| error.to_string())?;
+        }
+        Command::CandidateFiles { bundle, system } => {
+            let system =
+                system.unwrap_or_else(|| rootbeer_packaging::ResolveContext::current().system);
+            let files = rootbeer_packaging::candidate_files(&bundle, &system)?;
+            serde_json::to_writer(&mut output, &files).map_err(|error| error.to_string())?;
+            writeln!(output).map_err(|error| error.to_string())?;
+        }
+        Command::ImportResults {
+            bundle,
+            cache,
+            system,
+        } => {
+            let count = match system {
+                Some(system) => {
+                    rootbeer_packaging::import_results_for_system(&bundle, &cache, &system)?
+                }
+                None => rootbeer_packaging::import_results(&bundle, &cache)?,
+            };
+            writeln!(output, "imported {count} admitted qualifications")
+                .map_err(|error| error.to_string())?;
         }
         Command::SignIndex {
             index,

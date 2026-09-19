@@ -27,10 +27,10 @@ fetching or building anything. Build execution resolves binary inputs up front,
 then uses those locked facts throughout the run.
 
 The build cache reuses individual dependencies across different root packages.
-Its key includes the recipe, verified dependency outputs and selected library
-exports, platform, build engine, job count, environment variables, and tool/input
+Its key includes compilation inputs and revision, verified dependency outputs and
+selected library exports, platform, build engine, environment variables, and tool/input
 hashes. The caller-supplied host identity also remains part of the key.
-Archive paths, unrelated catalog entries, and publication destinations do not
+Checks, job allocation, archive paths, unrelated catalog entries, and publication destinations do not
 change build keys. Receipts retain the key, environment lock, and host identity.
 
 ### Pinning a build environment
@@ -133,19 +133,19 @@ before and after execution, but other host processes can still change files.
 
 Cache keys distinguish host and isolated execution and include the launcher
 identity and policy implementation. Receipts record the selected isolation
-identity. Isolated exports bypass the outer qualification cache so package
-checks cannot be skipped.
+identity. Completed export qualifications can be reused in the same isolated
+environment; `--recheck` executes the checks again.
 
 Without a lock, trusted host builds remain available. Rootbeer hashes the
 selected host compiler and basic tools before lookup, but the host identity
 must still account for SDKs, libraries, and other utilities. `--recheck` rebuilds
 each node; `--phase-timeout SECONDS` sets the build command time limit.
 
-Successful outputs enter the cache only after input verification and checks;
-cache hits verify archive and output hashes and rerun package checks. Export's
-`--cache` enables the dependency cache under `builds/`. Source exports always
-pass through this executor; only binary qualification uses the outer export
-cache directly.
+Successful build outputs enter the cache only after input verification and checks;
+build-cache hits verify archive and output hashes and rerun package checks.
+Export's `--cache` also retains completed qualifications for both source and
+binary packages. A matching qualification reuses the original receipt and archives
+without entering the executor. The dependency build cache lives under `builds/`.
 
 Build environments set `SOURCE_DATE_EPOCH=1` and `ZERO_AR_DATE=1`; the latter
 prevents Apple archive-member timestamps from changing otherwise identical outputs.
@@ -597,15 +597,91 @@ recipes, platform, registry, engine, and build environment match. A new package
 must not force unrelated packages to rebuild. Original receipts stay intact when
 results are reused in a newer catalog snapshot.
 
+Each result has a versioned `record.json` binding its expanded recipe closure,
+engine, environment, and destination to the published artifact and original
+receipt digest. Source identities include the effective tools and Rust sysroot
+when needed; pinned environment files are verified before lookup. Runtime
+dependency archives travel with the result. Job allocation and presentation
+metadata do not affect qualification identity.
+
 ```sh
 rootbeer-forge --catalog packages export --registry tale/rootbeer-index --output result \
   --cache /tmp/rootbeer-package-results --cache-context "$BUILD_ENVIRONMENT_ID"
 ```
 
+Add `--plan --output plan.json` to inspect reuse without downloading sources or
+executing packages. The JSON contains each selected package's qualification input
+digest and either `reuse` with the original receipt digest or `qualify` with a
+reason: `no_matching_result`, `explicit_recheck`, or `cache_disabled`. A missing
+qualification may still reuse compilation through the separate build cache.
+Planning verifies local receipt and archive contents; corrupt evidence fails.
+
+Build identities combine shared executor/package/store inputs with the selected
+backend implementation. Qualification identities include the backends used by the
+entire recipe dependency closure. A Rust-backend edit invalidates Rust results and
+dependent qualifications without invalidating independent Autotools, custom, or Zig
+results. A dependent compilation can still reuse identical dependency outputs.
+
+Unclassified build files, shared executor code, manifests, the workspace lockfile,
+and environment changes invalidate conservatively. Backend dispatch changes are
+shared changes. Inline tests within shared source files also remain in the identity.
+CLI/docs changes do not change package identities. The scoped identity introduces
+new cache keys; old evidence is retained but never silently relabeled as compatible.
+
+Changing only checks reruns qualification against cached build outputs. Changing
+the recipe revision still invalidates compilation. Changed dependency recipes
+invalidate dependent qualifications; compilation can reuse dependencies with
+identical installed outputs and export contracts. Successful qualifications are
+saved per package, even when another package fails, so a retry retains completed
+work.
+
 Use a trusted cache and identify the OS image and tools in `BUILD_ENVIRONMENT_ID`.
 A missing entry runs full verification; corruption fails. `--recheck` bypasses
 persistent reuse, while shared dependencies still compile once per export invocation.
 CI keeps scheduled full checks to detect upstream and platform drift.
+
+Exports with a qualification cache include content-addressed records in
+`qualifications/`. Assembly preserves these records with the original receipts
+and archives. A complete bundle can become a portable candidate:
+
+```sh
+rootbeer-forge --catalog approved-packages verify-candidate retained/bundle
+rootbeer-forge import-results --bundle retained/bundle --cache /tmp/rootbeer-package-results
+```
+
+`verify-candidate` requires full qualification coverage and binds each record to
+the selected catalog and exact bundled artifact. `import-results` verifies all
+candidate content before importing entries. It preserves valid existing entries
+and executes no package code. Later export planning decides whether the imported
+inputs still match the local engine and environment.
+
+To restore only one platform, first fetch the authenticated `index.json` and all
+`qualifications/*.json` records. Forge plans receipt and runtime-archive transfer
+without executing package code:
+
+```sh
+rootbeer-forge candidate-files retained/bundle --system aarch64-linux
+# Fetch exactly the returned paths from the authenticated candidate digest.
+rootbeer-forge import-results --bundle retained/bundle --cache /tmp/rootbeer-package-results \
+  --system aarch64-linux
+```
+
+`candidate-files` defaults to the current platform. It requires complete, consistent
+metadata but does not require archive bytes. Platform import validates all metadata
+and every selected receipt and archive before writing cache entries; foreign-platform
+bytes may be absent. Complete publication still requires `verify-candidate` with all
+platform contents. Each import preserves the original catalog and receipt bytes.
+
+These records do not authenticate their producer. Before importing, the caller
+must admit the producer and approve its catalog. The index workflow stores exact
+candidate bytes in OCI, attests collector admission separately from publication
+approval, and imports only candidates with both attestations. GitHub credentials
+and workflow policy stay outside Forge. Another host can apply its own admission
+policy to the same portable bundle.
+
+Old bundles without qualification records remain usable with `verify-bundle`,
+but cannot be admitted as reusable candidates. Repair missing evidence explicitly;
+do not silently rebuild the catalog or manufacture qualifications from archives.
 
 ## Qualify packages in parallel
 
@@ -639,6 +715,20 @@ these flags before deploying the workflow.
 access, and signs an immutable index snapshot. Imported binaries retain their
 upstream URLs. CI retains snapshots and receipts, then deploys the latest signed
 manifest through GitHub Pages.
+
+Before publication, validate a downloaded bundle against the selected recipes:
+
+```sh
+rootbeer-forge --catalog packages verify-bundle bundle
+```
+
+This checks catalog equality, publication coverage, and the hashes of referenced
+local receipts and GHCR archives without running package commands or downloading
+files. Coverage follows the index schema, including source alternatives.
+`verify-index` checks index metadata only. The index workflow remains responsible
+for trusting the producing run, approving recipes, and verifying the downloaded
+transport artifact's digest. GitHub run selection, Git commits, and deployment
+belong in index workflows and helpers.
 
 Source-build jobs receive no publication credentials. The separate publisher uses
 ORAS for uploads; users need neither ORAS nor a container runtime to install.

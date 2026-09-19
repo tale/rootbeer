@@ -6,7 +6,7 @@ use std::process::Command;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use super::{ArtifactIndex, LockedSource};
+use super::{ArtifactIndex, LockedSource, PackageCatalog, PublishedArtifact};
 use rootbeer_store::{hash_bytes, hash_file};
 
 pub(super) fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
@@ -23,20 +23,23 @@ pub(crate) use rootbeer_package::staging::staging;
 
 pub(super) fn create_bundle(path: &Path) -> Result<(), String> {
     fs::create_dir(path).map_err(|e| e.to_string())?;
-    for folder in ["artifacts", "receipts"] {
+    for folder in ["artifacts", "receipts", "qualifications"] {
         fs::create_dir(path.join(folder)).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-pub(super) fn copy_verified(source: &Path, destination: &Path, suffix: &str) -> Result<(), String> {
+pub(super) fn verify_file(source: &Path, suffix: &str) -> Result<String, String> {
     if !fs::symlink_metadata(source)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{}: {e}", source.display()))?
         .is_file()
     {
-        return Err("bundle files must be regular files".into());
+        return Err(format!(
+            "bundle files must be regular files: {}",
+            source.display()
+        ));
     }
-    let digest = hash_file(source).map_err(|e| e.to_string())?;
+    let digest = hash_file(source).map_err(|e| format!("{}: {e}", source.display()))?;
     let name = format!("{digest}{suffix}");
     if source
         .file_name()
@@ -44,6 +47,12 @@ pub(super) fn copy_verified(source: &Path, destination: &Path, suffix: &str) -> 
     {
         return Err(format!("bundle digest mismatch: {}", source.display()));
     }
+    Ok(digest)
+}
+
+pub(super) fn copy_verified(source: &Path, destination: &Path, suffix: &str) -> Result<(), String> {
+    let digest = verify_file(source, suffix)?;
+    let name = format!("{digest}{suffix}");
     let target = destination.join(name);
     match fs::symlink_metadata(&target) {
         Ok(metadata) if !metadata.is_file() => {
@@ -62,31 +71,36 @@ pub(super) fn copy_verified(source: &Path, destination: &Path, suffix: &str) -> 
     Ok(())
 }
 
-fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), String> {
+pub(super) fn artifact_files(
+    artifact: &PublishedArtifact,
+    source: &Path,
+) -> Result<Vec<(PathBuf, &'static str)>, String> {
+    let mut files = vec![(
+        source
+            .join("receipts")
+            .join(format!("{}.json", artifact.receipt_sha256)),
+        ".json",
+    )];
+    let packages = rootbeer_package::runtime::closure(&artifact.package)?;
+    for package in packages.into_iter().chain([&artifact.package]) {
+        if let LockedSource::Url { url, sha256 } = &package.source {
+            if !url.starts_with("ghcr://") {
+                continue;
+            }
+            files.push((
+                source.join("artifacts").join(format!("{sha256}.tar.gz")),
+                ".tar.gz",
+            ));
+        }
+    }
+    Ok(files)
+}
+
+pub(crate) fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), String> {
     for systems in index.artifacts.values() {
         for (system, artifact) in systems {
-            let packages = rootbeer_package::runtime::closure(&artifact.package)?;
-            for (digest, folder, suffix) in
-                std::iter::once((artifact.receipt_sha256.as_str(), "receipts", ".json")).chain(
-                    packages
-                        .into_iter()
-                        .chain(std::iter::once(&artifact.package))
-                        .filter_map(|package| match &package.source {
-                            LockedSource::Url { url, sha256 } if url.starts_with("ghcr://") => {
-                                Some((sha256.as_str(), "artifacts", ".tar.gz"))
-                            }
-                            _ => None,
-                        }),
-                )
-            {
-                let file = bundle.join(folder).join(format!("{digest}{suffix}"));
-                if !fs::symlink_metadata(&file)
-                    .map_err(|e| format!("{}: {e}", file.display()))?
-                    .is_file()
-                    || hash_file(&file).map_err(|e| format!("{}: {e}", file.display()))? != digest
-                {
-                    return Err(format!("invalid bundle content: {}", file.display()));
-                }
+            for (path, suffix) in artifact_files(artifact, bundle)? {
+                verify_file(&path, suffix)?;
             }
             let package = &artifact.package;
             let recipe = &index.catalog.packages[&package.name].versions[&package.version];
@@ -96,6 +110,27 @@ fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Validates publication coverage and local bundle contents against the selected catalog.
+/// The caller must establish the bundle's producer trust separately.
+pub fn verify_bundle(bundle: &Path, catalog: &PackageCatalog) -> Result<(), String> {
+    catalog.validate()?;
+    let index: ArtifactIndex = read_json(&bundle.join("index.json"))?;
+    index.validate_complete()?;
+    if index.catalog_sha256 != catalog.sha256() {
+        return Err("bundle does not match the selected catalog".into());
+    }
+
+    check_files(&index, bundle)
+}
+
+/// Validates a complete bundle and its per-package qualification evidence without execution.
+/// Producer admission remains the caller's responsibility.
+pub fn verify_candidate(bundle: &Path, catalog: &PackageCatalog) -> Result<(), String> {
+    verify_bundle(bundle, catalog)?;
+    let index: ArtifactIndex = read_json(&bundle.join("index.json"))?;
+    crate::export::verify_qualifications(bundle, &index)
 }
 
 #[derive(Deserialize)]
@@ -162,7 +197,11 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
         let mut fragment: ArtifactIndex = read_json(&path)?;
         fragment.validate_fragment()?;
         check_files(&fragment, path.parent().unwrap())?;
-        for (folder, suffix) in [("artifacts", ".tar.gz"), ("receipts", ".json")] {
+        for (folder, suffix) in [
+            ("artifacts", ".tar.gz"),
+            ("receipts", ".json"),
+            ("qualifications", ".json"),
+        ] {
             let directory = path.parent().unwrap().join(folder);
             let files = match fs::read_dir(&directory) {
                 Ok(files) => files,
@@ -437,6 +476,88 @@ mod tests {
         let output = root.join("bundle");
         assemble_indexes(&inputs, &output).unwrap();
         output
+    }
+
+    #[test]
+    fn verifies_bundle_against_selected_catalog_without_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = complete(root.path());
+        let bytes = fs::read(bundle.join("index.json")).unwrap();
+        let index: ArtifactIndex = serde_json::from_slice(&bytes).unwrap();
+        verify_bundle(&bundle, &index.catalog).unwrap();
+
+        let mut changed = index.catalog.clone();
+        changed
+            .packages
+            .get_mut("xz")
+            .unwrap()
+            .description
+            .push_str(" changed");
+        let error = verify_bundle(&bundle, &changed).unwrap_err();
+        assert!(
+            error.contains("does not match the selected catalog"),
+            "{error}"
+        );
+        assert_eq!(bytes, fs::read(bundle.join("index.json")).unwrap());
+    }
+
+    #[test]
+    fn bundle_verification_requires_publication_coverage() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = fragment(root.path(), "aarch64-linux");
+        let index: ArtifactIndex = read_json(&bundle.join("index.json")).unwrap();
+        let error = verify_bundle(&bundle, &index.catalog).unwrap_err();
+        assert!(error.contains("incomplete publication"), "{error}");
+    }
+
+    #[test]
+    fn bundle_verification_rejects_missing_corrupt_and_symlinked_content() {
+        for folder in ["artifacts", "receipts"] {
+            for corruption in ["missing", "corrupt", "symlink"] {
+                let root = tempfile::tempdir().unwrap();
+                let bundle = complete(root.path());
+                let mut index: ArtifactIndex = read_json(&bundle.join("index.json")).unwrap();
+                for artifact in index
+                    .artifacts
+                    .values_mut()
+                    .flat_map(|systems| systems.values_mut())
+                {
+                    let LockedSource::Url { url, sha256 } = &mut artifact.package.source else {
+                        panic!("expected URL source");
+                    };
+                    *url = format!("ghcr://owner/index/xz@sha256:{sha256}");
+                }
+                write_json(&bundle.join("index.json"), &index).unwrap();
+                verify_bundle(&bundle, &index.catalog).unwrap();
+
+                let artifact = &index.artifacts.values().next().unwrap()["aarch64-linux"];
+                let LockedSource::Url { sha256, .. } = &artifact.package.source else {
+                    panic!("expected URL source");
+                };
+                let filename = if folder == "artifacts" {
+                    format!("{sha256}.tar.gz")
+                } else {
+                    format!("{}.json", artifact.receipt_sha256)
+                };
+                let file = bundle.join(folder).join(filename);
+                match corruption {
+                    "missing" => fs::remove_file(&file).unwrap(),
+                    "corrupt" => fs::write(&file, "tampered").unwrap(),
+                    "symlink" => {
+                        let original = root.path().join("original");
+                        fs::rename(&file, &original).unwrap();
+                        std::os::unix::fs::symlink(original, &file).unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+
+                let error = verify_bundle(&bundle, &index.catalog).unwrap_err();
+                assert!(
+                    error.contains(&file.display().to_string()),
+                    "{folder} {corruption}: {error}"
+                );
+            }
+        }
     }
 
     #[test]
