@@ -87,12 +87,45 @@ before any catalog qualification, then enable `DURABLE_PACKAGE_RESULTS` only aft
 the first approved candidate exists. See the index README for recovery steps.
 Historical bundles without qualification records are not silently upgraded.
 
+Phase 4's first slice is committed in engine `13165ea` and index `09ea6a5`/`1334997`,
+with both feature branches pushed. It separates the four backend implementation hashes from shared
+package/store/executor behavior. Build keys use their own backend; qualifications
+include every backend in their recipe dependency closure. Unknown build files and
+backend dispatch remain shared inputs. The shared runner context no longer includes
+Rust's version; Forge already records the effective Rust toolchain for Rust closures.
+
+Forge now exposes `candidate-files` to plan one platform's receipt/archive transfer
+from authenticated metadata, including runtime archives. `import-results --system`
+checks the complete metadata and selected contents before cache mutation. The index
+reader fetches all small qualification records, asks Forge for the required paths,
+and downloads only those blobs. Publication still requires complete contents.
+
+Local validation rebuilt Forge after temporary source edits: a Rust-backend edit
+changed the Rust qualification key while a C fixture reused exact evidence with no
+new compilation; a shared runner edit invalidated the C qualification. Probe edits
+were restored. The real ORAS local-layout fixture passed selective import and reuse
+on macOS. Index tests cover skipped foreign blobs, required-layer failures, and the
+existing producer/approval gates. The full engine workspace suite (including 58
+packaging tests), all-target Clippy, 33 index tests, and Actionlint pass.
+
+The [two-platform fixture](https://github.com/tale/rootbeer-index/actions/runs/35428691875)
+built successfully on Linux x86-64 and ARM64. A fixture-directory layout error in
+assembly was corrected, then the [retention-only retry](https://github.com/tale/rootbeer-index/actions/runs/35428964903)
+reused both original platform artifacts with build jobs skipped. It transferred
+6 of 8 candidate files, omitting ARM64's archive and receipt, imported one x86-64
+qualification into an empty cache, and reused its exact artifact without rebuilding.
+The partial bundle failed complete-publication validation as intended; the fixture
+branch signer remained inadmissible under production policy. No production recipes
+changed, catalog builds started, or production publication ran.
+
 Remaining limits: interrupted/failed runs retain partial work in 14-day Actions
-checkpoints; durable OCI candidates currently require complete assembly. Seeding
-imports the whole accepted candidate, and publication still requires an exact
-catalog match. Combining independently admitted candidates and reducing per-platform
-transfer are follow-ups. Broad engine invalidation is still phase 4 work and should
-be addressed before using this rollout to justify another full-catalog build.
+checkpoints; durable OCI candidates currently require complete assembly. Publication
+still requires an exact catalog match, so combining independently admitted candidates
+is a follow-up. Workspace lockfile/manifests, shared source (including inline tests),
+and runner-image changes remain conservative invalidators. Pinning narrower execution
+environments and dependency identities needs its own validation. The new identity
+scheme creates new keys; retained old evidence is never silently relabeled compatible.
+No migration baseline or automatic full-catalog build is authorized by this transition.
 
 ## Recommendation
 
