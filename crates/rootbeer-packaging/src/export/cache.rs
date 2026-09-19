@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{publication, CatalogRecipe, LockedSource, PackageCatalog, PublishedArtifact};
+use crate::{publication, CatalogRecipe, PackageCatalog, PublishedArtifact};
 use rootbeer_store::hash_bytes;
 
 /// Reuses successful exports from a trusted cache under an explicit build environment identity.
@@ -127,7 +127,7 @@ impl<'a> Cache<'a> {
         let Some((directory, artifact)) = self.load(inputs)? else {
             return Ok(None);
         };
-        for (path, suffix) in artifact_files(&artifact, &directory)? {
+        for (path, suffix) in publication::artifact_files(&artifact, &directory)? {
             publication::verify_file(&path, suffix)?;
         }
         Ok(Some(artifact))
@@ -270,7 +270,7 @@ pub fn candidate_files(bundle: &Path, system: &str) -> Result<CandidateFiles, St
         .iter()
         .filter(|record| record.inputs.system == system)
     {
-        for (path, _) in artifact_files(&record.artifact, Path::new(""))? {
+        for (path, _) in publication::artifact_files(&record.artifact, Path::new(""))? {
             files.insert(path);
         }
     }
@@ -330,7 +330,7 @@ fn import_selected(bundle: &Path, directory: &Path, system: Option<&str>) -> Res
                 return Err("existing qualification inputs mismatch".into());
             }
             existing.inputs.validate(&existing.artifact)?;
-            for (path, suffix) in artifact_files(&existing.artifact, &destination)? {
+            for (path, suffix) in publication::artifact_files(&existing.artifact, &destination)? {
                 publication::verify_file(&path, suffix)?;
             }
             continue;
@@ -350,36 +350,11 @@ fn copy_artifact(
     source: &Path,
     destination: &Path,
 ) -> Result<(), String> {
-    for (path, suffix) in artifact_files(artifact, source)? {
+    for (path, suffix) in publication::artifact_files(artifact, source)? {
         let folder = path.parent().unwrap().file_name().unwrap();
         publication::copy_verified(&path, &destination.join(folder), suffix)?;
     }
     Ok(())
-}
-
-fn artifact_files(
-    artifact: &PublishedArtifact,
-    source: &Path,
-) -> Result<Vec<(PathBuf, &'static str)>, String> {
-    let mut files = vec![(
-        source
-            .join("receipts")
-            .join(format!("{}.json", artifact.receipt_sha256)),
-        ".json",
-    )];
-    let packages = rootbeer_package::runtime::closure(&artifact.package)?;
-    for package in packages.into_iter().chain([&artifact.package]) {
-        if let LockedSource::Url { url, sha256 } = &package.source {
-            if !url.starts_with("ghcr://") {
-                continue;
-            }
-            files.push((
-                source.join("artifacts").join(format!("{sha256}.tar.gz")),
-                ".tar.gz",
-            ));
-        }
-    }
-    Ok(files)
 }
 
 fn engine_identity(catalog: &PackageCatalog, key: &str, system: &str) -> Result<String, String> {
@@ -435,7 +410,7 @@ fn inputs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{bundle_artifacts, ArtifactIndex, ResolveContext};
+    use crate::{bundle_artifacts, ArtifactIndex, LockedSource, ResolveContext};
 
     #[test]
     fn fingerprints_track_dependencies_without_invalidating_unrelated_packages() {
@@ -663,10 +638,10 @@ mod tests {
         crate::verify_candidate(&bundle, &index.catalog).unwrap();
         let plan = candidate_files(&bundle, "aarch64-linux").unwrap();
         assert_eq!(2, plan.files.len());
-        for (path, _) in artifact_files(&first, Path::new("")).unwrap() {
+        for (path, _) in publication::artifact_files(&first, Path::new("")).unwrap() {
             assert!(plan.files.contains(&path));
         }
-        for (path, _) in artifact_files(&second, &bundle).unwrap() {
+        for (path, _) in publication::artifact_files(&second, &bundle).unwrap() {
             fs::remove_file(path).unwrap();
         }
         assert_eq!(

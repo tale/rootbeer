@@ -6,7 +6,7 @@ use std::process::Command;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use super::{ArtifactIndex, LockedSource, PackageCatalog};
+use super::{ArtifactIndex, LockedSource, PackageCatalog, PublishedArtifact};
 use rootbeer_store::{hash_bytes, hash_file};
 
 pub(super) fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
@@ -31,12 +31,15 @@ pub(super) fn create_bundle(path: &Path) -> Result<(), String> {
 
 pub(super) fn verify_file(source: &Path, suffix: &str) -> Result<String, String> {
     if !fs::symlink_metadata(source)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{}: {e}", source.display()))?
         .is_file()
     {
-        return Err("bundle files must be regular files".into());
+        return Err(format!(
+            "bundle files must be regular files: {}",
+            source.display()
+        ));
     }
-    let digest = hash_file(source).map_err(|e| e.to_string())?;
+    let digest = hash_file(source).map_err(|e| format!("{}: {e}", source.display()))?;
     let name = format!("{digest}{suffix}");
     if source
         .file_name()
@@ -68,31 +71,36 @@ pub(super) fn copy_verified(source: &Path, destination: &Path, suffix: &str) -> 
     Ok(())
 }
 
+pub(super) fn artifact_files(
+    artifact: &PublishedArtifact,
+    source: &Path,
+) -> Result<Vec<(PathBuf, &'static str)>, String> {
+    let mut files = vec![(
+        source
+            .join("receipts")
+            .join(format!("{}.json", artifact.receipt_sha256)),
+        ".json",
+    )];
+    let packages = rootbeer_package::runtime::closure(&artifact.package)?;
+    for package in packages.into_iter().chain([&artifact.package]) {
+        if let LockedSource::Url { url, sha256 } = &package.source {
+            if !url.starts_with("ghcr://") {
+                continue;
+            }
+            files.push((
+                source.join("artifacts").join(format!("{sha256}.tar.gz")),
+                ".tar.gz",
+            ));
+        }
+    }
+    Ok(files)
+}
+
 pub(crate) fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), String> {
     for systems in index.artifacts.values() {
         for (system, artifact) in systems {
-            let packages = rootbeer_package::runtime::closure(&artifact.package)?;
-            for (digest, folder, suffix) in
-                std::iter::once((artifact.receipt_sha256.as_str(), "receipts", ".json")).chain(
-                    packages
-                        .into_iter()
-                        .chain(std::iter::once(&artifact.package))
-                        .filter_map(|package| match &package.source {
-                            LockedSource::Url { url, sha256 } if url.starts_with("ghcr://") => {
-                                Some((sha256.as_str(), "artifacts", ".tar.gz"))
-                            }
-                            _ => None,
-                        }),
-                )
-            {
-                let file = bundle.join(folder).join(format!("{digest}{suffix}"));
-                if !fs::symlink_metadata(&file)
-                    .map_err(|e| format!("{}: {e}", file.display()))?
-                    .is_file()
-                    || hash_file(&file).map_err(|e| format!("{}: {e}", file.display()))? != digest
-                {
-                    return Err(format!("invalid bundle content: {}", file.display()));
-                }
+            for (path, suffix) in artifact_files(artifact, bundle)? {
+                verify_file(&path, suffix)?;
             }
             let package = &artifact.package;
             let recipe = &index.catalog.packages[&package.name].versions[&package.version];
