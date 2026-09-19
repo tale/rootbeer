@@ -126,12 +126,22 @@ enum Command {
     VerifyBundle { bundle: PathBuf },
     /// Validate complete artifacts and qualification evidence against the selected catalog
     VerifyCandidate { bundle: PathBuf },
+    /// List required receipt/archive paths from authenticated candidate metadata
+    CandidateFiles {
+        bundle: PathBuf,
+        /// Defaults to the current platform
+        #[arg(long)]
+        system: Option<String>,
+    },
     /// Import qualifications from a candidate whose producer and catalog the caller has approved
     ImportResults {
         #[arg(long)]
         bundle: PathBuf,
         #[arg(long)]
         cache: PathBuf,
+        /// Import only this platform; other platforms' archive bytes may be absent
+        #[arg(long)]
+        system: Option<String>,
     },
     /// Sign a complete artifact index with an Ed25519 PKCS#8 DER key
     SignIndex {
@@ -445,8 +455,24 @@ fn execute(args: Args) -> Result<(), String> {
             writeln!(output, "verified candidate against selected catalog")
                 .map_err(|error| error.to_string())?;
         }
-        Command::ImportResults { bundle, cache } => {
-            let count = rootbeer_packaging::import_results(&bundle, &cache)?;
+        Command::CandidateFiles { bundle, system } => {
+            let system =
+                system.unwrap_or_else(|| rootbeer_packaging::ResolveContext::current().system);
+            let files = rootbeer_packaging::candidate_files(&bundle, &system)?;
+            serde_json::to_writer(&mut output, &files).map_err(|error| error.to_string())?;
+            writeln!(output).map_err(|error| error.to_string())?;
+        }
+        Command::ImportResults {
+            bundle,
+            cache,
+            system,
+        } => {
+            let count = match system {
+                Some(system) => {
+                    rootbeer_packaging::import_results_for_system(&bundle, &cache, &system)?
+                }
+                None => rootbeer_packaging::import_results(&bundle, &cache)?,
+            };
             writeln!(output, "imported {count} admitted qualifications")
                 .map_err(|error| error.to_string())?;
         }

@@ -13,7 +13,9 @@ mod cache;
 use rootbeer_build::scheduler;
 
 pub(crate) use cache::verify_qualifications;
-pub use cache::{import_results, ExportCache};
+pub use cache::{
+    candidate_files, import_results, import_results_for_system, CandidateFiles, ExportCache,
+};
 
 /// Current-platform qualification decisions against a trusted local result cache.
 #[derive(Debug, serde::Serialize)]

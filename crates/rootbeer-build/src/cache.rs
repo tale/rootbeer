@@ -85,11 +85,11 @@ pub(crate) fn key(
             Ok((name, (hash, &package.provides, exports.get(name))))
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
-    let engine = env!("ROOTBEER_ENGINE_IDENTITY");
+    let engine = crate::engine_identity(recipe.build.as_ref().map(|build| &build.backend));
     let mut compilation_recipe = recipe.clone();
     compilation_recipe.checks.clear();
     let bytes = serde_json::to_vec(&(
-        "rootbeer-build-v3",
+        "rootbeer-build-v4",
         engine,
         name,
         compilation_recipe,

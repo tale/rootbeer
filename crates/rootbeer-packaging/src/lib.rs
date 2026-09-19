@@ -9,8 +9,9 @@ mod export;
 mod publication;
 pub use bundle::bundle_artifacts;
 pub use export::{
-    export_catalog, export_catalog_shard, export_catalog_with_cache, export_catalog_with_workers,
-    import_results, plan_export, ExportCache, ExportDecision, ExportPlan, ExportShard,
+    candidate_files, export_catalog, export_catalog_shard, export_catalog_with_cache,
+    export_catalog_with_workers, import_results, import_results_for_system, plan_export,
+    CandidateFiles, ExportCache, ExportDecision, ExportPlan, ExportShard,
 };
 pub use publication::{
     assemble_indexes, publish_index, verify_bundle, verify_candidate, PublishOptions,

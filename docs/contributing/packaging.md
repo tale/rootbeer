@@ -616,6 +616,18 @@ reason: `no_matching_result`, `explicit_recheck`, or `cache_disabled`. A missing
 qualification may still reuse compilation through the separate build cache.
 Planning verifies local receipt and archive contents; corrupt evidence fails.
 
+Build identities combine shared executor/package/store inputs with the selected
+backend implementation. Qualification identities include the backends used by the
+entire recipe dependency closure. A Rust-backend edit invalidates Rust results and
+dependent qualifications without invalidating independent Autotools, custom, or Zig
+results. A dependent compilation can still reuse identical dependency outputs.
+
+Unclassified build files, shared executor code, manifests, the workspace lockfile,
+and environment changes invalidate conservatively. Backend dispatch changes are
+shared changes. Inline tests within shared source files also remain in the identity.
+CLI/docs changes do not change package identities. The scoped identity introduces
+new cache keys; old evidence is retained but never silently relabeled as compatible.
+
 Changing only checks reruns qualification against cached build outputs. Changing
 the recipe revision still invalidates compilation. Changed dependency recipes
 invalidate dependent qualifications; compilation can reuse dependencies with
@@ -642,6 +654,23 @@ the selected catalog and exact bundled artifact. `import-results` verifies all
 candidate content before importing entries. It preserves valid existing entries
 and executes no package code. Later export planning decides whether the imported
 inputs still match the local engine and environment.
+
+To restore only one platform, first fetch the authenticated `index.json` and all
+`qualifications/*.json` records. Forge plans receipt and runtime-archive transfer
+without executing package code:
+
+```sh
+rootbeer-forge candidate-files retained/bundle --system aarch64-linux
+# Fetch exactly the returned paths from the authenticated candidate digest.
+rootbeer-forge import-results --bundle retained/bundle --cache /tmp/rootbeer-package-results \
+  --system aarch64-linux
+```
+
+`candidate-files` defaults to the current platform. It requires complete, consistent
+metadata but does not require archive bytes. Platform import validates all metadata
+and every selected receipt and archive before writing cache entries; foreign-platform
+bytes may be absent. Complete publication still requires `verify-candidate` with all
+platform contents. Each import preserves the original catalog and receipt bytes.
 
 These records do not authenticate their producer. Before importing, the caller
 must admit the producer and approve its catalog. The index workflow stores exact

@@ -35,6 +35,24 @@ pub mod dependencies;
 #[cfg(test)]
 mod libraries_test;
 
+/// Identifies shared build behavior and the selected backend, independently of other backends.
+pub fn engine_identity(backend: Option<&BuildBackend>) -> String {
+    let implementation = match backend {
+        Some(BuildBackend::Autotools) => env!("ROOTBEER_BACKEND_AUTOTOOLS"),
+        Some(BuildBackend::Custom) => env!("ROOTBEER_BACKEND_CUSTOM"),
+        Some(BuildBackend::Rust) => env!("ROOTBEER_BACKEND_RUST"),
+        Some(BuildBackend::Zig) => env!("ROOTBEER_BACKEND_ZIG"),
+        None => "",
+    };
+    rootbeer_store::hash_bytes(
+        format!(
+            "rootbeer-engine-v2\0{}\0{implementation}",
+            env!("ROOTBEER_ENGINE_IDENTITY")
+        )
+        .as_bytes(),
+    )
+}
+
 /// Resource limits and storage locations for a build execution.
 #[derive(Debug, Clone)]
 pub struct BuildOptions {

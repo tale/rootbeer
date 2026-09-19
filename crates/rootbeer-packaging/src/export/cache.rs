@@ -77,7 +77,6 @@ impl Inputs {
 pub(super) struct Cache<'a> {
     options: &'a ExportCache,
     build_options: &'a rootbeer_build::BuildOptions,
-    engine: String,
 }
 
 impl<'a> Cache<'a> {
@@ -88,11 +87,9 @@ impl<'a> Cache<'a> {
         if options.context.trim().is_empty() {
             return Err("export cache requires a build environment identity".into());
         }
-        let engine = env!("ROOTBEER_ENGINE_IDENTITY").to_string();
         Ok(Self {
             options,
             build_options,
-            engine,
         })
     }
 
@@ -106,7 +103,8 @@ impl<'a> Cache<'a> {
         let environment =
             self.build_options
                 .environment_identity(catalog, key, &self.options.context)?;
-        inputs(catalog, key, system, registry, &self.engine, &environment)
+        let engine = engine_identity(catalog, key, system)?;
+        inputs(catalog, key, system, registry, &engine, &environment)
     }
 
     fn load(&self, inputs: &Inputs) -> Result<Option<(PathBuf, PublishedArtifact)>, String> {
@@ -245,12 +243,72 @@ fn qualifications(bundle: &Path, index: &crate::ArtifactIndex) -> Result<Vec<Rec
     Ok(records)
 }
 
-/// Imports qualifications from an already admitted candidate without executing package code.
-/// The caller must verify producer provenance and catalog approval before invoking this operation.
-pub fn import_results(bundle: &Path, directory: &Path) -> Result<usize, String> {
+/// Files needed to import one platform from an authenticated candidate's metadata.
+#[derive(Debug, Serialize)]
+pub struct CandidateFiles {
+    pub schema: u32,
+    pub system: String,
+    pub files: std::collections::BTreeSet<PathBuf>,
+}
+
+fn validate_system(system: &str) -> Result<(), String> {
+    if !matches!(system, "aarch64-macos" | "aarch64-linux" | "x86_64-linux") {
+        return Err(format!("unsupported candidate system: {system}"));
+    }
+    Ok(())
+}
+
+/// Plans platform receipt/archive transfer using only the index and all qualification records.
+/// The caller must authenticate those metadata bytes before using the resulting paths.
+pub fn candidate_files(bundle: &Path, system: &str) -> Result<CandidateFiles, String> {
+    validate_system(system)?;
     let index: crate::ArtifactIndex = publication::read_json(&bundle.join("index.json"))?;
-    crate::verify_candidate(bundle, &index.catalog)?;
+    index.validate_complete()?;
     let records = qualifications(bundle, &index)?;
+    let mut files = std::collections::BTreeSet::new();
+    for record in records
+        .iter()
+        .filter(|record| record.inputs.system == system)
+    {
+        for (path, _) in artifact_files(&record.artifact, Path::new(""))? {
+            files.insert(path);
+        }
+    }
+    Ok(CandidateFiles {
+        schema: 1,
+        system: system.into(),
+        files,
+    })
+}
+
+/// Imports all qualifications from a candidate whose producer and catalog the caller approved.
+/// Verifies contents without executing package code.
+pub fn import_results(bundle: &Path, directory: &Path) -> Result<usize, String> {
+    import_selected(bundle, directory, None)
+}
+
+/// Imports one platform's approved results, including its runtime archives.
+/// Other platforms require complete metadata but their archive bytes need not be present.
+pub fn import_results_for_system(
+    bundle: &Path,
+    directory: &Path,
+    system: &str,
+) -> Result<usize, String> {
+    validate_system(system)?;
+    import_selected(bundle, directory, Some(system))
+}
+
+fn import_selected(bundle: &Path, directory: &Path, system: Option<&str>) -> Result<usize, String> {
+    let mut index: crate::ArtifactIndex = publication::read_json(&bundle.join("index.json"))?;
+    index.validate_complete()?;
+    let mut records = qualifications(bundle, &index)?;
+    if let Some(system) = system {
+        records.retain(|record| record.inputs.system == system);
+        for systems in index.artifacts.values_mut() {
+            systems.retain(|name, _| name == system);
+        }
+    }
+    publication::check_files(&index, bundle)?;
     if directory.is_symlink() {
         return Err("result cache must not be a symlink".into());
     }
@@ -322,6 +380,29 @@ fn artifact_files(
         }
     }
     Ok(files)
+}
+
+fn engine_identity(catalog: &PackageCatalog, key: &str, system: &str) -> Result<String, String> {
+    let graph = rootbeer_package::graph::DependencyGraph::new(catalog, &[key.into()], system)?;
+    let implementations = graph
+        .order
+        .iter()
+        .map(|key| {
+            let (_, _, recipe) = rootbeer_package::graph::find_recipe(catalog, key)?;
+            Ok(rootbeer_build::engine_identity(
+                recipe.build.as_ref().map(|build| &build.backend),
+            ))
+        })
+        .collect::<Result<std::collections::BTreeSet<_>, String>>()?;
+    let engine = hash_bytes(
+        &serde_json::to_vec(&(
+            "rootbeer-qualification-engine-v2",
+            env!("ROOTBEER_ENGINE_IDENTITY"),
+            implementations,
+        ))
+        .map_err(|error| error.to_string())?,
+    );
+    Ok(engine)
 }
 
 fn inputs(
@@ -467,6 +548,158 @@ mod tests {
                     .unwrap()
             );
         }
+    }
+
+    #[test]
+    fn qualifications_include_dependency_backends_but_not_unrelated_backends() {
+        let mut catalog = crate::test_catalog::catalog().clone();
+        let original = engine_identity(&catalog, "xz@5.8.3", "aarch64-linux").unwrap();
+        let mut rust = catalog.packages["xz"].versions["5.8.3"]
+            .build
+            .clone()
+            .unwrap();
+        rust.backend = crate::BuildBackend::Rust;
+        rust.configure.clear();
+        rust.args.clear();
+        rust.libraries.clear();
+        rust.rust = Some(crate::RustBuild {
+            packages: vec!["fd".into()],
+            ..Default::default()
+        });
+        let dependency = catalog
+            .packages
+            .get_mut("fd")
+            .unwrap()
+            .versions
+            .get_mut("10.5.0")
+            .unwrap();
+        dependency.build = Some(rust);
+        dependency.source = None;
+        dependency.mirror = false;
+        dependency.assets.clear();
+        dependency.checksums.clear();
+        dependency.bin_paths.clear();
+        assert_eq!(
+            original,
+            engine_identity(&catalog, "xz@5.8.3", "aarch64-linux").unwrap()
+        );
+        catalog
+            .packages
+            .get_mut("xz")
+            .unwrap()
+            .versions
+            .get_mut("5.8.3")
+            .unwrap()
+            .build
+            .as_mut()
+            .unwrap()
+            .dependencies
+            .push("fd@10.5.0".into());
+        assert_ne!(
+            original,
+            engine_identity(&catalog, "xz@5.8.3", "aarch64-linux").unwrap()
+        );
+    }
+
+    #[test]
+    fn platform_import_requires_all_metadata_but_only_selected_contents() {
+        let root = tempfile::tempdir().unwrap();
+        let (catalog, receipt) = crate::bundle::tests::fixture(root.path());
+        let bundle = root.path().join("candidate");
+        bundle_artifacts(&catalog, &[receipt], "ghcr://owner/index/xz", &bundle).unwrap();
+        let mut index: ArtifactIndex = publication::read_json(&bundle.join("index.json")).unwrap();
+        index.catalog.packages.retain(|name, _| name == "xz");
+        index
+            .catalog
+            .packages
+            .get_mut("xz")
+            .unwrap()
+            .versions
+            .get_mut("5.8.3")
+            .unwrap()
+            .systems = vec!["aarch64-linux".into(), "x86_64-linux".into()];
+        index.catalog_sha256 = index.catalog.sha256();
+        let first = index.artifacts["xz@5.8.3"]["aarch64-linux"].clone();
+        let mut second = first.clone();
+        let bytes = b"other platform receipt";
+        second.receipt_sha256 = hash_bytes(bytes);
+        fs::write(
+            bundle
+                .join("receipts")
+                .join(format!("{}.json", second.receipt_sha256)),
+            bytes,
+        )
+        .unwrap();
+        let bytes = b"other platform archive";
+        let digest = hash_bytes(bytes);
+        fs::write(
+            bundle.join("artifacts").join(format!("{digest}.tar.gz")),
+            bytes,
+        )
+        .unwrap();
+        second.package.source = LockedSource::Url {
+            url: format!("ghcr://owner/index/xz@sha256:{digest}"),
+            sha256: digest,
+        };
+        index
+            .artifacts
+            .get_mut("xz@5.8.3")
+            .unwrap()
+            .insert("x86_64-linux".into(), second.clone());
+        publication::write_json(&bundle.join("index.json"), &index).unwrap();
+        for (system, artifact) in [("aarch64-linux", &first), ("x86_64-linux", &second)] {
+            inputs(
+                &index.catalog,
+                "xz@5.8.3",
+                system,
+                "owner/index",
+                &"a".repeat(64),
+                &"b".repeat(64),
+            )
+            .unwrap()
+            .retain(artifact, &bundle)
+            .unwrap();
+        }
+        crate::verify_candidate(&bundle, &index.catalog).unwrap();
+        let plan = candidate_files(&bundle, "aarch64-linux").unwrap();
+        assert_eq!(2, plan.files.len());
+        for (path, _) in artifact_files(&first, Path::new("")).unwrap() {
+            assert!(plan.files.contains(&path));
+        }
+        for (path, _) in artifact_files(&second, &bundle).unwrap() {
+            fs::remove_file(path).unwrap();
+        }
+        assert_eq!(
+            plan.files,
+            candidate_files(&bundle, "aarch64-linux").unwrap().files
+        );
+        assert_eq!(
+            1,
+            import_results_for_system(&bundle, &root.path().join("cache"), "aarch64-linux")
+                .unwrap()
+        );
+        assert!(import_results(&bundle, &root.path().join("all")).is_err());
+        assert!(!root.path().join("all").exists());
+        assert!(candidate_files(&bundle, "unknown-platform").is_err());
+        let missing = plan
+            .files
+            .iter()
+            .find(|path| path.starts_with("artifacts"))
+            .unwrap();
+        fs::remove_file(bundle.join(missing)).unwrap();
+        assert!(
+            import_results_for_system(&bundle, &root.path().join("missing"), "aarch64-linux")
+                .is_err()
+        );
+        assert!(!root.path().join("missing").exists());
+        let record = fs::read_dir(bundle.join("qualifications"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        fs::write(record, "corrupt metadata").unwrap();
+        assert!(candidate_files(&bundle, "aarch64-linux").is_err());
     }
 
     #[test]

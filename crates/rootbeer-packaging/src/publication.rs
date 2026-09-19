@@ -68,7 +68,7 @@ pub(super) fn copy_verified(source: &Path, destination: &Path, suffix: &str) -> 
     Ok(())
 }
 
-fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), String> {
+pub(crate) fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), String> {
     for systems in index.artifacts.values() {
         for (system, artifact) in systems {
             let packages = rootbeer_package::runtime::closure(&artifact.package)?;
