@@ -23,7 +23,7 @@ pub(crate) use rootbeer_package::staging::staging;
 
 pub(super) fn create_bundle(path: &Path) -> Result<(), String> {
     fs::create_dir(path).map_err(|e| e.to_string())?;
-    for folder in ["artifacts", "receipts"] {
+    for folder in ["artifacts", "receipts", "qualifications"] {
         fs::create_dir(path.join(folder)).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -117,6 +117,14 @@ pub fn verify_bundle(bundle: &Path, catalog: &PackageCatalog) -> Result<(), Stri
     check_files(&index, bundle)
 }
 
+/// Validates a complete bundle and its per-package qualification evidence without execution.
+/// Producer admission remains the caller's responsibility.
+pub fn verify_candidate(bundle: &Path, catalog: &PackageCatalog) -> Result<(), String> {
+    verify_bundle(bundle, catalog)?;
+    let index: ArtifactIndex = read_json(&bundle.join("index.json"))?;
+    crate::export::verify_qualifications(bundle, &index)
+}
+
 #[derive(Deserialize)]
 struct MirrorReceipt {
     schema: u32,
@@ -181,7 +189,11 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
         let mut fragment: ArtifactIndex = read_json(&path)?;
         fragment.validate_fragment()?;
         check_files(&fragment, path.parent().unwrap())?;
-        for (folder, suffix) in [("artifacts", ".tar.gz"), ("receipts", ".json")] {
+        for (folder, suffix) in [
+            ("artifacts", ".tar.gz"),
+            ("receipts", ".json"),
+            ("qualifications", ".json"),
+        ] {
             let directory = path.parent().unwrap().join(folder);
             let files = match fs::read_dir(&directory) {
                 Ok(files) => files,

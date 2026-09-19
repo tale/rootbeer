@@ -34,6 +34,22 @@ pub(super) struct Inputs {
 }
 
 impl Inputs {
+    pub(super) fn retain(&self, artifact: &PublishedArtifact, bundle: &Path) -> Result<(), String> {
+        let record = Record {
+            schema: 1,
+            inputs: self.clone(),
+            artifact: artifact.clone(),
+        };
+        let bytes = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
+        let directory = bundle.join("qualifications");
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        fs::write(
+            directory.join(format!("{}.json", hash_bytes(&bytes))),
+            bytes,
+        )
+        .map_err(|error| error.to_string())
+    }
+
     pub(super) fn fingerprint(&self) -> Result<String, String> {
         let bytes = serde_json::to_vec(&("rootbeer-qualification-v1", self))
             .map_err(|error| error.to_string())?;
@@ -128,6 +144,7 @@ impl<'a> Cache<'a> {
             return Ok(None);
         };
         copy_artifact(&artifact, &directory, destination)?;
+        inputs.retain(&artifact, destination)?;
         Ok(Some(artifact))
     }
 
@@ -159,6 +176,115 @@ impl<'a> Cache<'a> {
         }
         fs::rename(bundle, destination).map_err(|e| e.to_string())
     }
+}
+
+pub(crate) fn verify_qualifications(
+    bundle: &Path,
+    index: &crate::ArtifactIndex,
+) -> Result<(), String> {
+    qualifications(bundle, index).map(|_| ())
+}
+
+fn qualifications(bundle: &Path, index: &crate::ArtifactIndex) -> Result<Vec<Record>, String> {
+    let directory = bundle.join("qualifications");
+    if !fs::symlink_metadata(&directory)
+        .map_err(|error| error.to_string())?
+        .is_dir()
+    {
+        return Err("qualification records must be in a regular directory".into());
+    }
+    let mut records = Vec::new();
+    let mut covered = std::collections::BTreeSet::new();
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        publication::verify_file(&path, ".json")?;
+        let record: Record = publication::read_json(&path)?;
+        let claimed = &record.inputs;
+        if !rootbeer_package::index::is_sha256(&claimed.engine)
+            || !rootbeer_package::index::is_sha256(&claimed.environment)
+        {
+            return Err("qualification requires engine and environment digests".into());
+        }
+        rootbeer_package::ghcr::validate_repository(&claimed.registry)?;
+        let expected = inputs(
+            &index.catalog,
+            &claimed.package,
+            &claimed.system,
+            &claimed.registry,
+            &claimed.engine,
+            &claimed.environment,
+        )?;
+        if record.schema != 1 || claimed != &expected {
+            return Err("qualification inputs do not match the bundle catalog".into());
+        }
+        claimed.validate(&record.artifact)?;
+        let artifact = index
+            .artifacts
+            .get(&claimed.package)
+            .and_then(|systems| systems.get(&claimed.system))
+            .ok_or("qualification has no matching platform artifact")?;
+        if serde_json::to_value(artifact).map_err(|error| error.to_string())?
+            != serde_json::to_value(&record.artifact).map_err(|error| error.to_string())?
+        {
+            return Err("qualification differs from the bundled artifact".into());
+        }
+        if !covered.insert((claimed.package.clone(), claimed.system.clone())) {
+            return Err("duplicate qualification for a platform artifact".into());
+        }
+        records.push(record);
+    }
+    if covered.len()
+        != index
+            .artifacts
+            .values()
+            .map(|systems| systems.len())
+            .sum::<usize>()
+    {
+        return Err("bundle has incomplete qualification coverage".into());
+    }
+    Ok(records)
+}
+
+/// Imports qualifications from an already admitted candidate without executing package code.
+/// The caller must verify producer provenance and catalog approval before invoking this operation.
+pub fn import_results(bundle: &Path, directory: &Path) -> Result<usize, String> {
+    let index: crate::ArtifactIndex = publication::read_json(&bundle.join("index.json"))?;
+    crate::verify_candidate(bundle, &index.catalog)?;
+    let records = qualifications(bundle, &index)?;
+    if directory.is_symlink() {
+        return Err("result cache must not be a symlink".into());
+    }
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    for record in &records {
+        let destination = directory.join(record.inputs.fingerprint()?);
+        if destination
+            .try_exists()
+            .map_err(|error| error.to_string())?
+        {
+            if !fs::symlink_metadata(&destination)
+                .map_err(|error| error.to_string())?
+                .is_dir()
+            {
+                return Err("result cache entry must be a regular directory".into());
+            }
+            let existing: Record = publication::read_json(&destination.join("record.json"))?;
+            if existing.schema != 1 || existing.inputs != record.inputs {
+                return Err("existing qualification inputs mismatch".into());
+            }
+            existing.inputs.validate(&existing.artifact)?;
+            for (path, suffix) in artifact_files(&existing.artifact, &destination)? {
+                publication::verify_file(&path, suffix)?;
+            }
+            continue;
+        }
+        let staging = tempfile::tempdir_in(directory).map_err(|error| error.to_string())?;
+        let entry = staging.path().join("entry");
+        publication::create_bundle(&entry)?;
+        copy_artifact(&record.artifact, bundle, &entry)?;
+        publication::write_json(&entry.join("record.json"), record)?;
+        fs::rename(entry, destination).map_err(|error| error.to_string())?;
+    }
+    Ok(records.len())
 }
 
 fn copy_artifact(

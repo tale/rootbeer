@@ -12,7 +12,8 @@ use rootbeer_store::{hash_bytes, hash_file, Store};
 mod cache;
 use rootbeer_build::scheduler;
 
-pub use cache::ExportCache;
+pub(crate) use cache::verify_qualifications;
+pub use cache::{import_results, ExportCache};
 
 /// Current-platform qualification decisions against a trusted local result cache.
 #[derive(Debug, serde::Serialize)]
@@ -335,6 +336,7 @@ pub fn export_catalog_with_workers(
                     }
                     if let (Some(cache), Some(inputs)) = (&cache, &inputs) {
                         cache.save(catalog, inputs, &artifact, &bundle)?;
+                        inputs.retain(&artifact, &destination)?;
                     }
                     Ok(artifact)
                 });
@@ -781,6 +783,72 @@ MAKE
         )));
         assert!(!counter.exists());
         let first = export(&catalog, "first", Some(&cache), 3);
+        let candidate = root.path().join("first");
+        crate::verify_candidate(&candidate, &catalog).unwrap();
+        let imported = ExportCache {
+            directory: root.path().join("imported"),
+            context: cache.context.clone(),
+            recheck: false,
+        };
+        assert_eq!(
+            crate::import_results(&candidate, &imported.directory).unwrap(),
+            3
+        );
+        assert_eq!(
+            crate::import_results(&candidate, &imported.directory).unwrap(),
+            3
+        );
+        let restored = export(&catalog, "imported-export", Some(&imported), 3);
+        assert_eq!(
+            serde_json::to_value(&first).unwrap(),
+            serde_json::to_value(restored).unwrap()
+        );
+        assert!(!imported.directory.join("builds").exists());
+        let record_path = fs::read_dir(candidate.join("qualifications"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let original = fs::read(&record_path).unwrap();
+        let mut record: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        record["inputs"]["environment"] = "invalid".into();
+        let bytes = serde_json::to_vec(&record).unwrap();
+        fs::remove_file(&record_path).unwrap();
+        let changed_path = candidate
+            .join("qualifications")
+            .join(format!("{}.json", hash_bytes(&bytes)));
+        fs::write(&changed_path, bytes).unwrap();
+        assert!(crate::verify_candidate(&candidate, &catalog).is_err());
+        assert!(crate::import_results(&candidate, &root.path().join("rejected")).is_err());
+        assert!(!root.path().join("rejected").exists());
+        fs::remove_file(changed_path).unwrap();
+        assert!(crate::verify_candidate(&candidate, &catalog).is_err());
+        fs::write(&record_path, &original).unwrap();
+        let mut duplicate: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        duplicate["inputs"]["environment"] = "0".repeat(64).into();
+        let bytes = serde_json::to_vec(&duplicate).unwrap();
+        let duplicate_path = candidate
+            .join("qualifications")
+            .join(format!("{}.json", hash_bytes(&bytes)));
+        fs::write(&duplicate_path, bytes).unwrap();
+        assert!(crate::verify_candidate(&candidate, &catalog)
+            .unwrap_err()
+            .contains("duplicate qualification"));
+        fs::remove_file(duplicate_path).unwrap();
+        for pointer in ["/schema", "/artifact/revision"] {
+            let mut changed: serde_json::Value = serde_json::from_slice(&original).unwrap();
+            *changed.pointer_mut(pointer).unwrap() = 999.into();
+            let bytes = serde_json::to_vec(&changed).unwrap();
+            let changed_path = candidate
+                .join("qualifications")
+                .join(format!("{}.json", hash_bytes(&bytes)));
+            fs::remove_file(&record_path).unwrap();
+            fs::write(&changed_path, bytes).unwrap();
+            assert!(crate::verify_candidate(&candidate, &catalog).is_err());
+            fs::remove_file(changed_path).unwrap();
+            fs::write(&record_path, &original).unwrap();
+        }
         let reusable = plan_export(&catalog, "owner/index", &options, Some(&cache), None).unwrap();
         assert!(reusable
             .packages

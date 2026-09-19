@@ -124,6 +124,15 @@ enum Command {
     },
     /// Validate a complete bundle's local contents against the selected catalog
     VerifyBundle { bundle: PathBuf },
+    /// Validate complete artifacts and qualification evidence against the selected catalog
+    VerifyCandidate { bundle: PathBuf },
+    /// Import qualifications from a candidate whose producer and catalog the caller has approved
+    ImportResults {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        cache: PathBuf,
+    },
     /// Sign a complete artifact index with an Ed25519 PKCS#8 DER key
     SignIndex {
         index: PathBuf,
@@ -430,6 +439,16 @@ fn execute(args: Args) -> Result<(), String> {
             rootbeer_packaging::verify_bundle(&bundle, catalog()?)?;
             writeln!(output, "verified bundle against selected catalog")
                 .map_err(|e| e.to_string())?;
+        }
+        Command::VerifyCandidate { bundle } => {
+            rootbeer_packaging::verify_candidate(&bundle, catalog()?)?;
+            writeln!(output, "verified candidate against selected catalog")
+                .map_err(|error| error.to_string())?;
+        }
+        Command::ImportResults { bundle, cache } => {
+            let count = rootbeer_packaging::import_results(&bundle, &cache)?;
+            writeln!(output, "imported {count} admitted qualifications")
+                .map_err(|error| error.to_string())?;
         }
         Command::SignIndex {
             index,

@@ -628,10 +628,31 @@ A missing entry runs full verification; corruption fails. `--recheck` bypasses
 persistent reuse, while shared dependencies still compile once per export invocation.
 CI keeps scheduled full checks to detect upstream and platform drift.
 
-These records are local trusted-cache evidence, not producer attestations. The
-workflow remains responsible for producer admission and durable retention. Old
-export-cache records miss the new versioned identity; they are not silently
-upgraded into source qualification evidence.
+Exports with a qualification cache include content-addressed records in
+`qualifications/`. Assembly preserves these records with the original receipts
+and archives. A complete bundle can become a portable candidate:
+
+```sh
+rootbeer-forge --catalog approved-packages verify-candidate retained/bundle
+rootbeer-forge import-results --bundle retained/bundle --cache /tmp/rootbeer-package-results
+```
+
+`verify-candidate` requires full qualification coverage and binds each record to
+the selected catalog and exact bundled artifact. `import-results` verifies all
+candidate content before importing entries. It preserves valid existing entries
+and executes no package code. Later export planning decides whether the imported
+inputs still match the local engine and environment.
+
+These records do not authenticate their producer. Before importing, the caller
+must admit the producer and approve its catalog. The index workflow stores exact
+candidate bytes in OCI, attests collector admission separately from publication
+approval, and imports only candidates with both attestations. GitHub credentials
+and workflow policy stay outside Forge. Another host can apply its own admission
+policy to the same portable bundle.
+
+Old bundles without qualification records remain usable with `verify-bundle`,
+but cannot be admitted as reusable candidates. Repair missing evidence explicitly;
+do not silently rebuild the catalog or manufacture qualifications from archives.
 
 ## Qualify packages in parallel
 

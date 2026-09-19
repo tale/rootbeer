@@ -10,9 +10,11 @@ mod publication;
 pub use bundle::bundle_artifacts;
 pub use export::{
     export_catalog, export_catalog_shard, export_catalog_with_cache, export_catalog_with_workers,
-    plan_export, ExportCache, ExportDecision, ExportPlan, ExportShard,
+    import_results, plan_export, ExportCache, ExportDecision, ExportPlan, ExportShard,
 };
-pub use publication::{assemble_indexes, publish_index, verify_bundle, PublishOptions};
+pub use publication::{
+    assemble_indexes, publish_index, verify_bundle, verify_candidate, PublishOptions,
+};
 
 mod sign;
 pub use sign::sign_index;
