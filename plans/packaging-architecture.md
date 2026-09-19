@@ -33,10 +33,31 @@ macOS isolation. All-target Clippy passes. A Forge CLI plan against an unavailab
 fixture source returns the expected miss without creating the cache or running
 package work.
 
-Actions handoff and phases 3–5 remain ahead. Switching index workflows requires
-a published engine revision; the existing workflow edits remain intact. Current
-qualification records are trusted local evidence. Durable OCI retention, producer
-admission, and finer backend/qualification invalidation are not implemented yet.
+Phase 3's Actions handoff is implemented on the index's companion
+`refactor/package-ci` branch at `2f09341`. It incorporates the existing workflow
+deduplication draft without changing the original checkout's staged files. The
+index pins engine commit `4aa5864511bdfef3d21ab13fc86386d8b2d882a2`; that engine
+commit must be available remotely before the index integration can run.
+
+Platform jobs emit Forge's plan and retain per-attempt checkpoints for 14 days,
+including successful qualification and compilation results after another package
+fails. Retries select only earlier attempts of the same run, verify GitHub's
+artifact digest and producer/environment metadata, and restore regular files
+through constrained paths. Forge remains responsible for result compatibility and
+content checks. Explicit rechecks discard baseline result entries before restoring
+their own run's completed work. Publication now calls `verify-bundle`; promotion
+also compares helper-script trees when establishing equivalent workflow inputs.
+
+Validation: 18 index tests pass, including a real two-package Forge export with a
+transient failure, complete cache loss, checkpoint restoration, and a retry that
+rebuilds only the failed package while retaining the successful receipt.
+Actionlint passes. No production recipes changed, branches were pushed, or catalog
+CI runs were started. Live Actions retry validation is still pending deployment.
+
+This is temporary same-run retention, not durable OCI storage or cross-run
+producer admission. Cancellation before checkpoint upload still loses that
+attempt's latest results. OCI retention, producer admission, and finer
+backend/qualification invalidation remain the next phases.
 
 ## Recommendation
 
