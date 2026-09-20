@@ -5,6 +5,9 @@ pub use rootbeer_build::{
 };
 pub use rootbeer_package::*;
 mod bundle;
+mod checks;
+mod prepare;
+pub use prepare::prepare_package;
 mod export;
 mod package_plan;
 mod publication;

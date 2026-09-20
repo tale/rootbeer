@@ -17,7 +17,7 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Plan exact dependency-free source packages for this machine
+    /// Plan exact dependency-free packages for this machine
     PackagePlan {
         #[arg(required = true)]
         packages: Vec<String>,
@@ -36,7 +36,7 @@ enum Command {
         #[arg(long)]
         public_key: String,
     },
-    /// Approve one source build and prepare its signed package release
+    /// Approve one qualified package and prepare its signed package release
     Release {
         /// This package's existing Lua definition
         #[arg(long)]
@@ -230,8 +230,9 @@ enum Command {
     },
     /// Inspect the dependency graph without executing builds
     Plan { name: String },
-    /// Compile a trusted source recipe into an installable local artifact
-    Build {
+    /// Prepare a source or upstream binary recipe as an installable local artifact
+    #[command(visible_alias = "build")]
+    Prepare {
         name: String,
         /// Fail before building if this machine differs from the work plan
         #[arg(long, requires = "cache_context")]
@@ -716,7 +717,7 @@ fn execute(args: Args) -> Result<(), String> {
             )
             .map_err(|error| error.to_string())?;
         }
-        Command::Build {
+        Command::Prepare {
             name,
             input_key,
             environment,
@@ -748,7 +749,7 @@ fn execute(args: Args) -> Result<(), String> {
                 context: cache_context.unwrap(),
                 recheck,
             });
-            let artifact = rootbeer_packaging::build_package(
+            let artifact = rootbeer_packaging::prepare_package(
                 catalog()?,
                 &name,
                 &destination,
@@ -763,11 +764,10 @@ fn execute(args: Args) -> Result<(), String> {
             )?;
             writeln!(
                 output,
-                "built {} for {}\nartifact: {}\ninstall: rb apply --script {}",
-                artifact.package.id(),
-                artifact.system,
-                destination.join("package.tar.gz").display(),
-                destination.join("install.lua").display()
+                "prepared {} for {}\nartifact: {}",
+                artifact.id(),
+                rootbeer_packaging::ResolveContext::current().system,
+                destination.join("package.tar.gz").display()
             )
             .map_err(|e| e.to_string())?;
         }

@@ -2,13 +2,13 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use rootbeer_package::distribution::{BuildProvenance, PackageRecord};
+use rootbeer_package::distribution::{BuildProvenance, PackageProvenance, PackageRecord};
 use rootbeer_package::{
-    BuildArtifact, CatalogPackage, LockedSource, PackageCatalog, PackageRealizer,
+    BuildArtifact, CatalogPackage, CatalogRecipe, LockedSource, PackageCatalog, PackageRealizer,
 };
 use rootbeer_store::{hash_bytes, Store};
 
-/// Verifies and signs one source build. The caller must trust the receipt's producer.
+/// Verifies and signs one qualified package. The caller must trust the receipt's producer.
 /// The destination contains only this package's archive, receipt, and signed record.
 pub fn release_package(
     definition: &CatalogPackage,
@@ -21,19 +21,74 @@ pub fn release_package(
 ) -> Result<String, String> {
     rootbeer_package::ghcr::validate_repository(registry)?;
     let receipt_bytes = fs::read(receipt).map_err(|error| error.to_string())?;
-    let build: BuildArtifact =
+    #[derive(serde::Deserialize)]
+    struct Identity {
+        package: rootbeer_package::LockedPackage,
+    }
+    let identity: Identity =
         serde_json::from_slice(&receipt_bytes).map_err(|error| error.to_string())?;
+    let recipe = definition
+        .versions
+        .get(&identity.package.version)
+        .ok_or("no matching package recipe")?;
+    if definition.name != identity.package.name {
+        return Err("receipt belongs to a different package".into());
+    }
+    let staging = crate::publication::staging(output)?;
+    let destination = staging.path().join("release");
+    fs::create_dir(&destination).map_err(|error| error.to_string())?;
+    let realizer = PackageRealizer::with_dirs(
+        Store::new(staging.path().join("store")),
+        staging.path().join("downloads"),
+        staging.path().join("install"),
+    );
+    let record = if recipe.build.is_some() {
+        prepare_source(
+            definition,
+            recipe,
+            receipt,
+            &receipt_bytes,
+            registry,
+            &destination,
+            &realizer,
+        )?
+    } else {
+        prepare_binary(
+            recipe,
+            receipt,
+            &receipt_bytes,
+            registry,
+            &destination,
+            &realizer,
+        )?
+    };
+    if expected_inputs.is_some_and(|expected| record.input_key() != expected) {
+        return Err("receipt differs from the planned package inputs".into());
+    }
+    let signed = crate::sign_package_record(&record, key_der, public_key)?;
+    let digest = hash_bytes(&signed);
+    fs::write(destination.join("package.json"), signed).map_err(|error| error.to_string())?;
+    fs::write(destination.join("receipt.json"), receipt_bytes)
+        .map_err(|error| error.to_string())?;
+    fs::rename(destination, output).map_err(|error| error.to_string())?;
+    Ok(format!("ghcr://{registry}@sha256:{digest}"))
+}
+
+fn prepare_source(
+    definition: &CatalogPackage,
+    recipe: &CatalogRecipe,
+    receipt: &Path,
+    receipt_bytes: &[u8],
+    registry: &str,
+    destination: &Path,
+    realizer: &PackageRealizer,
+) -> Result<PackageRecord, String> {
+    fs::create_dir(destination.join("artifacts")).map_err(|error| error.to_string())?;
+    let build: BuildArtifact =
+        serde_json::from_slice(receipt_bytes).map_err(|error| error.to_string())?;
     if !build.dependencies.is_empty() || !build.package.runtime_dependencies.is_empty() {
         return Err("release supports dependency-free packages only".into());
     }
-    if definition.name != build.package.name {
-        return Err("build receipt belongs to a different package".into());
-    }
-    let recipe = definition
-        .versions
-        .get(&build.package.version)
-        .ok_or("no matching package recipe")?
-        .clone();
     let provenance = BuildProvenance {
         engine_sha256: rootbeer_build::engine_identity(Some(&build.build.backend)),
         environment_sha256: build
@@ -50,15 +105,6 @@ pub fn release_package(
             .runtime_audit_sha256
             .ok_or("build receipt has no runtime audit")?,
     };
-    let staging = crate::publication::staging(output)?;
-    let destination = staging.path().join("release");
-    fs::create_dir(&destination).map_err(|error| error.to_string())?;
-    fs::create_dir(destination.join("artifacts")).map_err(|error| error.to_string())?;
-    let realizer = PackageRealizer::with_dirs(
-        Store::new(staging.path().join("store")),
-        staging.path().join("downloads"),
-        staging.path().join("install"),
-    );
     let catalog = PackageCatalog {
         schema: 1,
         packages: std::collections::BTreeMap::from([(definition.name.clone(), definition.clone())]),
@@ -67,8 +113,8 @@ pub fn release_package(
         &catalog,
         receipt,
         &format!("ghcr://{registry}"),
-        &destination,
-        &realizer,
+        destination,
+        realizer,
     )?;
     if checked_receipt != receipt_bytes {
         return Err("build receipt changed during release".into());
@@ -84,23 +130,73 @@ pub fn release_package(
     )
     .map_err(|error| error.to_string())?;
     fs::remove_dir(destination.join("artifacts")).map_err(|error| error.to_string())?;
-    let record = PackageRecord {
+    Ok(PackageRecord {
         schema: 1,
         system,
-        recipe,
+        recipe: recipe.clone(),
         artifact,
-        provenance,
-    };
-    if expected_inputs.is_some_and(|expected| record.input_key() != expected) {
-        return Err("build receipt differs from the planned package inputs".into());
+        provenance: PackageProvenance::Source(Box::new(provenance)),
+    })
+}
+
+fn prepare_binary(
+    recipe: &CatalogRecipe,
+    receipt_path: &Path,
+    receipt_bytes: &[u8],
+    registry: &str,
+    destination: &Path,
+    realizer: &PackageRealizer,
+) -> Result<PackageRecord, String> {
+    let receipt: crate::prepare::BinaryReceipt =
+        serde_json::from_slice(receipt_bytes).map_err(|error| error.to_string())?;
+    if receipt.schema != 1
+        || receipt.recipe_sha256 != recipe.sha256()
+        || receipt.provenance.engine_sha256 != rootbeer_build::engine_identity(None)
+    {
+        return Err("binary receipt does not match the approved recipe or engine".into());
     }
-    let signed = crate::sign_package_record(&record, key_der, public_key)?;
-    let digest = hash_bytes(&signed);
-    fs::write(destination.join("package.json"), signed).map_err(|error| error.to_string())?;
-    fs::write(destination.join("receipt.json"), checked_receipt)
+    let LockedSource::File { sha256, .. } = &receipt.package.source else {
+        return Err("binary receipt requires a local package archive".into());
+    };
+    let sha256 = sha256.clone();
+    let archive = destination.join("package.tar.gz");
+    fs::copy(
+        receipt_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("package.tar.gz"),
+        &archive,
+    )
+    .map_err(|error| error.to_string())?;
+    if rootbeer_store::hash_file(&archive).map_err(|error| error.to_string())? != sha256 {
+        return Err("binary archive hash mismatch".into());
+    }
+    let mut package = receipt.package;
+    package.source = LockedSource::Url {
+        url: format!("ghcr://{registry}@sha256:{sha256}"),
+        sha256: sha256.clone(),
+    };
+    let record = PackageRecord {
+        schema: 1,
+        system: receipt.system,
+        recipe: recipe.clone(),
+        artifact: rootbeer_package::PublishedArtifact {
+            revision: recipe.revision,
+            receipt_sha256: hash_bytes(receipt_bytes),
+            package,
+        },
+        provenance: PackageProvenance::Upstream(Box::new(receipt.provenance)),
+    };
+    record.validate()?;
+    let mut local = record.artifact.package.clone();
+    local.source = LockedSource::File {
+        path: archive,
+        sha256,
+    };
+    realizer
+        .realize(&local)
         .map_err(|error| error.to_string())?;
-    fs::rename(destination, output).map_err(|error| error.to_string())?;
-    Ok(format!("ghcr://{registry}@sha256:{digest}"))
+    Ok(record)
 }
 
 /// Uploads a verified package release as an OCI artifact, retaining all three blobs together.
