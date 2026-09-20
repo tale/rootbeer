@@ -19,7 +19,7 @@ pub use publication::{
 };
 
 mod sign;
-pub use sign::sign_index;
+pub use sign::{sign_index, sign_package_record};
 
 pub mod upstream;
 pub use upstream::{
