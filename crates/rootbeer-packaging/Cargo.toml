@@ -15,8 +15,12 @@ rootbeer-package = { path = "../rootbeer-package" }
 rootbeer-build = { path = "../rootbeer-build" }
 ureq = "3"
 [dev-dependencies]
+syn = { version = "2", features = ["full"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 flate2 = "1"
 tar = "0.4"
 
 [build-dependencies]
+syn = { version = "2", features = ["full"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 sha2 = "0.10"

@@ -70,6 +70,12 @@ impl PackageRealizer {
         }
     }
 
+    /// Shares cancellation and the download deadline with the caller.
+    pub fn with_execution(mut self, execution: crate::Execution) -> Self {
+        self.downloads = self.downloads.with_execution(execution);
+        self
+    }
+
     /// Whether every pinned output in this package's runtime closure is present.
     /// This does not verify contents; callers must still realize the package.
     pub fn is_cached(&self, package: &LockedPackage) -> io::Result<bool> {

@@ -40,6 +40,7 @@ impl BuildCache {
         &self,
         key: String,
         session: Option<&BuildSession>,
+        execution: &rootbeer_package::Execution,
     ) -> Result<Entry, String> {
         if self.context.trim().is_empty() {
             return Err(
@@ -53,7 +54,16 @@ impl BuildCache {
             .write(true)
             .open(self.directory.join("locks").join(&key))
             .map_err(|error| error.to_string())?;
-        lock.lock().map_err(|error| error.to_string())?;
+        loop {
+            execution.check().map_err(|error| error.to_string())?;
+            match lock.try_lock() {
+                Ok(()) => break,
+                Err(fs::TryLockError::WouldBlock) => {
+                    std::thread::sleep(std::time::Duration::from_millis(50))
+                }
+                Err(fs::TryLockError::Error(error)) => return Err(error.to_string()),
+            }
+        }
         let directory = self.directory.join("results").join(&key);
         let is_completed =
             session.is_some_and(|session| session.completed.lock().unwrap().contains(&directory));
@@ -272,13 +282,33 @@ mod tests {
             recheck: true,
         };
         let session = BuildSession::default();
-        let first = cache.entry("same".into(), Some(&session)).unwrap();
+        let first = cache
+            .entry(
+                "same".into(),
+                Some(&session),
+                &rootbeer_package::Execution::default(),
+            )
+            .unwrap();
         assert!(first.should_rebuild);
+        let deadline =
+            rootbeer_package::Execution::with_timeout(std::time::Duration::from_millis(50))
+                .unwrap();
+        assert!(cache
+            .entry("same".into(), Some(&session), &deadline)
+            .err()
+            .unwrap()
+            .contains("deadline"));
         let (started, started_receiver) = std::sync::mpsc::channel();
         let (acquired, acquired_receiver) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || {
             started.send(()).unwrap();
-            let second = cache.entry("same".into(), Some(&session)).unwrap();
+            let second = cache
+                .entry(
+                    "same".into(),
+                    Some(&session),
+                    &rootbeer_package::Execution::default(),
+                )
+                .unwrap();
             assert!(!second.should_rebuild);
             acquired.send(()).unwrap();
         });

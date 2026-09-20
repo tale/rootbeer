@@ -1,3 +1,4 @@
+use rootbeer_package::Execution;
 use std::os::unix::process::CommandExt;
 use std::{
     collections::BTreeMap,
@@ -26,6 +27,28 @@ pub fn run_with_sandbox(
     timeout: Duration,
     sandbox: Option<&crate::Sandbox>,
 ) -> Result<(), String> {
+    run_with_execution(
+        args,
+        source,
+        environment,
+        log,
+        timeout,
+        sandbox,
+        &Execution::default(),
+    )
+}
+
+/// Runs a command within the caller’s cancellation and wall-clock budget.
+pub fn run_with_execution(
+    args: &[String],
+    source: &Path,
+    environment: &BTreeMap<&str, String>,
+    log: &Path,
+    timeout: Duration,
+    sandbox: Option<&crate::Sandbox>,
+    execution: &Execution,
+) -> Result<(), String> {
+    execution.check().map_err(|error| error.to_string())?;
     if args.is_empty() || args[0].is_empty() {
         return Err("build command cannot be empty".into());
     }
@@ -47,29 +70,32 @@ pub fn run_with_sandbox(
     if sandbox.is_none() {
         command.envs(environment);
     }
-    let mut child = command
-        .current_dir(source)
-        .stdin(Stdio::null())
-        .stdout(file.try_clone().map_err(|e| e.to_string())?)
-        .stderr(file)
-        .process_group(0)
-        .spawn()
-        .map_err(|error| {
-            format!(
-                "cannot start build command {} in {}: {error}; see {}",
-                args[0],
-                source.display(),
-                log.display()
-            )
-        })?;
+    let mut child = Process {
+        child: command
+            .current_dir(source)
+            .stdin(Stdio::null())
+            .stdout(file.try_clone().map_err(|e| e.to_string())?)
+            .stderr(file)
+            .process_group(0)
+            .spawn()
+            .map_err(|error| {
+                format!(
+                    "cannot start build command {} in {}: {error}; see {}",
+                    args[0],
+                    source.display(),
+                    log.display()
+                )
+            })?,
+        is_stopped: false,
+    };
     let start = Instant::now();
     loop {
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            if sandbox.is_some() {
-                unsafe {
-                    libc::kill(-(child.id() as i32), libc::SIGKILL);
-                }
-            }
+        if let Err(error) = execution.check() {
+            child.stop().map_err(|error| error.to_string())?;
+            return Err(error.to_string());
+        }
+        if let Some(status) = child.child.try_wait().map_err(|e| e.to_string())? {
+            child.stop().map_err(|error| error.to_string())?;
             if status.success() {
                 return Ok(());
             }
@@ -80,15 +106,40 @@ pub fn run_with_sandbox(
             ));
         }
         if start.elapsed() > timeout {
-            unsafe {
-                libc::kill(-(child.id() as i32), libc::SIGKILL);
-            }
-            let _ = child.wait();
+            child.stop().map_err(|error| error.to_string())?;
             return Err(format!(
                 "build step exceeded its time limit; see {}",
                 log.display()
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+struct Process {
+    child: std::process::Child,
+    is_stopped: bool,
+}
+
+impl Process {
+    fn stop(&mut self) -> std::io::Result<()> {
+        if self.is_stopped {
+            return Ok(());
+        }
+        if unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(error);
+            }
+        }
+        self.child.wait()?;
+        self.is_stopped = true;
+        Ok(())
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = self.stop();
     }
 }

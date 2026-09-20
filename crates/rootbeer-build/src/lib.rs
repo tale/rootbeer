@@ -15,7 +15,7 @@ mod runner;
 mod sandbox;
 pub mod scheduler;
 pub use archive::pack;
-pub use runner::{run, run_with_sandbox};
+pub use runner::{run, run_with_execution, run_with_sandbox};
 pub use sandbox::Sandbox;
 
 use std::collections::BTreeMap;
@@ -63,6 +63,7 @@ pub struct BuildOptions {
     pub cache: Option<BuildCache>,
     pub session: Option<BuildSession>,
     pub phase_timeout: Duration,
+    pub execution: Execution,
 }
 
 impl Default for BuildOptions {
@@ -75,6 +76,7 @@ impl Default for BuildOptions {
             cache: None,
             session: None,
             phase_timeout: Duration::from_secs(1200),
+            execution: Execution::default(),
         }
     }
 }
@@ -134,6 +136,7 @@ impl BuildOptions {
     }
 
     fn validate(&self) -> Result<(), String> {
+        self.execution.check().map_err(|error| error.to_string())?;
         if self.is_isolated && self.environment.is_none() {
             return Err("isolated builds require a pinned environment".into());
         }
@@ -187,7 +190,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
         .then(|| Sandbox::new(&environment.lock, [], probe.path()))
         .transpose()?;
     if let Some(sandbox) = &probe_sandbox {
-        run_with_sandbox(
+        run_with_execution(
             &[
                 environment.lock.tools["sh"]
                     .path
@@ -201,6 +204,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
             &output.join("sandbox.log"),
             Duration::from_secs(10),
             Some(sandbox),
+            &opts.execution,
         )
         .map_err(|error| format!("build isolation is unavailable: {error}"))?;
     }
@@ -213,12 +217,14 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
         Store::new(store),
         &opts.downloads,
         workspace.path().join("install"),
-    );
+    )
+    .with_execution(opts.execution.clone());
     let mut resolved = BTreeMap::<String, LockedPackage>::new();
     let mut dependency_bins = BTreeMap::new();
     let mut dependency_roots = BTreeMap::<String, PathBuf>::new();
     let mut root_artifact = None;
     for (index, key) in graph.order.iter().enumerate() {
+        opts.execution.check().map_err(|error| error.to_string())?;
         let recipe = &plan.recipes[key];
         let is_root = index + 1 == graph.order.len();
         let mut built = None;
@@ -280,7 +286,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
                         &identity,
                         &graph.nodes[key].exports,
                     )?;
-                    cache.entry(key, opts.session.as_ref())
+                    cache.entry(key, opts.session.as_ref(), &opts.execution)
                 })
                 .transpose()?;
             let restored = cache_entry
@@ -348,13 +354,14 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
         for check in &recipe.checks {
             let mut args = check.clone();
             args[0] = realized.bins[&check[0]].to_string_lossy().into_owned();
-            run_with_sandbox(
+            run_with_execution(
                 &args,
                 check_workspace.path(),
                 &check_environment,
                 &output.join("checks.log"),
                 Duration::from_secs(30),
                 check_sandbox.as_ref(),
+                &opts.execution,
             )?;
         }
         if let Some(artifact) = built {
@@ -401,7 +408,7 @@ fn compile(
         .as_ref()
         .ok_or("build plan must contain exact versions")?;
     let build = recipe.build.as_ref().ok_or("recipe has no source build")?;
-    let downloads = DownloadCache::new(&opts.downloads);
+    let downloads = DownloadCache::new(&opts.downloads).with_execution(opts.execution.clone());
     let archive = downloads
         .materialize_verified(&build.url, &build.sha256)
         .map_err(|e| e.to_string())?;
@@ -493,13 +500,14 @@ fn compile(
     };
     for (index, (name, argument)) in compiler_tools.into_iter().enumerate() {
         let log = output.join(format!("tool-{index}.log"));
-        run_with_sandbox(
+        run_with_execution(
             &[name.into(), argument.into()],
             &source,
             &environment,
             &log,
             opts.phase_timeout,
             sandbox.as_ref(),
+            &opts.execution,
         )?;
         toolchain.insert(
             name.into(),
@@ -513,7 +521,7 @@ fn compile(
     for (index, patch) in build.patches.iter().enumerate() {
         let path = workspace_path.join(format!("patch-{index}.diff"));
         fs::write(&path, patch).map_err(|e| e.to_string())?;
-        run_with_sandbox(
+        run_with_execution(
             &[
                 build_environment.lock.tools["patch"]
                     .path
@@ -529,6 +537,7 @@ fn compile(
             &log,
             Duration::from_secs(30),
             sandbox.as_ref(),
+            &opts.execution,
         )?;
     }
     fs::create_dir_all(workspace_path.join("zig-global-cache/tmp")).map_err(|e| e.to_string())?;
@@ -568,13 +577,14 @@ fn compile(
             sandbox.as_ref()
         };
         for command in phase.commands {
-            if let Err(error) = run_with_sandbox(
+            if let Err(error) = run_with_execution(
                 &command,
                 &source,
                 &environment,
                 &log,
                 opts.phase_timeout,
                 phase_sandbox,
+                &opts.execution,
             ) {
                 let retained = workspace.keep();
                 return Err(format!(

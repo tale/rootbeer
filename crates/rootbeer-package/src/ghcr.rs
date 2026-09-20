@@ -27,10 +27,24 @@ impl GhcrBlob {
     }
 
     pub fn reader(&self) -> io::Result<Box<dyn Read>> {
+        self.reader_with_execution(&crate::Execution::default())
+    }
+
+    pub(crate) fn reader_with_execution(
+        &self,
+        execution: &crate::Execution,
+    ) -> io::Result<Box<dyn Read>> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .https_only(true)
+            .timeout_resolve(Some(Duration::from_secs(30)))
+            .timeout_connect(Some(Duration::from_secs(30)))
+            .timeout_send_request(Some(Duration::from_secs(30)))
+            .timeout_recv_response(Some(Duration::from_secs(30)))
+            .timeout_recv_body(Some(Duration::from_secs(30)))
             .redirect_auth_headers(ureq::config::RedirectAuthHeaders::Never)
-            .timeout_global(Some(Duration::from_secs(300)))
+            .timeout_global(Some(
+                execution.remaining()?.unwrap_or(Duration::from_secs(300)),
+            ))
             .build()
             .into();
         let mut response = agent
@@ -50,9 +64,15 @@ impl GhcrBlob {
             "https://ghcr.io/v2/{}/blobs/sha256:{}",
             self.repository, self.sha256
         );
+        execution.check()?;
         let (_, body) = agent
             .get(&url)
             .header("Authorization", format!("Bearer {token}"))
+            .config()
+            .timeout_global(Some(
+                execution.remaining()?.unwrap_or(Duration::from_secs(300)),
+            ))
+            .build()
             .call()
             .map_err(|e| io::Error::other(format!("cannot fetch public GHCR blob: {e}")))?
             .into_parts();

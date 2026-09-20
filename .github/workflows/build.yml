@@ -7,6 +7,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   check:
     name: Check (${{ matrix.name }})
@@ -50,7 +53,7 @@ jobs:
         run: cargo clippy --all-targets --target ${{ matrix.target }} -- -D warnings
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Install Linux sandbox
         if: runner.os == 'Linux'
@@ -63,3 +66,44 @@ jobs:
 
       - name: Test
         run: cargo test
+
+      - name: Retain tested Forge binary
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir forge
+          cp target/${{ matrix.target }}/release/rootbeer-forge forge/rootbeer-forge-${{ matrix.target }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: forge-${{ matrix.target }}
+          overwrite: true
+          path: forge/
+          if-no-files-found: error
+
+  forge:
+    name: Publish Forge binaries
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: forge-*
+          path: forge
+          merge-multiple: true
+      - name: Attest tested binaries
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: forge/*
+          create-storage-record: false
+      - name: Publish commit-pinned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish-forge.py

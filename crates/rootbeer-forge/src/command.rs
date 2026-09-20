@@ -52,6 +52,9 @@ enum Command {
     },
     /// Build, check, and export the current platform's package recipes
     Export {
+        /// Maximum wall-clock seconds; completed qualifications remain reusable
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        timeout: Option<u64>,
         /// Write a JSON reuse plan to --output without executing packages
         #[arg(long)]
         plan: bool,
@@ -355,6 +358,7 @@ fn execute(args: Args) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         }
         Command::Export {
+            timeout,
             plan,
             environment,
             isolate,
@@ -373,7 +377,23 @@ fn execute(args: Args) -> Result<(), String> {
                 context: cache_context.unwrap(),
                 recheck,
             });
+            let execution = timeout
+                .map(|seconds| {
+                    rootbeer_packaging::Execution::with_timeout(std::time::Duration::from_secs(
+                        seconds,
+                    ))
+                })
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .unwrap_or_default();
+            if !plan {
+                for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+                    signal_hook::flag::register(signal, execution.cancellation_flag())
+                        .map_err(|error| error.to_string())?;
+                }
+            }
             let options = rootbeer_packaging::BuildOptions {
+                execution,
                 jobs,
                 environment: read_environment(environment)?,
                 is_isolated: isolate,
