@@ -60,6 +60,9 @@ impl RecipeDefinition {
         self.outputs.apps = (!upstream.apps.is_empty()).then_some(upstream.apps);
         self.outputs.checks = Some(upstream.checks);
         if let Some(build) = &upstream.build {
+            if let Some(settings) = &mut self.build {
+                settings.go = build.go.clone();
+            }
             let input = self
                 .inputs
                 .source
@@ -161,6 +164,7 @@ fn split(recipe: &CatalogRecipe) -> Result<(Inputs, Option<Build>, Outputs), Str
             Some(Build {
                 backend: build.backend.clone(),
                 rust: build.rust.clone(),
+                go: build.go.clone(),
                 configure: build.configure.clone(),
                 args: build.args.clone(),
                 dependencies: build.dependencies.clone(),

@@ -4,6 +4,7 @@ use rootbeer_package::{BuildBackend, SourceBuild};
 
 mod autotools;
 mod custom;
+mod go;
 mod rust;
 mod zig;
 
@@ -47,6 +48,7 @@ pub fn plan(build: &SourceBuild, context: &Context<'_>) -> Result<Vec<Phase>, St
         BuildBackend::Autotools => Ok(autotools::plan(&build.configure, context)),
         BuildBackend::Custom => custom::plan(build.steps.as_ref(), context),
         BuildBackend::Zig => zig::plan(&build.args, context),
+        BuildBackend::Go => go::plan(build.go.as_ref().ok_or("missing Go settings")?, context),
         BuildBackend::Rust => {
             rust::plan(build.rust.as_ref().ok_or("missing Rust settings")?, context)
         }

@@ -11,6 +11,7 @@ pub enum BuildBackend {
     Custom,
     Zig,
     Rust,
+    Go,
 }
 
 /// Which exports a dependency contributes to its consumer's build environment.
@@ -88,6 +89,8 @@ pub struct SourceBuild {
     pub backend: BuildBackend,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rust: Option<RustBuild>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go: Option<GoBuild>,
     pub url: String,
     pub sha256: String,
     #[serde(
@@ -109,6 +112,81 @@ pub struct SourceBuild {
     pub libraries: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steps: Option<BuildSteps>,
+}
+
+/// Go binary entry points and compile-time inputs within a locked module.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoBuild {
+    pub binaries: BTreeMap<String, String>,
+    #[serde(default)]
+    pub generate: Vec<String>,
+    #[serde(default)]
+    pub experiments: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub variables: BTreeMap<String, String>,
+    #[serde(default, rename = "cgo")]
+    pub is_cgo_enabled: bool,
+}
+
+impl GoBuild {
+    fn validate(&self) -> Result<(), String> {
+        let is_package = |package: &str| {
+            package == "."
+                || package.strip_prefix("./").is_some_and(|path| {
+                    !path.is_empty()
+                        && path.split('/').all(|part| {
+                            !part.is_empty()
+                                && part != "."
+                                && part != ".."
+                                && part.bytes().all(|byte| {
+                                    byte.is_ascii_alphanumeric() || b"_-".contains(&byte)
+                                })
+                        })
+                })
+        };
+        if self.binaries.is_empty() {
+            return Err("Go builds require explicit binary entry points".into());
+        }
+        for (name, package) in &self.binaries {
+            if name.is_empty()
+                || name == "."
+                || name == ".."
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-+.".contains(&byte))
+                || !is_package(package)
+            {
+                return Err("Go binaries require simple names and local package paths".into());
+            }
+        }
+        if self.generate.iter().any(|package| !is_package(package)) {
+            return Err("Go generators require explicit local package paths".into());
+        }
+        if self.tags.iter().chain(&self.experiments).any(|tag| {
+            tag.is_empty()
+                || !tag
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_.".contains(&byte))
+        }) {
+            return Err("invalid Go build tag or experiment".into());
+        }
+        for (name, value) in &self.variables {
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_./-".contains(&byte))
+                || value
+                    .chars()
+                    .any(|ch| ch.is_control() || matches!(ch, '\'' | '"'))
+            {
+                return Err("invalid Go linker variable".into());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Cargo workspace selection and compile-time inputs for Rust binaries.
@@ -270,6 +348,15 @@ impl SourceBuild {
             rust.validate()?;
             if !self.configure.is_empty() || !self.args.is_empty() || !self.libraries.is_empty() {
                 return Err("Rust builds use rust settings and export binaries".into());
+            }
+        }
+        if matches!(self.backend, BuildBackend::Go) != self.go.is_some() {
+            return Err("go settings are required only for the Go backend".into());
+        }
+        if let Some(go) = &self.go {
+            go.validate()?;
+            if !self.configure.is_empty() || !self.args.is_empty() || !self.libraries.is_empty() {
+                return Err("Go builds use go settings and export binaries".into());
             }
         }
         if matches!(self.backend, BuildBackend::Custom) != self.steps.is_some() {

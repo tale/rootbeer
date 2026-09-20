@@ -190,7 +190,9 @@ impl ArtifactIndex {
                         || recipe.build.as_ref().is_some_and(|build| {
                             matches!(
                                 build.backend,
-                                super::BuildBackend::Zig | super::BuildBackend::Rust
+                                super::BuildBackend::Zig
+                                    | super::BuildBackend::Rust
+                                    | super::BuildBackend::Go
                             ) || !build.args.is_empty()
                                 || !build.patches.is_empty()
                         })

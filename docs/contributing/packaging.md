@@ -33,6 +33,38 @@ hashes. The caller-supplied host identity also remains part of the key.
 Checks, job allocation, archive paths, unrelated catalog entries, and publication destinations do not
 change build keys. Receipts retain the key, environment lock, and host identity.
 
+### Go source builds
+
+Use `backend = "go"` with explicit binary entry points:
+
+```lua
+build = {
+    backend = "go",
+    go = {
+        binaries = { tool = "./cmd/tool" },
+        variables = { ["main.version"] = "v{version}" },
+        tags = { "netgo" },
+    },
+},
+```
+
+`binaries` must match `outputs.bins`. Linker `variables` accept `{version}` and
+`{tag}`; discovery expands them for each release. CGO is disabled unless `cgo = true`.
+The source archive must contain `go.mod` and `go.sum`. Fetch vendors dependencies
+and verifies their checksums, rejecting changes to either module file. Build and
+`go vet` use that vendor tree with module downloads disabled, followed by the
+recipe's executable checks. `generate` selects local packages whose `go generate` directives run offline
+before compilation; generator dependencies must already be vendored or declared
+build dependencies. `experiments` explicitly selects `GOEXPERIMENT` values.
+Projects requiring frontend assets must provide them in the verified source or
+use an explicit build recipe.
+
+Host builds hash the installed Go compiler and its complete toolchain directory.
+Explicit environments must declare `tools.go` and `inputs.go-toolchain` pointing
+to that compiler's GOROOT. Rootbeer disables automatic toolchain downloads,
+workspace discovery, and user Go configuration. The toolchain and source hashes
+are retained in the normal build receipt.
+
 ### Pinning a build environment
 
 Write an environment specification with absolute executable paths in `tools`,
@@ -629,6 +661,14 @@ are excluded from source fingerprints. Other production source bytes remain exac
 inputs, separate from the commands and environment that produce package bytes.
 CLI/docs changes do not change package identities. The scoped identity introduces
 new cache keys; old evidence is retained but never silently relabeled as compatible.
+
+An additive backend integration can retain predecessor qualifications through
+`scripts/cache-compatibility`. Each record binds exact current shared source
+digests to reviewed predecessor digests; a subsequent source change disables it.
+The Go integration permits only existing non-Go backend closures, with identical
+recipes, dependencies, environments, and artifact integrity checks. Reuse preserves
+the original qualification, engine identity, and receipt. Newly built artifacts
+always use the current identity; explicit rechecks bypass predecessor reuse.
 
 Changing only checks reruns qualification against cached build outputs. Changing
 the recipe revision still invalidates compilation. Changed dependency recipes

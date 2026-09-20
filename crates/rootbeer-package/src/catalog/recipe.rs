@@ -77,6 +77,16 @@ impl CatalogRecipe {
         }
         if let Some(build) = &self.build {
             build.validate()?;
+            if let Some(go) = &build.go {
+                if go
+                    .binaries
+                    .keys()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    != self.bins.iter().collect()
+                {
+                    return Err("Go entry points must match exported binaries".into());
+                }
+            }
         }
         if let Some(source) = &self.source {
             let request = PackageRequest::parse(source);

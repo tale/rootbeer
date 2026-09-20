@@ -16,7 +16,7 @@ fn collect(directory: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
     Ok(())
 }
 
-const BACKENDS: &[&str] = &["autotools", "custom", "rust", "zig"];
+const BACKENDS: &[&str] = &["autotools", "custom", "go", "rust", "zig"];
 
 fn is_backend(path: &Path) -> bool {
     BACKENDS
@@ -177,6 +177,38 @@ fn is_test_module(item: &syn::Item) -> bool {
     }))
 }
 
+fn compatible_identity(workspace: &Path, identity: &str) -> std::io::Result<String> {
+    let path = workspace.join("scripts/cache-compatibility");
+    let records = match fs::read_to_string(path) {
+        Ok(records) => records,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(error) => return Err(error),
+    };
+    let mut result = String::new();
+    let mut seen = BTreeSet::new();
+    for line in records
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+    {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        if fields.len() != 2
+            || fields.iter().any(|field| {
+                field.len() != 64
+                    || !field
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+            || !seen.insert(fields[0])
+        {
+            return Err(std::io::Error::other("invalid cache compatibility record"));
+        }
+        if fields[0] == identity {
+            result = fields[1].into();
+        }
+    }
+    Ok(result)
+}
+
 #[cfg(not(test))]
 pub fn emit(crates: &[&str]) {
     let directory = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -192,6 +224,13 @@ pub fn emit(crates: &[&str]) {
     }
     let identity = fingerprint(workspace, crates).expect("cannot fingerprint engine inputs");
     println!("cargo:rustc-env=ROOTBEER_ENGINE_IDENTITY={identity}");
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace.join("scripts/cache-compatibility").display()
+    );
+    let compatible =
+        compatible_identity(workspace, &identity).expect("cannot read cache compatibility");
+    println!("cargo:rustc-env=ROOTBEER_COMPATIBLE_ENGINE_IDENTITY={compatible}");
     if crates.contains(&"rootbeer-build") {
         for name in BACKENDS {
             let path = workspace.join(format!("crates/rootbeer-build/src/backend/{name}.rs"));
@@ -208,6 +247,31 @@ pub fn emit(crates: &[&str]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compatibility_requires_an_exact_reviewed_source_digest() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("scripts")).unwrap();
+        let current = "a".repeat(64);
+        let previous = "b".repeat(64);
+        let path = root.path().join("scripts/cache-compatibility");
+        fs::write(&path, format!("{current} {previous}\n")).unwrap();
+        assert_eq!(
+            compatible_identity(root.path(), &current).unwrap(),
+            previous
+        );
+        assert!(compatible_identity(root.path(), &"c".repeat(64))
+            .unwrap()
+            .is_empty());
+        fs::write(
+            &path,
+            format!("{current} {previous}\n{current} {previous}\n"),
+        )
+        .unwrap();
+        assert!(compatible_identity(root.path(), &current).is_err());
+        fs::write(&path, "invalid record").unwrap();
+        assert!(compatible_identity(root.path(), &current).is_err());
+    }
 
     #[test]
     fn backend_edits_are_scoped_and_unknown_build_files_invalidate_every_backend() {
@@ -259,17 +323,22 @@ mod tests {
                 })
                 .collect::<std::collections::BTreeMap<_, _>>()
         };
-        let original = identities();
-        fs::write(
-            root.path()
-                .join("crates/rootbeer-build/src/backend/rust.rs"),
-            "pub const CHANGE: &str = \"changed Rust backend\";",
-        )
-        .unwrap();
-        let changed = identities();
-        assert_ne!(original["rust"], changed["rust"]);
-        for backend in ["autotools", "custom", "zig"] {
-            assert_eq!(original[backend], changed[backend]);
+        for selected in BACKENDS {
+            let original = identities();
+            fs::write(
+                root.path()
+                    .join(format!("crates/rootbeer-build/src/backend/{selected}.rs")),
+                format!("pub const CHANGE: &str = {selected:?};"),
+            )
+            .unwrap();
+            let changed = identities();
+            for backend in BACKENDS {
+                if backend == selected {
+                    assert_ne!(original[*backend], changed[*backend]);
+                } else {
+                    assert_eq!(original[*backend], changed[*backend]);
+                }
+            }
         }
         for name in ["lib.rs", "backend/mod.rs", "backend/new.rs", "runner.rs"] {
             let before = identities();

@@ -98,6 +98,8 @@ struct Build {
     backend: crate::BuildBackend,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rust: Option<crate::RustBuild>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    go: Option<crate::GoBuild>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     configure: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -310,6 +312,9 @@ impl RecipeDefinition {
             .expand_version(&self.default_version, &entry)?
             .build
             .ok_or("source inputs require a build")?;
+        if let Some(settings) = &self.build {
+            build.go = settings.go.clone();
+        }
         build.url = source.url.clone().ok_or("source input requires a URL")?;
         build.strip_prefix = source
             .strip_prefix
@@ -440,6 +445,20 @@ impl RecipeDefinition {
                 .ok_or("source inputs require a build")?;
             let tag = self.source_tag(version)?;
             let mut value = serde_json::to_value(build).map_err(|error| error.to_string())?;
+            if let Some(variables) = value
+                .get_mut("go")
+                .and_then(|go| go.get_mut("variables"))
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                for variable in variables.values_mut() {
+                    *variable = expand(
+                        variable.as_str().ok_or("Go variables must be strings")?,
+                        version,
+                        tag.as_deref(),
+                    )?
+                    .into();
+                }
+            }
             value["git"] = serde_json::to_value(field(&shared.git, &input.git))
                 .map_err(|error| error.to_string())?;
             value["url"] = expand(

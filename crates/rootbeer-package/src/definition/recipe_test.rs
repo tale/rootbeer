@@ -307,3 +307,52 @@ fn rust_settings_roundtrip_and_reject_builder_overrides() {
     build.rust.as_mut().unwrap().packages.clear();
     assert!(build.validate().is_err());
 }
+
+#[test]
+fn go_settings_expand_versions_roundtrip_and_reject_escaping_entry_points() {
+    let text = source()
+        .replace("backend = \"autotools\", configure = { \"--disable-shared\" }", "backend = \"go\", go = { binaries = { tool = \"./cmd/tool\" }, tags = { \"netgo\" }, variables = { [\"main.version\"] = \"v{version}\" } }")
+        .replace(", libraries = { \"lib/libtool.a\" }", "");
+    let definition = roundtrip(&PackageDefinition::from_lua(&text).unwrap());
+    assert_eq!(
+        definition.package.versions["1"]
+            .build
+            .as_ref()
+            .unwrap()
+            .go
+            .as_ref()
+            .unwrap()
+            .variables["main.version"],
+        "v1"
+    );
+    assert_eq!(
+        definition
+            .github_upstream()
+            .unwrap()
+            .unwrap()
+            .build
+            .unwrap()
+            .go
+            .unwrap()
+            .variables["main.version"],
+        "v{version}"
+    );
+    for path in [
+        "../tool",
+        "./../tool",
+        "./cmd/../../tool",
+        "-o",
+        "example.com/tool",
+        "./cmd/tool@latest",
+    ] {
+        assert!(PackageDefinition::from_lua(&text.replace("./cmd/tool", path)).is_err());
+    }
+    assert!(PackageDefinition::from_lua(
+        &text.replace("binaries = { tool =", "binaries = { other =")
+    )
+    .is_err());
+    assert!(
+        PackageDefinition::from_lua(&text.replace("backend = \"go\"", "backend = \"rust\""))
+            .is_err()
+    );
+}

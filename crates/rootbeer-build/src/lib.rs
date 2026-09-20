@@ -37,20 +37,28 @@ mod libraries_test;
 
 /// Identifies shared build behavior and the selected backend, independently of other backends.
 pub fn engine_identity(backend: Option<&BuildBackend>) -> String {
+    backend_identity(backend, env!("ROOTBEER_ENGINE_IDENTITY"))
+}
+
+/// A reviewed predecessor for unchanged backends, guarded by the exact current source digest.
+pub fn compatible_engine_identity(backend: Option<&BuildBackend>) -> Option<String> {
+    let shared = env!("ROOTBEER_COMPATIBLE_ENGINE_IDENTITY");
+    if shared.is_empty() || matches!(backend, Some(BuildBackend::Go)) {
+        return None;
+    }
+    Some(backend_identity(backend, shared))
+}
+
+fn backend_identity(backend: Option<&BuildBackend>, shared: &str) -> String {
     let implementation = match backend {
         Some(BuildBackend::Autotools) => env!("ROOTBEER_BACKEND_AUTOTOOLS"),
         Some(BuildBackend::Custom) => env!("ROOTBEER_BACKEND_CUSTOM"),
+        Some(BuildBackend::Go) => env!("ROOTBEER_BACKEND_GO"),
         Some(BuildBackend::Rust) => env!("ROOTBEER_BACKEND_RUST"),
         Some(BuildBackend::Zig) => env!("ROOTBEER_BACKEND_ZIG"),
         None => "",
     };
-    rootbeer_store::hash_bytes(
-        format!(
-            "rootbeer-engine-v2\0{}\0{implementation}",
-            env!("ROOTBEER_ENGINE_IDENTITY")
-        )
-        .as_bytes(),
-    )
+    rootbeer_store::hash_bytes(format!("rootbeer-engine-v2\0{shared}\0{implementation}").as_bytes())
 }
 
 /// Resource limits and storage locations for a build execution.
@@ -114,16 +122,22 @@ impl BuildOptions {
 
     fn resolve_environment<'a>(
         &self,
-        mut recipes: impl Iterator<Item = &'a CatalogRecipe>,
+        recipes: impl Iterator<Item = &'a CatalogRecipe>,
     ) -> Result<environment::Environment, String> {
-        let environment = environment::Environment::resolve(self.environment.as_ref())?;
-        if recipes.any(|recipe| {
-            recipe
-                .build
-                .as_ref()
-                .is_some_and(|build| matches!(build.backend, BuildBackend::Rust))
-        }) {
-            return environment.with_rust();
+        let mut environment = environment::Environment::resolve(self.environment.as_ref())?;
+        let mut has_rust = false;
+        let mut has_go = false;
+        for recipe in recipes {
+            if let Some(build) = &recipe.build {
+                has_rust |= matches!(build.backend, BuildBackend::Rust);
+                has_go |= matches!(build.backend, BuildBackend::Go);
+            }
+        }
+        if has_rust {
+            environment = environment.with_rust()?;
+        }
+        if has_go {
+            environment = environment.with_go()?;
         }
         Ok(environment)
     }
@@ -456,6 +470,49 @@ fn compile(
                 .into_owned(),
         );
     }
+    if let Some(go) = &build.go {
+        environment.extend([
+            (
+                "GOROOT",
+                build_environment.lock.inputs["go-toolchain"]
+                    .path
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            ("GOENV", "off".into()),
+            ("GO111MODULE", "on".into()),
+            ("GOWORK", "off".into()),
+            ("GOTOOLCHAIN", "local".into()),
+            ("GOFLAGS", "".into()),
+            ("GOEXPERIMENT", go.experiments.join(",")),
+            ("GOPRIVATE", "".into()),
+            ("GONOPROXY", "".into()),
+            ("GONOSUMDB", "".into()),
+            ("GOVCS", "*:off".into()),
+            (
+                "CGO_ENABLED",
+                if go.is_cgo_enabled { "1" } else { "0" }.into(),
+            ),
+            (
+                "GOPATH",
+                workspace_path.join("go").to_string_lossy().into_owned(),
+            ),
+            (
+                "GOCACHE",
+                workspace_path
+                    .join("go-cache")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            (
+                "GOMODCACHE",
+                workspace_path
+                    .join("go-modules")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        ]);
+    }
     let mut reads = vec![tools.to_path_buf(), host_tools.to_path_buf()];
     reads.extend(dependencies.keys().map(|key| dependency_roots[key].clone()));
     let sandbox = opts
@@ -472,6 +529,7 @@ fn compile(
         .into(),
     )]);
     let zig = tools.join("zig");
+    let go = host_tools.join("go");
     let compiler_tools = match build.backend {
         BuildBackend::Autotools | BuildBackend::Custom => vec![
             (environment["CC"].as_str(), "--version"),
@@ -491,6 +549,7 @@ fn compile(
                 (environment["CC"].as_str(), "--version"),
             ]
         }
+        BuildBackend::Go => vec![(go.to_str().ok_or("Go tool path must be UTF-8")?, "version")],
         BuildBackend::Zig => {
             if !zig.is_file() {
                 return Err("Zig builds require an exact catalog dependency providing zig".into());

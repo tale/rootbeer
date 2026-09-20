@@ -158,6 +158,63 @@ impl Environment {
         })
     }
 
+    pub fn with_go(mut self) -> Result<Self, String> {
+        if self.is_host {
+            let output = std::process::Command::new("go")
+                .env("GOTOOLCHAIN", "local")
+                .env("GOENV", "off")
+                .env("GOWORK", "off")
+                .env_remove("GOFLAGS")
+                .env_remove("GOEXPERIMENT")
+                .env_remove("GOROOT")
+                .args(["env", "GOROOT"])
+                .output()
+                .map_err(|error| format!("Go builds require an installed toolchain: {error}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "cannot locate Go toolchain: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            let root = PathBuf::from(
+                String::from_utf8(output.stdout)
+                    .map_err(|error| error.to_string())?
+                    .trim(),
+            )
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+            self.lock
+                .tools
+                .insert("go".into(), pin_input(&root.join("bin/go"), true)?);
+            self.lock
+                .inputs
+                .insert("go-toolchain".into(), pin_input(&root, false)?);
+        }
+        let root = self
+            .lock
+            .inputs
+            .get("go-toolchain")
+            .ok_or("Go builds require a pinned go-toolchain input")?;
+        let compiler = self
+            .lock
+            .tools
+            .get("go")
+            .ok_or("Go builds require pinned tool go")?;
+        if compiler
+            .path
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            != root
+                .path
+                .join("bin/go")
+                .canonicalize()
+                .map_err(|error| error.to_string())?
+        {
+            return Err("go must belong to the pinned Go toolchain".into());
+        }
+        Ok(self)
+    }
+
     pub fn identity(&self, context: &str) -> Result<String, String> {
         let bytes = serde_json::to_vec(&(context, self.is_host, &self.lock))
             .map_err(|error| error.to_string())?;

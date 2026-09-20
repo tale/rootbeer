@@ -313,6 +313,16 @@ pub(super) fn source_package(
         .replace("{version}", version)
         .replace("{tag}", &release.tag_name)
         .into();
+    if let Some(go) = &mut build.go {
+        for value in go.variables.values_mut() {
+            *value = value
+                .replace("{version}", version)
+                .replace("{tag}", &release.tag_name);
+            if value.contains(['{', '}']) {
+                return Err("unsupported placeholder in Go discovery template".into());
+            }
+        }
+    }
     if build.url.contains(['{', '}']) || build.strip_prefix.to_string_lossy().contains(['{', '}']) {
         return Err("unsupported placeholder in source discovery template".into());
     }
@@ -430,6 +440,66 @@ mod tests {
         ))
         .unwrap_err()
         .contains("download failed"));
+    }
+
+    #[test]
+    fn go_discovery_expands_linker_versions_and_preserves_the_template() {
+        let source = format!(
+            r#"return {{
+            schema = 2, name = "tool", description = "Tool", homepage = "https://example.com", default_version = "1",
+            systems = {{ "aarch64-macos" }},
+            upstream = {{ github = "owner/tool", repository_id = 42, tag_prefix = "v" }},
+            inputs = {{ source = {{ url = "https://example.com/tool-{{tag}}.tar.gz", archive = "tar.gz", strip_prefix = "tool-{{version}}" }} }},
+            build = {{ backend = "go", go = {{ binaries = {{ tool = "." }}, variables = {{ ["main.version"] = "{{tag}}" }} }} }},
+            outputs = {{ bins = {{ "tool" }}, checks = {{ {{ "tool", "--version" }} }} }},
+            versions = {{ ["1"] = {{ inputs = {{ source = {{ sha256 = "{}" }} }} }} }},
+        }}"#,
+            "a".repeat(64)
+        );
+        let mut definition = crate::PackageDefinition::from_lua(&source).unwrap();
+        let upstream = definition.github_upstream().unwrap().unwrap();
+        definition.package = source_package(
+            &upstream,
+            &[release("v2.0", &[])],
+            &definition.package,
+            |_| Ok("b".repeat(64)),
+        )
+        .unwrap();
+        let updated = crate::PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(
+            updated.package.versions["2.0"]
+                .build
+                .as_ref()
+                .unwrap()
+                .go
+                .as_ref()
+                .unwrap()
+                .variables["main.version"],
+            "v2.0"
+        );
+        assert_eq!(
+            updated.package.versions["1"]
+                .build
+                .as_ref()
+                .unwrap()
+                .go
+                .as_ref()
+                .unwrap()
+                .variables["main.version"],
+            "v1"
+        );
+        assert_eq!(
+            updated
+                .github_upstream()
+                .unwrap()
+                .unwrap()
+                .build
+                .unwrap()
+                .go
+                .unwrap()
+                .variables["main.version"],
+            "{tag}"
+        );
     }
 
     #[test]

@@ -29,7 +29,7 @@ pub use aqua::AquaResolver;
 pub use artifact::{ArtifactIndex, PublishedArtifact};
 pub use build_spec::{
     BuildArtifact, BuildBackend, BuildDependency, BuildEnvironmentInput, BuildEnvironmentLock,
-    BuildSteps, DependencyKind, RustBuild, SourceBuild,
+    BuildSteps, DependencyKind, GoBuild, RustBuild, SourceBuild,
 };
 pub use catalog::{CatalogPackage, CatalogProof, CatalogRecipe, PackageCatalog};
 pub use definition::{PackageDefinition, PackageUpstream};

@@ -74,7 +74,7 @@ pub fn plan_export(
             let inputs = cache.inputs(catalog, &key, &system, registry)?;
             let qualification_sha256 = inputs.fingerprint()?;
             let decision = match cache.inspect(&inputs)? {
-                Some(artifact) => ExportDecision::Reuse {
+                Some((qualification_sha256, artifact)) => ExportDecision::Reuse {
                     qualification_sha256,
                     receipt_sha256: artifact.receipt_sha256,
                 },

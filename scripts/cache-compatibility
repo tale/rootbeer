@@ -1,0 +1,6 @@
+# Go-only integration over 7e6f55977be8609efd37db42f4cd1b0628e53307.
+# Exact current shared digest -> reviewed predecessor; qualification reuse only.
+# Non-Go serialization, phases, tool selection and validation remain equivalent.
+# Go closures are excluded. Original evidence is retained without relabeling.
+5caf51728068048b610c7b75905c57ff10b059b4be5dfbe0665b4a700bc10ce3 ed5d738e0e873c095ef66d8933ff453fa8352db73ac97cd64444aac779b02e7d
+2b0cc4c54df1e7f6724941262632dc7d7fc7e2cccc6e69f70ecc793bde40968f c09b8be42d07c409d1b7ce21e5968a9555dfeb761ae14cfb054ef1c96990c9bb

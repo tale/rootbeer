@@ -107,30 +107,41 @@ impl<'a> Cache<'a> {
         inputs(catalog, key, system, registry, &engine, &environment)
     }
 
-    fn load(&self, inputs: &Inputs) -> Result<Option<(PathBuf, PublishedArtifact)>, String> {
+    fn load(&self, inputs: &Inputs) -> Result<Option<(PathBuf, Record)>, String> {
         if self.options.recheck {
             return Ok(None);
         }
-        let directory = self.options.directory.join(inputs.fingerprint()?);
+        let mut expected = inputs.clone();
+        let mut directory = self.options.directory.join(expected.fingerprint()?);
         if !directory.try_exists().map_err(|e| e.to_string())? {
-            return Ok(None);
+            let Some(compatible) = compatible_inputs(inputs)? else {
+                return Ok(None);
+            };
+            expected = compatible;
+            directory = self.options.directory.join(expected.fingerprint()?);
+            if !directory.try_exists().map_err(|e| e.to_string())? {
+                return Ok(None);
+            }
         }
         let record: Record = publication::read_json(&directory.join("record.json"))?;
-        if record.schema != 1 || record.inputs != *inputs {
+        if record.schema != 1 || record.inputs != expected {
             return Err("qualification cache schema or inputs mismatch".into());
         }
         inputs.validate(&record.artifact)?;
-        Ok(Some((directory, record.artifact)))
+        Ok(Some((directory, record)))
     }
 
-    pub(super) fn inspect(&self, inputs: &Inputs) -> Result<Option<PublishedArtifact>, String> {
-        let Some((directory, artifact)) = self.load(inputs)? else {
+    pub(super) fn inspect(
+        &self,
+        inputs: &Inputs,
+    ) -> Result<Option<(String, PublishedArtifact)>, String> {
+        let Some((directory, record)) = self.load(inputs)? else {
             return Ok(None);
         };
-        for (path, suffix) in publication::artifact_files(&artifact, &directory)? {
+        for (path, suffix) in publication::artifact_files(&record.artifact, &directory)? {
             publication::verify_file(&path, suffix)?;
         }
-        Ok(Some(artifact))
+        Ok(Some((record.inputs.fingerprint()?, record.artifact)))
     }
 
     pub(super) fn restore(
@@ -138,12 +149,12 @@ impl<'a> Cache<'a> {
         inputs: &Inputs,
         destination: &Path,
     ) -> Result<Option<PublishedArtifact>, String> {
-        let Some((directory, artifact)) = self.load(inputs)? else {
+        let Some((directory, record)) = self.load(inputs)? else {
             return Ok(None);
         };
-        copy_artifact(&artifact, &directory, destination)?;
-        inputs.retain(&artifact, destination)?;
-        Ok(Some(artifact))
+        copy_artifact(&record.artifact, &directory, destination)?;
+        record.inputs.retain(&record.artifact, destination)?;
+        Ok(Some(record.artifact))
     }
 
     pub(super) fn save(
@@ -174,6 +185,31 @@ impl<'a> Cache<'a> {
         }
         fs::rename(bundle, destination).map_err(|e| e.to_string())
     }
+}
+
+fn compatible_inputs(inputs: &Inputs) -> Result<Option<Inputs>, String> {
+    let shared = env!("ROOTBEER_COMPATIBLE_ENGINE_IDENTITY");
+    if shared.is_empty() {
+        return Ok(None);
+    }
+    let implementations = inputs
+        .recipes
+        .values()
+        .map(|recipe| {
+            rootbeer_build::compatible_engine_identity(
+                recipe.build.as_ref().map(|build| &build.backend),
+            )
+        })
+        .collect::<Option<std::collections::BTreeSet<_>>>();
+    let Some(implementations) = implementations else {
+        return Ok(None);
+    };
+    let mut compatible = inputs.clone();
+    compatible.engine = hash_bytes(
+        &serde_json::to_vec(&("rootbeer-qualification-engine-v2", shared, implementations))
+            .map_err(|error| error.to_string())?,
+    );
+    Ok(Some(compatible))
 }
 
 pub(crate) fn verify_qualifications(
@@ -710,6 +746,56 @@ mod tests {
         let record: serde_json::Value = publication::read_json(&record_path).unwrap();
         assert!(record.get("index").is_none());
         assert!(record.get("catalog").is_none());
+        if let Some(predecessor) = compatible_inputs(&inputs).unwrap() {
+            let mut original: Record = publication::read_json(&record_path).unwrap();
+            original.inputs = predecessor.clone();
+            let retained = options.directory.join(predecessor.fingerprint().unwrap());
+            fs::rename(record_path.parent().unwrap(), &retained).unwrap();
+            publication::write_json(&retained.join("record.json"), &original).unwrap();
+            let output = root.path().join("predecessor");
+            publication::create_bundle(&output).unwrap();
+            cache.restore(&inputs, &output).unwrap().unwrap();
+            let preserved = fs::read_dir(output.join("qualifications"))
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path();
+            let preserved: Record = publication::read_json(&preserved).unwrap();
+            assert_eq!(preserved.inputs, predecessor);
+            assert_eq!(preserved.artifact.receipt_sha256, artifact.receipt_sha256);
+            assert_eq!(
+                cache.inspect(&inputs).unwrap().unwrap().0,
+                predecessor.fingerprint().unwrap()
+            );
+            let mut changed = inputs.clone();
+            changed.environment.push_str("-changed");
+            assert!(cache.inspect(&changed).unwrap().is_none());
+            changed = inputs.clone();
+            changed.recipes.get_mut(key).unwrap().revision += 1;
+            assert!(cache.inspect(&changed).unwrap().is_none());
+            changed = inputs.clone();
+            changed
+                .recipes
+                .get_mut(key)
+                .unwrap()
+                .build
+                .as_mut()
+                .unwrap()
+                .backend = crate::BuildBackend::Go;
+            assert!(compatible_inputs(&changed).unwrap().is_none());
+            let refresh = ExportCache {
+                recheck: true,
+                directory: options.directory.clone(),
+                context: options.context.clone(),
+            };
+            assert!(Cache::new(&refresh, &build_options)
+                .unwrap()
+                .inspect(&inputs)
+                .unwrap()
+                .is_none());
+            cache.save(&catalog, &inputs, artifact, &source).unwrap();
+        }
         for field in ["revision", "receipt_sha256", "package", "schema", "inputs"] {
             let mut changed = record.clone();
             match field {
