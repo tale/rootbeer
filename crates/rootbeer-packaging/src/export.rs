@@ -14,7 +14,8 @@ use rootbeer_build::scheduler;
 
 pub(crate) use cache::verify_qualifications;
 pub use cache::{
-    candidate_files, import_results, import_results_for_system, CandidateFiles, ExportCache,
+    candidate_files, checkpoint_results, import_results, import_results_for_system, CandidateFiles,
+    ExportCache,
 };
 
 /// Current-platform qualification decisions against a trusted local result cache.
@@ -53,11 +54,13 @@ pub fn plan_export(
     let cache = cache_options
         .map(|options| cache::Cache::new(options, build_options))
         .transpose()?;
+    let groups = shard_groups(catalog, &system)?;
     let mut packages = BTreeMap::new();
     for package in catalog.packages.values() {
         for (version, recipe) in &package.versions {
             let key = format!("{}@{version}", package.name);
-            if !recipe.systems.contains(&system) || shard.is_some_and(|shard| !shard.contains(&key))
+            if !recipe.systems.contains(&system)
+                || shard.is_some_and(|shard| !shard.contains(&groups[&package.name]))
             {
                 continue;
             }
@@ -98,7 +101,7 @@ pub fn plan_export(
     })
 }
 
-/// A zero-based partition of package versions, stable when unrelated recipes change.
+/// A zero-based partition of source dependency groups, stable when unrelated recipes change.
 #[derive(Clone, Copy, Debug)]
 pub struct ExportShard {
     pub index: usize,
@@ -118,6 +121,44 @@ impl ExportShard {
         let value = u64::from_str_radix(&digest[..16], 16).unwrap();
         value % self.count as u64 == self.index as u64
     }
+}
+
+fn shard_groups(
+    catalog: &PackageCatalog,
+    system: &str,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut groups: BTreeMap<_, _> = catalog
+        .packages
+        .keys()
+        .map(|name| (name.clone(), name.clone()))
+        .collect();
+    let sources = catalog.packages.values().flat_map(|package| {
+        package
+            .versions
+            .values()
+            .filter(|recipe| recipe.systems.iter().any(|value| value == system))
+            .filter_map(move |recipe| recipe.build.as_ref().map(|build| (&package.name, build)))
+    });
+    for (name, build) in sources {
+        for dependency in &build.dependencies {
+            let (package, _, recipe) =
+                rootbeer_package::graph::find_recipe(catalog, dependency.package())?;
+            if recipe.build.is_none() || groups[name] == groups[&package.name] {
+                continue;
+            }
+            let first = groups[name].clone();
+            let second = groups[&package.name].clone();
+            let (keep, replace) = if first < second {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            for group in groups.values_mut().filter(|group| **group == replace) {
+                *group = keep.clone();
+            }
+        }
+    }
+    Ok(groups)
 }
 
 fn validate_export(
@@ -219,13 +260,14 @@ pub fn export_catalog_with_workers(
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),
     };
+    let groups = shard_groups(catalog, &context.system)?;
     let mut tasks = Vec::new();
     let mut failures = BTreeMap::new();
     for package in catalog.packages.values() {
         for (version, recipe) in &package.versions {
             let key = format!("{}@{version}", package.name);
             if !recipe.systems.contains(&context.system)
-                || shard.is_some_and(|shard| !shard.contains(&key))
+                || shard.is_some_and(|shard| !shard.contains(&groups[&package.name]))
             {
                 continue;
             }
@@ -1290,15 +1332,39 @@ MAKE
     #[test]
     fn shards_cover_each_recipe_exactly_once() {
         let catalog = crate::test_catalog::catalog();
+        let system = ResolveContext::current().system;
+        let groups = shard_groups(catalog, &system).unwrap();
         for count in [1, 2, 8, 256] {
             for package in catalog.packages.values() {
                 for version in package.versions.keys() {
                     let key = format!("{}@{version}", package.name);
                     let owners = (0..count)
-                        .filter(|&index| ExportShard { index, count }.contains(&key))
+                        .filter(|&index| {
+                            ExportShard { index, count }.contains(&groups[&package.name])
+                        })
                         .count();
                     assert_eq!(owners, 1, "{key} across {count} shards");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn shards_keep_source_families_and_dependencies_together() {
+        let mut catalog = crate::test_catalog::catalog().clone();
+        let system = ResolveContext::current().system;
+        let original = shard_groups(&catalog, &system).unwrap();
+        let mut consumer = catalog.packages["xz"].clone();
+        consumer.name = "consumer".into();
+        for recipe in consumer.versions.values_mut() {
+            recipe.build.as_mut().unwrap().dependencies = vec!["xz@5.8.3".into()];
+        }
+        catalog.packages.insert(consumer.name.clone(), consumer);
+        let grouped = shard_groups(&catalog, &system).unwrap();
+        assert_eq!(grouped["consumer"], grouped["xz"]);
+        for (name, group) in original {
+            if name != "xz" {
+                assert_eq!(grouped[&name], group);
             }
         }
     }

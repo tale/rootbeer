@@ -36,6 +36,31 @@ pub(crate) struct Entry {
 }
 
 impl BuildCache {
+    pub(crate) fn go_compiler_cache(
+        &self,
+        environment: &crate::environment::Environment,
+        dependencies: &BTreeMap<String, LockedPackage>,
+    ) -> Result<PathBuf, String> {
+        let outputs = dependencies
+            .iter()
+            .map(|(name, package)| {
+                let hash = package
+                    .output_sha256
+                    .as_ref()
+                    .ok_or_else(|| format!("{name}: dependency output is not locked"))?;
+                Ok((name, hash))
+            })
+            .collect::<Result<BTreeMap<_, _>, String>>()?;
+        let inputs = serde_json::to_vec(&(environment.identity(&self.context)?, outputs))
+            .map_err(|error| error.to_string())?;
+        let directory = self
+            .directory
+            .join("compiler/go")
+            .join(rootbeer_store::hash_bytes(&inputs));
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        directory.canonicalize().map_err(|error| error.to_string())
+    }
+
     pub(crate) fn entry(
         &self,
         key: String,
@@ -204,6 +229,50 @@ mod tests {
                 output_sha256: Some("b".repeat(64)),
             },
         )]);
+        let directory = tempfile::tempdir().unwrap();
+        let mut compiler_cache = BuildCache {
+            directory: directory.path().into(),
+            context: "sdk-v1".into(),
+            recheck: false,
+        };
+        let mut environment = crate::environment::Environment::resolve(None).unwrap();
+        let original_cache = compiler_cache
+            .go_compiler_cache(&environment, &dependencies)
+            .unwrap();
+        assert_eq!(
+            original_cache,
+            compiler_cache
+                .go_compiler_cache(&environment, &dependencies)
+                .unwrap()
+        );
+        compiler_cache.context = "sdk-v2".into();
+        assert_ne!(
+            original_cache,
+            compiler_cache
+                .go_compiler_cache(&environment, &dependencies)
+                .unwrap()
+        );
+        compiler_cache.context = "sdk-v1".into();
+        environment.lock.tools.get_mut("cc").unwrap().sha256 = "f".repeat(64);
+        assert_ne!(
+            original_cache,
+            compiler_cache
+                .go_compiler_cache(&environment, &dependencies)
+                .unwrap()
+        );
+        let environment = crate::environment::Environment::resolve(None).unwrap();
+        dependencies.get_mut("compiler@1").unwrap().output_sha256 = Some("c".repeat(64));
+        assert_ne!(
+            original_cache,
+            compiler_cache
+                .go_compiler_cache(&environment, &dependencies)
+                .unwrap()
+        );
+        dependencies.get_mut("compiler@1").unwrap().output_sha256 = None;
+        assert!(compiler_cache
+            .go_compiler_cache(&environment, &dependencies)
+            .is_err());
+        dependencies.get_mut("compiler@1").unwrap().output_sha256 = Some("b".repeat(64));
         let digest = |recipe: &CatalogRecipe, dependencies: &BTreeMap<String, LockedPackage>| {
             key(
                 "xz@1",

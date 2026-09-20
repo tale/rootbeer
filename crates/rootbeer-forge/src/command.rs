@@ -146,6 +146,17 @@ enum Command {
         #[arg(long)]
         system: Option<String>,
     },
+    /// Retain completed qualifications for retry without compiler caches or build scratch
+    CheckpointResults {
+        #[arg(long)]
+        cache: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, requires = "shards")]
+        shard: Option<usize>,
+        #[arg(long, requires = "shard")]
+        shards: Option<usize>,
+    },
     /// Sign a complete artifact index with an Ed25519 PKCS#8 DER key
     SignIndex {
         index: PathBuf,
@@ -494,6 +505,22 @@ fn execute(args: Args) -> Result<(), String> {
                 None => rootbeer_packaging::import_results(&bundle, &cache)?,
             };
             writeln!(output, "imported {count} admitted qualifications")
+                .map_err(|error| error.to_string())?;
+        }
+        Command::CheckpointResults {
+            cache,
+            output: destination,
+            shard,
+            shards,
+        } => {
+            let catalog = catalog()?;
+            let shard = shard.map(|index| rootbeer_packaging::ExportShard {
+                index,
+                count: shards.unwrap(),
+            });
+            let count =
+                rootbeer_packaging::checkpoint_results(catalog, &cache, &destination, shard)?;
+            writeln!(output, "retained {count} completed qualifications")
                 .map_err(|error| error.to_string())?;
         }
         Command::SignIndex {

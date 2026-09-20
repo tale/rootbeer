@@ -40,13 +40,13 @@ pub fn engine_identity(backend: Option<&BuildBackend>) -> String {
     backend_identity(backend, env!("ROOTBEER_ENGINE_IDENTITY"))
 }
 
-/// A reviewed predecessor for unchanged backends, guarded by the exact current source digest.
-pub fn compatible_engine_identity(backend: Option<&BuildBackend>) -> Option<String> {
-    let shared = env!("ROOTBEER_COMPATIBLE_ENGINE_IDENTITY");
-    if shared.is_empty() || matches!(backend, Some(BuildBackend::Go)) {
-        return None;
-    }
-    Some(backend_identity(backend, shared))
+/// Reviewed predecessors for unchanged backends, guarded by the exact current source digest.
+pub fn compatible_engine_identities(backend: Option<&BuildBackend>) -> Vec<String> {
+    env!("ROOTBEER_COMPATIBLE_ENGINE_IDENTITY")
+        .split(',')
+        .filter(|shared| !shared.is_empty())
+        .map(|shared| backend_identity(backend, shared))
+        .collect()
 }
 
 fn backend_identity(backend: Option<&BuildBackend>, shared: &str) -> String {
@@ -499,8 +499,12 @@ fn compile(
             ),
             (
                 "GOCACHE",
-                workspace_path
-                    .join("go-cache")
+                opts.cache
+                    .as_ref()
+                    .filter(|cache| !cache.recheck && !opts.is_isolated)
+                    .map(|cache| cache.go_compiler_cache(build_environment, &dependencies))
+                    .transpose()?
+                    .unwrap_or_else(|| workspace_path.join("go-cache"))
                     .to_string_lossy()
                     .into_owned(),
             ),

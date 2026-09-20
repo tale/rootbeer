@@ -191,7 +191,7 @@ fn compatible_identity(workspace: &Path, identity: &str) -> std::io::Result<Stri
         .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
     {
         let fields: Vec<_> = line.split_whitespace().collect();
-        if fields.len() != 2
+        if fields.len() < 2
             || fields.iter().any(|field| {
                 field.len() != 64
                     || !field
@@ -203,7 +203,7 @@ fn compatible_identity(workspace: &Path, identity: &str) -> std::io::Result<Stri
             return Err(std::io::Error::other("invalid cache compatibility record"));
         }
         if fields[0] == identity {
-            result = fields[1].into();
+            result = fields[1..].join(",");
         }
     }
     Ok(result)
@@ -263,6 +263,12 @@ mod tests {
         assert!(compatible_identity(root.path(), &"c".repeat(64))
             .unwrap()
             .is_empty());
+        let older = "d".repeat(64);
+        fs::write(&path, format!("{current} {previous} {older}\n")).unwrap();
+        assert_eq!(
+            compatible_identity(root.path(), &current).unwrap(),
+            format!("{previous},{older}")
+        );
         fs::write(
             &path,
             format!("{current} {previous}\n{current} {previous}\n"),
