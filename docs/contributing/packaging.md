@@ -55,6 +55,26 @@ the three files together, checks anonymous downloads, and prints the immutable
 record reference. Retry the same command after upload failures; no signing key or
 rebuild is needed. This does not update catalog discovery.
 
+For independent CI jobs, `package-plan` emits one task per exact package supported
+on the current machine:
+
+```sh
+rootbeer-forge --catalog ../rootbeer-index/packages package-plan \
+  shfmt@3.14.1 --context "$BUILD_CONTEXT"
+```
+
+Each task has an input key covering its recipe (including checks), platform,
+relevant build engine, and actual tool/environment hashes. Pass that key to
+`build --input-key` with `--cache` and `--cache-context`, then to
+`release --input-key`. Changed inputs stop the job rather than publishing a result
+under the wrong key. The planner currently supports host builds without package
+dependencies; requests must use canonical `name@version` identities.
+
+After verifying public downloads, `push` adds an `inputs-<key>` OCI tag for lookup.
+Tags are only locators: `verify-record --package ... --system ... --input-key ...
+--public-key ...` checks the immutable record's signature and exact inputs before
+reuse. Package planning and verification do not require GitHub Actions.
+
 ### Go source builds
 
 Use `backend = "go"` with explicit binary entry points:

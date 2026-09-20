@@ -372,6 +372,7 @@ pub(crate) mod tests {
         let receipt = BuildArtifact {
             schema: 1,
             recipe_sha256: recipe.sha256(),
+            qualification_environment: None,
             build_key: None,
             build_environment: None,
             environment: None,

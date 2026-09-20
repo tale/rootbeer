@@ -6,6 +6,7 @@ pub use rootbeer_build::{
 pub use rootbeer_package::*;
 mod bundle;
 mod export;
+mod package_plan;
 mod publication;
 mod release;
 pub use bundle::bundle_artifacts;
@@ -15,6 +16,7 @@ pub use export::{
     import_results_for_system, plan_export, CandidateFiles, ExportCache, ExportDecision,
     ExportPlan, ExportShard,
 };
+pub use package_plan::{plan_packages, PackageTask};
 pub use publication::{
     assemble_indexes, publish_index, verify_bundle, verify_candidate, PublishOptions,
 };

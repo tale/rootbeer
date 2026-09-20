@@ -329,6 +329,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
                 )?,
             };
             artifact.environment = Some(environment.lock.clone());
+            artifact.qualification_environment = Some(identity.clone());
             artifact.isolation = Some(isolation.clone());
             artifact.resolver_inputs = plan.inputs.clone();
             artifact.build_key = cache_entry.as_ref().map(|entry| entry.key().to_string());
@@ -689,6 +690,7 @@ fn compile(
         },
         build_key: None,
         recipe_sha256: recipe.sha256(),
+        qualification_environment: None,
         build_environment: None,
         environment: None,
         isolation: None,

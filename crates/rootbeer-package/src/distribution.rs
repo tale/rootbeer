@@ -24,6 +24,8 @@ pub struct PackageRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuildProvenance {
+    pub engine_sha256: String,
+    pub environment_sha256: String,
     pub environment: BuildEnvironmentLock,
     pub isolation: String,
     pub toolchain: BTreeMap<String, String>,
@@ -39,6 +41,17 @@ pub struct SignedPackageRecord {
 }
 
 impl PackageRecord {
+    /// Identifies the exact qualified inputs, independently of publication time and storage.
+    pub fn input_key(&self) -> String {
+        input_key(
+            &self.artifact.package.id(),
+            &self.system,
+            &self.recipe,
+            &self.provenance.engine_sha256,
+            &self.provenance.environment_sha256,
+        )
+    }
+
     /// Validates the dependency-free source-package contract supported by this schema.
     pub fn validate(&self) -> Result<(), String> {
         let package = &self.artifact.package;
@@ -68,6 +81,8 @@ impl PackageRecord {
         let provenance = &self.provenance;
         let environment = &provenance.environment;
         if environment.schema != 1
+            || !crate::index::is_sha256(&provenance.engine_sha256)
+            || !crate::index::is_sha256(&provenance.environment_sha256)
             || environment.system != self.system
             || ["sh", "cc", "make", "patch"]
                 .iter()
@@ -85,6 +100,27 @@ impl PackageRecord {
         }
         Ok(())
     }
+}
+
+/// Content identity shared by package planning and signed-result lookup.
+pub fn input_key(
+    package: &str,
+    system: &str,
+    recipe: &CatalogRecipe,
+    engine: &str,
+    environment: &str,
+) -> String {
+    crate::store::hash_bytes(
+        &serde_json::to_vec(&(
+            "rootbeer-package-inputs-v1",
+            package,
+            system,
+            recipe,
+            engine,
+            environment,
+        ))
+        .expect("package inputs serialize"),
+    )
 }
 
 /// Domain-separated bytes shared by package signing and verification.
@@ -170,6 +206,8 @@ mod tests {
             recipe: index.catalog.packages[&package.name].versions[&package.version].clone(),
             artifact,
             provenance: BuildProvenance {
+                engine_sha256: "a".repeat(64),
+                environment_sha256: "b".repeat(64),
                 environment: BuildEnvironmentLock {
                     schema: 1,
                     system: "aarch64-linux".into(),
@@ -255,5 +293,26 @@ mod tests {
         record.recipe.build.as_mut().unwrap().dependencies.clear();
         record.provenance.environment.tools.clear();
         assert!(record.validate().is_err());
+    }
+
+    #[test]
+    fn input_keys_bind_recipe_checks_engine_environment_and_platform() {
+        let (bytes, key, id) = signed();
+        let record = verify_record(&bytes, &key, &id, "aarch64-linux").unwrap();
+        let expected = record.input_key();
+        for change in 0..5 {
+            let mut changed = record.clone();
+            match change {
+                0 => changed.recipe.checks.push(vec!["additional-check".into()]),
+                1 => changed.provenance.engine_sha256 = "c".repeat(64),
+                2 => changed.provenance.environment_sha256 = "c".repeat(64),
+                3 => changed.system = "x86_64-linux".into(),
+                _ => changed.artifact.package.version.push_str(".1"),
+            }
+            assert_ne!(expected, changed.input_key());
+        }
+        let mut republished = record.clone();
+        republished.artifact.receipt_sha256 = "f".repeat(64);
+        assert_eq!(expected, republished.input_key());
     }
 }

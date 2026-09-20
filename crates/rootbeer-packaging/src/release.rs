@@ -17,6 +17,7 @@ pub fn release_package(
     output: &Path,
     key_der: &[u8],
     public_key: &str,
+    expected_inputs: Option<&str>,
 ) -> Result<String, String> {
     rootbeer_package::ghcr::validate_repository(registry)?;
     let receipt_bytes = fs::read(receipt).map_err(|error| error.to_string())?;
@@ -34,6 +35,10 @@ pub fn release_package(
         .ok_or("no matching package recipe")?
         .clone();
     let provenance = BuildProvenance {
+        engine_sha256: rootbeer_build::engine_identity(Some(&build.build.backend)),
+        environment_sha256: build
+            .qualification_environment
+            .ok_or("build receipt has no qualification environment")?,
         environment: build
             .environment
             .ok_or("build receipt has no pinned environment")?,
@@ -86,6 +91,9 @@ pub fn release_package(
         artifact,
         provenance,
     };
+    if expected_inputs.is_some_and(|expected| record.input_key() != expected) {
+        return Err("build receipt differs from the planned package inputs".into());
+    }
     let signed = crate::sign_package_record(&record, key_der, public_key)?;
     let digest = hash_bytes(&signed);
     fs::write(destination.join("package.json"), signed).map_err(|error| error.to_string())?;
@@ -146,6 +154,17 @@ pub fn push_package(release: &Path, public_key: &str) -> Result<String, String> 
             .materialize_verified(&format!("ghcr://{}@sha256:{hash}", blob.repository), hash)
             .map_err(|error| format!("cannot verify public package download: {error}"))?;
     }
+    let status = Command::new("oras")
+        .args([
+            "tag",
+            &format!("ghcr.io/{}:package-{digest}", blob.repository),
+            &format!("inputs-{}", record.input_key()),
+        ])
+        .status()
+        .map_err(|error| error.to_string())?;
+    if !status.success() {
+        return Err(format!("package input locator upload failed: {status}"));
+    }
     Ok(format!("ghcr://{}@sha256:{digest}", blob.repository))
 }
 
@@ -181,6 +200,7 @@ mod tests {
             variables: BTreeMap::new(),
         });
         build.isolation = Some("host".into());
+        build.qualification_environment = Some("a".repeat(64));
         build.toolchain.insert("cc".into(), "test compiler".into());
         let report = rootbeer_build::audit::audit(&root.path().join("tree")).unwrap();
         build.runtime_audit_sha256 = Some(hash_bytes(&serde_json::to_vec_pretty(&report).unwrap()));
@@ -208,6 +228,13 @@ mod tests {
             &release,
             key.as_ref(),
             &public_key,
+            Some(&rootbeer_package::distribution::input_key(
+                &build.package.id(),
+                &build.system,
+                &catalog.packages[&build.package.name].versions[&build.package.version],
+                &rootbeer_build::engine_identity(Some(&build.build.backend)),
+                build.qualification_environment.as_deref().unwrap(),
+            )),
         )
         .unwrap();
         let bytes = fs::read(release.join("package.json")).unwrap();
@@ -222,6 +249,20 @@ mod tests {
         assert_eq!(fs::read_dir(&release).unwrap().count(), 3);
         assert!(!String::from_utf8(bytes).unwrap().contains("catalog_sha256"));
 
+        let wrong_inputs = root.path().join("wrong-inputs");
+        assert!(release_package(
+            &catalog.packages[&build.package.name],
+            &receipt,
+            "example/packages/tool",
+            &wrong_inputs,
+            key.as_ref(),
+            &public_key,
+            Some(&"0".repeat(64)),
+        )
+        .unwrap_err()
+        .contains("planned package inputs"));
+        assert!(!wrong_inputs.exists());
+
         let mut changed = catalog.packages[&build.package.name].clone();
         changed
             .versions
@@ -235,7 +276,8 @@ mod tests {
             "example/packages/tool",
             &root.path().join("changed"),
             key.as_ref(),
-            &public_key
+            &public_key,
+            None
         )
         .unwrap_err()
         .contains("receipt does not match"));
@@ -252,7 +294,8 @@ mod tests {
             "example/packages/tool",
             &failed,
             key.as_ref(),
-            &public_key
+            &public_key,
+            None
         )
         .is_err());
         assert!(!failed.exists());
