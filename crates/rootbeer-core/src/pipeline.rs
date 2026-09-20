@@ -266,7 +266,8 @@ impl PlannedPipeline {
                 ResolverInput::PublishedIndex(pin.clone()),
             );
         } else if self.has_canonical_requests()
-            && (should_refresh || inputs.package_index().is_none())
+            && (should_refresh
+                || (inputs.package_index().is_none() && inputs.discovery().is_none()))
         {
             let selection = if self.opts.package_lock.is_offline {
                 crate::package::official::select_default_offline()

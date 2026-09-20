@@ -1,112 +1,68 @@
-# Index hosting and trust
+# Package distribution and trust
 
-## Two independent deployments
+| Site            | Published content                                                                      |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `rbpkg.com`     | Documentation, package search, installer, and nightly CLI binaries.                    |
+| `pdr.rbpkg.com` | One discovery manifest, independently signed package records, and retained provenance. |
+| GHCR            | Immutable package archives addressed by digest.                                        |
 
-| Site                            | Owner               | Published content                                               |
-| ------------------------------- | ------------------- | --------------------------------------------------------------- |
-| `rbpkg.com`                     | Rootbeer repository | Documentation, package search, installer, and nightly binaries. |
-| `pdr.rbpkg.com`                 | Index repository    | Signed latest manifest, immutable snapshots, and receipts.      |
-| GHCR                            | Index publisher     | Source-built and mirrored package archives addressed by digest. |
+The web UI and `rb search` read `https://pdr.rbpkg.com/current.json`. Publishing
+packages updates search without rebuilding the website. Installation fetches the
+selected package's signed record and archive; it does not download other packages'
+records or validate the entire distribution's artifacts.
 
-Package search fetches the live signed index in the browser. Publishing new
-packages therefore updates search without rebuilding the documentation site.
-The index endpoint permits cross-origin reads. Search has loading, empty, and
-failure states; it does not substitute a hard-coded package list.
+## Published files
 
-Keep these deployments separate. Copying the catalog into the documentation build
-would couple package availability to website deployments and make search stale.
-GitHub Pages does not route two independent repositories under arbitrary paths of
-one custom host.
+- `current.json`: schema 2 discovery, containing package metadata, recipes, published
+  platform record URLs and hashes, an increasing sequence, and a signature.
+- `manifests/<sha256>.json`: immutable copies of discovery for pinned resolutions.
+- `records/<sha256>.json`: individually signed package records identifying exact
+  artifact bytes, installation instructions, and provenance.
+- `snapshots/` and `receipts/`: retained approvals and evidence from earlier
+  publications, kept readable for existing locks and migrated package records.
 
-## Release trust configuration
-
-Rootbeer release builds embed `ROOTBEER_INDEX_URL` and `ROOTBEER_INDEX_PUBLIC_KEY`.
-Set both together. The key is the 32-byte Ed25519 public key encoded as 64 lowercase
-hex characters. The website build uses the same public values for catalog search.
-The private signing key belongs only in the publishing environment and its secure
-backup, never in a repository or a binary.
-
-The manifest contains schema 1, an increasing sequence, a snapshot URL and SHA-256,
-and a signature. The signed UTF-8 payload is the compact JSON array:
+The manifest is signed as compact JSON with recursively sorted object keys:
 
 ```text
-["rootbeer-index-v1",sequence,"index URL","index SHA-256"]
+["rootbeer-discovery-v1",sequence,catalog,records]
 ```
 
-Publish immutable snapshot bytes before advancing the signed manifest. Retain old
-snapshots, receipts, and GHCR manifests for existing locks. The CLI rejects rollback
-relative to its local verified history; a fresh installation has no earlier
-sequence to compare. The manifest currently has no expiry policy.
+Each package record signs its exact embedded JSON bytes. A record distinguishes
+source-build evidence from verified upstream binaries. Migrated records preserve
+their earlier signed catalog approval and receipt hash rather than claiming a new
+build. The publisher imports only unchanged recipes and dependency recipes from
+that approval.
 
-## Snapshot format versions
+A package job prepares and checks one package/platform, retains the result, then
+signs and uploads it to GHCR. `rootbeer-forge publish-records` merges successful
+records into discovery without rebuilding or downloading package archives.
+Concurrent publications merge against the latest metadata before deploying.
+Failed packages do not prevent successful packages from entering discovery;
+previous published defaults remain usable until their replacements are ready.
 
-Schema 2 snapshots support command-path mappings, pinned mirrors, Zig builds, and
-source patches. Schema 3 adds declared macOS app exports. Schema 4 adds static
-library exports and command build phases. New clients and package search read
-schemas 1 through 4. Upgrade the publishing engine, clients, and website before
-introducing schema 4 recipes. Older clients
-cannot parse these additions, even when selecting an unrelated package.
+## Release configuration
 
-The active catalog uses `--manifest current.json`. CLI and website builds use
-`https://pdr.rbpkg.com/current.json` with the existing public key.
+CLI and website builds embed `ROOTBEER_INDEX_URL` and
+`ROOTBEER_INDEX_PUBLIC_KEY`. Set both together. The key is a 32-byte Ed25519 public
+key encoded as 64 lowercase hex characters. The private key belongs only in the
+publishing environment and its secure backup.
 
-Intel macOS is unsupported. Publish the three supported platforms through
-`current.json`; retired Intel binaries and catalog channels are no longer served.
-Retain immutable snapshots, receipts, and package archives for existing locks.
-Clients on supported platforms should run `rb self-update` to use the current channel.
+Upgrade the CLI and website before switching `current.json` to schema 2. Current
+clients also read the previous schema 1 pointer during migration. Old clients
+cannot read schema 2 discovery; use `rb self-update` to upgrade.
 
-Manifest signatures keep the same format; rollback sequences are checked per
-endpoint. Publish and verify a new channel before switching the public CLI and
-website. Manifest filenames describe release channels independently of the
-snapshot schema.
+Rootbeer checks discovery signatures and rejects rollback relative to its verified
+local history. It verifies the selected record's signature, identity, platform,
+and recipe, then checks artifact hashes during installation. Fresh clients have
+no previous sequence to compare. Discovery has no expiry policy.
 
-## Changing the endpoint
+Matching locks require no discovery refresh. On network availability errors,
+Rootbeer can use verified cached discovery and reports that fallback. Invalid
+signatures, corrupt metadata, and rollback attempts fail. `rb apply --update`
+requires a successful refresh; offline use requires cached metadata and contents.
+A missing published package never triggers an implicit local source build.
 
-1. Provision and verify the new HTTPS endpoint while retaining old URLs.
-2. Verify that snapshots and receipts remain readable, including cross-origin
-   browser requests if search uses the new host.
-3. Update the index publisher's `INDEX_URL` for future snapshots.
-4. Update Rootbeer's public URL/key variables and rebuild the CLI and website.
-5. Test a fresh install, an existing lock, and offline replay before retiring any
-   routing configuration. Retained artifact URLs must keep working.
-
-The CLI scopes cached index history to its endpoint and verification key. Moving
-an endpoint or rotating a key therefore needs an explicit migration plan.
-
-## Catalog selection and fallback
-
-Released builds verify the official manifest signature and snapshot hash before
-using package information. The verification key is embedded at build time;
-runtime environment variables cannot replace it. A matching lock needs no
-catalog fetch.
-
-When the network is unavailable, resolution can use the last verified cached
-snapshot. Rootbeer reports this fallback. Without a verified cached snapshot,
-the first fetch must succeed. No catalog is bundled or fetched during compilation.
-Invalid signatures, corrupt snapshots, and rollback attempts fail. A missing
-package does not trigger another provider. Developer builds without an official
-endpoint must configure one at build time or use an explicit `rb.package_index()`
-pin. `rb apply --update` requires a successful
-refresh; offline installs use the matching lock and cached package contents.
-
-Package search displays the published catalog. `rootbeer-forge list` and
-`rootbeer-forge show` inspect the recipe directory passed to `--catalog`; they do
-not search the remote catalog.
-
-Explicit `rb.package_index()` pins bypass official catalog selection and fallback.
-The pin identifies exact bytes, not a publisher signature. Published artifact URLs
-use HTTPS or immutable GHCR blobs.
-
-## Package locks
-
-Locks record the platform, package identity, version, source URL, archive hash,
-exported commands, and installed-tree hash. Catalog packages also record the
-snapshot and recipe revision; direct sources record their resolution metadata.
-Hashes bind subsequent installs to the selected contents, but do not ensure a
-download URL remains available.
-
-Catalog packages install from prebuilt archives, including source-built packages
-published by the index workflow. Normal apply does not compile them locally.
-Packages live under the Rootbeer state directory, with command paths under
-`$XDG_STATE_HOME/rootbeer/profiles`. Use `rb.env_export()` instead of hard-coding
-these paths. New catalog features can require a newer CLI when resolving packages.
+Keep immutable manifests, records, receipts, and GHCR blobs available for existing
+locks. If moving the endpoint, preserve old URLs and cross-origin browser access,
+then update the publisher's `INDEX_URL` and rebuild the CLI and website with the
+new URL. Cached trust history is scoped to endpoint and verification key.

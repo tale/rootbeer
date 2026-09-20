@@ -114,6 +114,7 @@ pub fn prepare_with_resolver(
         PackageRealizer::default()
     };
     let mut packages = Vec::new();
+    let mut official_selection = None;
     for request in requests {
         let identity =
             serde_json::to_vec(&(ResolveContext::current(), request)).map_err(|e| e.to_string())?;
@@ -133,11 +134,17 @@ pub fn prepare_with_resolver(
                     .as_deref()
                     .is_none_or(|name| name == "rootbeer")
                 {
-                    let selection = super::official::select_default(should_update)?;
-                    if let Some(notice) = selection.notice {
-                        eprintln!("{notice}");
+                    if official_selection.is_none() {
+                        let selection = super::official::select_default(should_update)?;
+                        if let Some(notice) = selection.notice {
+                            eprintln!("{notice}");
+                        }
+                        official_selection = Some(selection.input);
                     }
-                    inputs.resolvers.insert("rootbeer".into(), selection.input);
+                    inputs.resolvers.insert(
+                        "rootbeer".into(),
+                        official_selection.as_ref().unwrap().clone(),
+                    );
                 }
                 let builder = PackageLockBuilder::new_with_inputs(
                     resolver(&inputs),

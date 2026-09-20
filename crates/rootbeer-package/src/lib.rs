@@ -7,6 +7,7 @@ mod artifact;
 mod build_spec;
 pub mod catalog;
 pub mod definition;
+pub mod discovery;
 pub mod distribution;
 pub mod download;
 mod execution;
@@ -62,6 +63,8 @@ pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStac
             catalog::CatalogResolver::new(catalog, inputs, backend_stack(inputs))
                 .with_fallback(inputs.package_index()),
         );
+    } else if let Some(pin) = inputs.discovery() {
+        stack.push(discovery::DiscoveryResolver::new(pin));
     } else if let Some(pin) = inputs.package_index() {
         stack.push(index::IndexResolver::new(pin));
     }

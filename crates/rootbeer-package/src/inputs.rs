@@ -23,6 +23,7 @@ pub enum ResolverInput {
     LocalCatalog(Box<super::PackageCatalog>),
     PublishedIndex(super::PackageIndexPin),
     OfficialIndex(super::PackageIndexPin),
+    Discovery(super::discovery::DiscoveryPin),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +49,13 @@ impl PackageResolverInputs {
             }),
         );
         Ok(Self { resolvers })
+    }
+
+    pub fn discovery(&self) -> Option<&super::discovery::DiscoveryPin> {
+        match self.resolvers.get("rootbeer") {
+            Some(ResolverInput::Discovery(pin)) => Some(pin),
+            _ => None,
+        }
     }
 
     pub fn package_index(&self) -> Option<&super::PackageIndexPin> {

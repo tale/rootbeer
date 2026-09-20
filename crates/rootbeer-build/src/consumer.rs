@@ -9,7 +9,10 @@ use rootbeer_store::{hash_bytes, hash_file};
 /// Builds an installation resolver that prefers published artifacts and can execute source recipes.
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
     let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
-    if inputs.package_index().is_some() || inputs.local_catalog().is_some() {
+    if inputs.package_index().is_some()
+        || inputs.discovery().is_some()
+        || inputs.local_catalog().is_some()
+    {
         stack.push(SourceResolver::with_inputs(
             inputs,
             rootbeer_store::state_dir(),
@@ -22,6 +25,7 @@ pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStac
 pub struct SourceResolver {
     state: std::path::PathBuf,
     index: Option<IndexResolver>,
+    discovery: Option<rootbeer_package::discovery::DiscoveryResolver>,
     pin: Option<PackageIndexPin>,
     inputs: PackageResolverInputs,
 }
@@ -32,6 +36,7 @@ impl SourceResolver {
         let state = state.into();
         Self {
             index: Some(IndexResolver::with_cache(pin, state.join("downloads"))),
+            discovery: None,
             pin: Some(pin.clone()),
             inputs: PackageResolverInputs::default(),
             state,
@@ -48,7 +53,17 @@ impl SourceResolver {
             index: inputs
                 .package_index()
                 .map(|pin| IndexResolver::with_cache(pin, state.join("downloads"))),
-            pin: inputs.package_index().cloned(),
+            discovery: inputs.discovery().map(|pin| {
+                rootbeer_package::discovery::DiscoveryResolver::with_cache(
+                    pin,
+                    state.join("downloads"),
+                    false,
+                )
+            }),
+            pin: inputs
+                .package_index()
+                .cloned()
+                .or_else(|| inputs.discovery().map(|pin| pin.manifest.clone())),
             inputs: inputs.clone(),
             state,
         }
@@ -78,13 +93,34 @@ impl PackageResolver for SourceResolver {
             .inputs
             .local_catalog()
             .filter(|catalog| catalog.find(&request.name).is_some());
+        if local.is_none() && request.source.is_none() {
+            if let Some(discovery) = &self.discovery {
+                return discovery.resolve(request, context);
+            }
+        }
+        let discovered = self
+            .discovery
+            .as_ref()
+            .map(|discovery| {
+                let catalog = discovery.manifest()?.catalog.clone();
+                Ok::<_, String>(ArtifactIndex {
+                    schema: ArtifactIndex::schema_for(&catalog),
+                    catalog_sha256: catalog.sha256(),
+                    catalog,
+                    artifacts: Default::default(),
+                })
+            })
+            .transpose()?;
         let index = if local.is_none_or(PackageCatalog::requires_index) {
-            Some(
-                self.index
-                    .as_ref()
-                    .ok_or("this request requires a package index")?
-                    .index()?,
-            )
+            match &discovered {
+                Some(index) => Some(index),
+                None => Some(
+                    self.index
+                        .as_ref()
+                        .ok_or("this request requires a package index")?
+                        .index()?,
+                ),
+            }
         } else {
             None
         };

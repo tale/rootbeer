@@ -35,6 +35,9 @@ enum Command {
         input_key: String,
         #[arg(long)]
         public_key: String,
+        /// Save the verified signed bytes for discovery publication
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     /// Approve one qualified package and prepare its signed package release
     Release {
@@ -60,6 +63,21 @@ enum Command {
     /// Upload a signed package release to GHCR without rebuilding or signing again
     Push {
         release: PathBuf,
+        #[arg(long)]
+        public_key: String,
+    },
+    /// Publish a single discovery manifest from independently signed package records
+    PublishRecords {
+        #[arg(long)]
+        record: Vec<String>,
+        #[arg(long)]
+        records: Option<PathBuf>,
+        #[arg(long)]
+        site: PathBuf,
+        #[arg(long)]
+        site_url: String,
+        #[arg(long)]
+        key: PathBuf,
         #[arg(long)]
         public_key: String,
     },
@@ -307,6 +325,7 @@ fn execute(args: Args) -> Result<(), String> {
             system,
             input_key,
             public_key,
+            output: destination,
         } => {
             let bytes = rootbeer_packaging::distribution::read_record(&reference)?;
             let record = rootbeer_packaging::distribution::verify_record(
@@ -318,7 +337,41 @@ fn execute(args: Args) -> Result<(), String> {
             if record.input_key() != input_key {
                 return Err("signed package inputs differ from the requested work".into());
             }
+            if let Some(destination) = destination {
+                std::fs::write(destination, bytes).map_err(|error| error.to_string())?;
+            }
             writeln!(output, "{reference}").map_err(|error| error.to_string())?;
+        }
+        Command::PublishRecords {
+            mut record,
+            records,
+            site,
+            site_url,
+            key,
+            public_key,
+        } => {
+            if let Some(directory) = records {
+                for entry in std::fs::read_dir(directory).map_err(|error| error.to_string())? {
+                    let path = entry.map_err(|error| error.to_string())?.path();
+                    if path.extension().is_some_and(|value| value == "json") {
+                        record.push(path.to_string_lossy().into_owned());
+                    }
+                }
+            }
+            let key = std::fs::read(key).map_err(|error| error.to_string())?;
+            let count = rootbeer_packaging::publish_records(
+                catalog()?,
+                &record,
+                &site,
+                &site_url,
+                &key,
+                &public_key,
+            )?;
+            writeln!(
+                output,
+                "published discovery for {count} package/platform records"
+            )
+            .map_err(|error| error.to_string())?;
         }
         Command::Release {
             recipe,

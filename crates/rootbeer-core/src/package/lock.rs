@@ -258,6 +258,18 @@ fn offline_resolution(
             }
         }
         if is_canonical {
+            if let Some(pin) = inputs.discovery() {
+                use super::PackageResolver;
+                if let Some(resolution) = super::discovery::DiscoveryResolver::with_cache(
+                    pin,
+                    crate::state_dir().join("downloads"),
+                    true,
+                )
+                .resolve(request, context)?
+                {
+                    return Ok(resolution);
+                }
+            }
             if let Some(pin) = inputs.package_index() {
                 use super::PackageResolver;
                 if let Some(resolution) =

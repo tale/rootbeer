@@ -26,22 +26,29 @@ pub struct PackageRecord {
 pub enum PackageProvenance {
     Source(Box<BuildProvenance>),
     Upstream(Box<UpstreamProvenance>),
+    Retained(Box<RetainedProvenance>),
 }
 
 impl PackageProvenance {
-    pub fn engine_sha256(&self) -> &str {
+    fn qualification(&self) -> Option<(&str, &str)> {
         match self {
-            Self::Source(provenance) => &provenance.engine_sha256,
-            Self::Upstream(provenance) => &provenance.engine_sha256,
+            Self::Source(provenance) => {
+                Some((&provenance.engine_sha256, &provenance.environment_sha256))
+            }
+            Self::Upstream(provenance) => {
+                Some((&provenance.engine_sha256, &provenance.environment_sha256))
+            }
+            Self::Retained(_) => None,
         }
     }
+}
 
-    pub fn environment_sha256(&self) -> &str {
-        match self {
-            Self::Source(provenance) => &provenance.environment_sha256,
-            Self::Upstream(provenance) => &provenance.environment_sha256,
-        }
-    }
+/// An existing signed catalog approval preserved when promoting its exact artifacts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetainedProvenance {
+    pub approval: crate::official::Manifest,
+    pub receipt: crate::PackageIndexPin,
 }
 
 /// Exact upstream bytes and installation inputs approved by the publisher.
@@ -78,13 +85,37 @@ pub struct SignedPackageRecord {
 impl PackageRecord {
     /// Identifies the exact qualified inputs, independently of publication time and storage.
     pub fn input_key(&self) -> String {
-        input_key(
-            &self.artifact.package.id(),
-            &self.system,
-            &self.recipe,
-            self.provenance.engine_sha256(),
-            self.provenance.environment_sha256(),
+        if let Some((engine, environment)) = self.provenance.qualification() {
+            return input_key(
+                &self.artifact.package.id(),
+                &self.system,
+                &self.recipe,
+                engine,
+                environment,
+            );
+        }
+        crate::store::hash_bytes(
+            &serde_json::to_vec(&(
+                "rootbeer-retained-package-v1",
+                &self.artifact.package.id(),
+                &self.system,
+                &self.recipe,
+                &self.provenance,
+            ))
+            .expect("retained package inputs serialize"),
         )
+    }
+
+    /// Verifies any earlier publisher approval retained as package provenance.
+    pub fn verify_provenance(&self, public_key: &str) -> Result<(), String> {
+        if let PackageProvenance::Retained(provenance) = &self.provenance {
+            crate::OfficialIndexSource {
+                url: provenance.approval.index.url.clone(),
+                public_key: public_key.into(),
+            }
+            .verify(&provenance.approval)?;
+        }
+        Ok(())
     }
 
     /// Validates the dependency-free package contract supported by this schema.
@@ -103,21 +134,38 @@ impl PackageRecord {
             return Err("invalid package record identity".into());
         }
         self.recipe.validate()?;
-        if self
-            .recipe
-            .build
-            .as_ref()
-            .is_some_and(|build| !build.dependencies.is_empty())
-            || !package.runtime_dependencies.is_empty()
+        if !matches!(self.provenance, PackageProvenance::Retained(_))
+            && (self
+                .recipe
+                .build
+                .as_ref()
+                .is_some_and(|build| !build.dependencies.is_empty())
+                || !package.runtime_dependencies.is_empty())
         {
             return Err("package records with dependencies are not supported yet".into());
         }
-        if !crate::index::is_sha256(self.provenance.engine_sha256())
-            || !crate::index::is_sha256(self.provenance.environment_sha256())
+        if self
+            .provenance
+            .qualification()
+            .is_some_and(|(engine, environment)| {
+                !crate::index::is_sha256(engine) || !crate::index::is_sha256(environment)
+            })
         {
             return Err("invalid package qualification identity".into());
         }
         match (&self.recipe.build, &self.provenance) {
+            (_, PackageProvenance::Retained(provenance)) => {
+                self.artifact
+                    .validate(&package.id(), &self.system, &self.recipe)?;
+                crate::runtime::closure(package)?;
+                provenance.approval.index.validate()?;
+                provenance.receipt.validate()?;
+                crate::index::validate_https(&provenance.receipt.url)?;
+                if provenance.receipt.sha256 != self.artifact.receipt_sha256 {
+                    return Err("retained approval has a different receipt".into());
+                }
+                Ok(())
+            }
             (Some(_), PackageProvenance::Source(provenance)) => {
                 self.artifact
                     .validate(&package.id(), &self.system, &self.recipe)?;
@@ -254,6 +302,7 @@ pub fn verify_record(
     let record: PackageRecord =
         serde_json::from_str(signed.record.get()).map_err(|error| error.to_string())?;
     record.validate()?;
+    record.verify_provenance(public_key)?;
     if record.artifact.package.id() != package || record.system != system {
         return Err(format!(
             "package record does not match {package} for {system}"

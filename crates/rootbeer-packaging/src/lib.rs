@@ -11,6 +11,7 @@ pub use prepare::prepare_package;
 mod export;
 mod package_plan;
 mod publication;
+mod publish_records;
 mod release;
 pub use bundle::bundle_artifacts;
 pub use export::{
@@ -23,6 +24,7 @@ pub use package_plan::{plan_packages, PackageTask};
 pub use publication::{
     assemble_indexes, publish_index, verify_bundle, verify_candidate, PublishOptions,
 };
+pub use publish_records::publish_records;
 pub use release::{push_package, release_package};
 
 mod sign;
