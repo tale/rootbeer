@@ -76,6 +76,22 @@ For Lua-managed apps, remove the declaration and run `rb apply`.
 
 ## Keep tools installed
 
+### Install an individually signed package
+
+Given a signed record and a publisher key you trust:
+
+```sh
+rb use tool@1.2.3 --record ./package.json --public-key "$PUBLISHER_PUBLIC_KEY"
+```
+
+`--record` also accepts an immutable `ghcr://owner/repository@sha256:<digest>`
+reference. Rootbeer checks the signature, exact package version, platform, archive,
+and installed contents without loading the catalog. Obtain the public key separately
+from the package download. This path currently supports source-built packages without
+package dependencies; discovery and automatic updates are not part of it.
+
+### Install from the catalog
+
 ```sh
 rb use jq ripgrep
 eval "$(rb env)"

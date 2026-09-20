@@ -7,6 +7,7 @@ mod artifact;
 mod build_spec;
 pub mod catalog;
 pub mod definition;
+pub mod distribution;
 pub mod download;
 mod execution;
 pub use execution::Execution;

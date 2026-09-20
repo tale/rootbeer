@@ -6,7 +6,9 @@ pub use rootbeer_build::{
 pub use rootbeer_package::*;
 mod bundle;
 mod export;
+mod package_plan;
 mod publication;
+mod release;
 pub use bundle::bundle_artifacts;
 pub use export::{
     candidate_files, checkpoint_results, export_catalog, export_catalog_shard,
@@ -14,12 +16,14 @@ pub use export::{
     import_results_for_system, plan_export, CandidateFiles, ExportCache, ExportDecision,
     ExportPlan, ExportShard,
 };
+pub use package_plan::{plan_packages, PackageTask};
 pub use publication::{
     assemble_indexes, publish_index, verify_bundle, verify_candidate, PublishOptions,
 };
+pub use release::{push_package, release_package};
 
 mod sign;
-pub use sign::sign_index;
+pub use sign::{sign_index, sign_package_record};
 
 pub mod upstream;
 pub use upstream::{

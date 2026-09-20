@@ -61,6 +61,38 @@ fn rb(root: &Path) -> Command {
 }
 
 #[test]
+fn rejected_package_record_leaves_the_installed_profile_unchanged() {
+    let root = tempfile::tempdir().unwrap();
+    seed(root.path(), "tool", "tool", "#!/bin/sh\nexit 0\n");
+    assert!(rb(root.path())
+        .args(["use", "tool@1", "--offline"])
+        .status()
+        .unwrap()
+        .success());
+    let profile = root.path().join("rootbeer/profiles/user/current");
+    let previous = fs::read_link(&profile).unwrap();
+    let record = root.path().join("package.json");
+    fs::write(
+        &record,
+        serde_json::to_vec(&serde_json::json!({
+            "record": {}, "signature": "00".repeat(64),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let rejected = rb(root.path())
+        .args(["use", "tool@1", "--record"])
+        .arg(&record)
+        .args(["--public-key", &"ff".repeat(32)])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("signature verification failed"));
+    assert_eq!(fs::read_link(&profile).unwrap(), previous);
+    assert!(!root.path().join("rootbeer/standalone/records").exists());
+}
+
+#[test]
 fn run_reuses_offline_store_and_forwards_arguments_exit_status_and_extra_tools() {
     let root = tempfile::tempdir().unwrap();
     seed(

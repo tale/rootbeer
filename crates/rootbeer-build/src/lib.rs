@@ -312,6 +312,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
             let mut artifact = match restored {
                 Some(mut artifact) => {
                     artifact.catalog_sha256 = plan.catalog_sha256.clone();
+                    artifact.recipe_sha256 = recipe.sha256();
                     artifact.package.runtime_dependencies =
                         runtime_dependencies(build, &dependencies);
                     artifact.dependencies = dependencies;
@@ -328,6 +329,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
                 )?,
             };
             artifact.environment = Some(environment.lock.clone());
+            artifact.qualification_environment = Some(identity.clone());
             artifact.isolation = Some(isolation.clone());
             artifact.resolver_inputs = plan.inputs.clone();
             artifact.build_key = cache_entry.as_ref().map(|entry| entry.key().to_string());
@@ -687,6 +689,8 @@ fn compile(
             2
         },
         build_key: None,
+        recipe_sha256: recipe.sha256(),
+        qualification_environment: None,
         build_environment: None,
         environment: None,
         isolation: None,

@@ -8,7 +8,7 @@ rust-version.workspace = true
 sha2 = "0.10"
 libc = "0.2.182"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 tempfile = "3"
 rootbeer-store = { path = "../rootbeer-store" }
 aqua-registry = "=2026.9.1"

@@ -60,6 +60,13 @@ impl CatalogPackage {
 }
 
 impl CatalogRecipe {
+    /// Identifies all evaluated recipe inputs, including the checks required for approval.
+    pub fn sha256(&self) -> String {
+        crate::store::hash_bytes(
+            &serde_json::to_vec(self).expect("recipe serialization cannot fail"),
+        )
+    }
+
     /// Whether the recipe declares an upstream binary for this platform.
     pub fn has_prebuilt(&self, system: &str) -> bool {
         self.source.as_ref().is_some_and(|source| {

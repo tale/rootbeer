@@ -17,6 +17,52 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Plan exact dependency-free source packages for this machine
+    PackagePlan {
+        #[arg(required = true)]
+        packages: Vec<String>,
+        #[arg(long)]
+        context: String,
+    },
+    /// Verify a signed package result against the requested identity and input key
+    VerifyRecord {
+        reference: String,
+        #[arg(long)]
+        package: String,
+        #[arg(long)]
+        system: String,
+        #[arg(long)]
+        input_key: String,
+        #[arg(long)]
+        public_key: String,
+    },
+    /// Approve one source build and prepare its signed package release
+    Release {
+        /// This package's existing Lua definition
+        #[arg(long)]
+        recipe: PathBuf,
+        #[arg(long)]
+        receipt: PathBuf,
+        /// GHCR repository, such as owner/packages/tool
+        #[arg(long)]
+        registry: String,
+        #[arg(long)]
+        output: PathBuf,
+        /// Publisher's Ed25519 PKCS#8 DER key
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long)]
+        public_key: String,
+        /// Require these planned inputs before signing
+        #[arg(long)]
+        input_key: Option<String>,
+    },
+    /// Upload a signed package release to GHCR without rebuilding or signing again
+    Push {
+        release: PathBuf,
+        #[arg(long)]
+        public_key: String,
+    },
     /// Add inferred update rules to copies of the selected catalog's GitHub packages
     SeedUpstreams {
         #[arg(long)]
@@ -187,6 +233,9 @@ enum Command {
     /// Compile a trusted source recipe into an installable local artifact
     Build {
         name: String,
+        /// Fail before building if this machine differs from the work plan
+        #[arg(long, requires = "cache_context")]
+        input_key: Option<String>,
         /// Pinned tools, SDK/sysroot inputs, and build variables
         #[arg(long)]
         environment: Option<PathBuf>,
@@ -195,7 +244,8 @@ enum Command {
         isolate: bool,
         #[arg(long)]
         output: PathBuf,
-        #[arg(short, long, default_value_t = 2)]
+        /// Compiler jobs; defaults to all available CPU cores
+        #[arg(short, long, default_value_t = std::thread::available_parallelism().map_or(1, usize::from))]
         jobs: usize,
         /// Persistent build result cache
         #[arg(long, requires = "cache_context")]
@@ -236,6 +286,74 @@ fn execute(args: Args) -> Result<(), String> {
     };
     let mut output = io::stdout().lock();
     match args.command {
+        Command::PackagePlan { packages, context } => {
+            let tasks = rootbeer_packaging::plan_packages(
+                catalog()?,
+                &packages,
+                &rootbeer_packaging::BuildOptions::default(),
+                &context,
+            )?;
+            writeln!(
+                output,
+                "{}",
+                serde_json::to_string(&tasks).map_err(|error| error.to_string())?
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        Command::VerifyRecord {
+            reference,
+            package,
+            system,
+            input_key,
+            public_key,
+        } => {
+            let bytes = rootbeer_packaging::distribution::read_record(&reference)?;
+            let record = rootbeer_packaging::distribution::verify_record(
+                &bytes,
+                &public_key,
+                &package,
+                &system,
+            )?;
+            if record.input_key() != input_key {
+                return Err("signed package inputs differ from the requested work".into());
+            }
+            writeln!(output, "{reference}").map_err(|error| error.to_string())?;
+        }
+        Command::Release {
+            recipe,
+            receipt,
+            registry,
+            output: destination,
+            key,
+            public_key,
+            input_key,
+        } => {
+            let definition = PackageDefinition::from_lua(
+                &std::fs::read_to_string(recipe).map_err(|error| error.to_string())?,
+            )?;
+            let reference = rootbeer_packaging::release_package(
+                &definition.package,
+                &receipt,
+                &registry,
+                &destination,
+                &std::fs::read(key).map_err(|error| error.to_string())?,
+                &public_key,
+                input_key.as_deref(),
+            )?;
+            writeln!(
+                output,
+                "prepared package release\nrecord: {}\nreference: {reference}",
+                destination.join("package.json").display(),
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        Command::Push {
+            release,
+            public_key,
+        } => {
+            let reference = rootbeer_packaging::push_package(&release, &public_key)?;
+            writeln!(output, "published {reference}").map_err(|error| error.to_string())?;
+        }
         Command::SeedUpstreams { output } => {
             let count = rootbeer_packaging::seed_upstreams(catalog()?, &output)?;
             writeln!(io::stdout(), "Seeded {count} GitHub upstream definitions")
@@ -600,6 +718,7 @@ fn execute(args: Args) -> Result<(), String> {
         }
         Command::Build {
             name,
+            input_key,
             environment,
             isolate,
             output: destination,
@@ -609,6 +728,21 @@ fn execute(args: Args) -> Result<(), String> {
             recheck,
             phase_timeout,
         } => {
+            let environment = read_environment(environment)?;
+            if let Some(expected) = input_key {
+                if isolate || environment.is_some() {
+                    return Err("package-plan currently requires the host environment".into());
+                }
+                let tasks = rootbeer_packaging::plan_packages(
+                    catalog()?,
+                    std::slice::from_ref(&name),
+                    &rootbeer_packaging::BuildOptions::default(),
+                    cache_context.as_deref().unwrap(),
+                )?;
+                if tasks.len() != 1 || tasks[0].key != expected {
+                    return Err("package inputs or build environment changed since planning".into());
+                }
+            }
             let cache = cache.map(|directory| rootbeer_packaging::BuildCache {
                 directory,
                 context: cache_context.unwrap(),
@@ -619,7 +753,7 @@ fn execute(args: Args) -> Result<(), String> {
                 &name,
                 &destination,
                 &rootbeer_packaging::BuildOptions {
-                    environment: read_environment(environment)?,
+                    environment,
                     is_isolated: isolate,
                     jobs,
                     cache,

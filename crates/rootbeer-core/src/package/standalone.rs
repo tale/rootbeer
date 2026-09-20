@@ -18,6 +18,54 @@ pub struct Environment {
     pub bin_dir: PathBuf,
 }
 
+/// Installs an explicitly selected, publisher-signed package without loading a catalog.
+pub fn install_record(
+    package: &str,
+    reference: &str,
+    public_key: &str,
+) -> Result<Environment, String> {
+    let bytes = super::distribution::read_record(reference)?;
+    let record = super::distribution::verify_record(
+        &bytes,
+        public_key,
+        package,
+        &ResolveContext::current().system,
+    )?;
+    let root = crate::state_dir().join("standalone");
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let guard = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(root.join("lock"))
+        .map_err(|error| error.to_string())?;
+    guard.lock().map_err(|error| error.to_string())?;
+
+    let realizer = PackageRealizer::default();
+    let realized = realizer
+        .realize(&record.artifact.package)
+        .map_err(|error| error.to_string())?;
+    let records = root.join("records");
+    fs::create_dir_all(&records).map_err(|error| error.to_string())?;
+    fs::write(records.join(format!("{}.json", hash_bytes(&bytes))), &bytes)
+        .map_err(|error| error.to_string())?;
+    let profile = super::profile::user_dir();
+    let packages = vec![realized];
+    install_profile(
+        &root,
+        &profile,
+        &packages,
+        &[PackageRequest::parse(package)],
+        &realizer,
+        &Applications::default(),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(Environment {
+        packages,
+        bin_dir: profile.join("bin"),
+    })
+}
+
 /// Resolves and caches an isolated command environment, or adds packages to the user profile.
 pub fn prepare(
     requests: &[PackageRequest],
