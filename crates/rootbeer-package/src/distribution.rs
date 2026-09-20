@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::Read;
 
 use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
@@ -89,6 +90,33 @@ impl PackageRecord {
 /// Domain-separated bytes shared by package signing and verification.
 pub fn signing_message(record: &RawValue) -> Vec<u8> {
     [b"rootbeer-package-v1\0".as_slice(), record.get().as_bytes()].concat()
+}
+
+/// Reads a local record or an immutable GHCR blob, bounding memory and checking its address.
+pub fn read_record(reference: &str) -> Result<Vec<u8>, String> {
+    let blob = if reference.starts_with("ghcr://") {
+        Some(crate::ghcr::GhcrBlob::parse(reference)?)
+    } else if reference.contains("://") {
+        return Err("record must be a local file or an immutable ghcr:// reference".into());
+    } else {
+        None
+    };
+    let reader: Box<dyn Read> = match &blob {
+        Some(blob) => blob.reader().map_err(|error| error.to_string())?,
+        None => Box::new(std::fs::File::open(reference).map_err(|error| error.to_string())?),
+    };
+    let mut bytes = Vec::new();
+    reader
+        .take(RECORD_LIMIT as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > RECORD_LIMIT {
+        return Err("package record exceeds 1 MiB".into());
+    }
+    if blob.is_some_and(|blob| blob.sha256 != crate::store::hash_bytes(&bytes)) {
+        return Err("package record digest does not match its address".into());
+    }
+    Ok(bytes)
 }
 
 /// Verifies publisher approval and the exact requested identity before returning install inputs.

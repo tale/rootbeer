@@ -106,6 +106,14 @@ pub struct UseArgs {
     #[arg(required = true)]
     packages: Vec<String>,
 
+    /// Install an exact name@version from a signed record file or immutable GHCR reference
+    #[arg(long, requires = "public_key", conflicts_with_all = ["offline", "update", "source", "head", "tag", "rev", "branch"])]
+    record: Option<String>,
+
+    /// Independently trusted publisher's Ed25519 public key (hex)
+    #[arg(long, requires = "record")]
+    public_key: Option<String>,
+
     /// Use only previously resolved requests and cached package bytes
     #[arg(long, conflicts_with = "update")]
     offline: bool,
@@ -173,6 +181,19 @@ fn execute(args: RunArgs) -> Result<(), String> {
 }
 
 pub fn install(args: UseArgs) {
+    if let Some(record) = &args.record {
+        let result = if args.packages.len() == 1 {
+            standalone::install_record(
+                &args.packages[0],
+                record,
+                args.public_key.as_deref().unwrap(),
+            )
+        } else {
+            Err("--record requires exactly one name@version".into())
+        };
+        report_install(result);
+        return;
+    }
     let requests = (|| -> Result<Vec<PackageRequest>, String> {
         if args.source_selection.selection().is_some() && args.packages.len() != 1 {
             return Err("source flags require exactly one package; use per-package @HEAD or @rev: selectors for multiple packages".into());
@@ -183,13 +204,17 @@ pub fn install(args: UseArgs) {
             Ok(request)
         }).collect()
     })().unwrap_or_else(|error| { eprintln!("error: {error}"); std::process::exit(1); });
-    match standalone::prepare_with_resolver(
+    report_install(standalone::prepare_with_resolver(
         &requests,
         true,
         args.offline,
         args.update,
         rootbeer_build::consumer::resolver_stack_for_inputs,
-    ) {
+    ));
+}
+
+fn report_install(result: Result<standalone::Environment, String>) {
+    match result {
         Ok(environment) => {
             for package in environment.packages {
                 eprintln!(
