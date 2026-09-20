@@ -296,7 +296,12 @@ pub fn export_catalog_with_workers(
             scheduled,
             workers,
             build_options.jobs,
+            &build_options.execution,
             |key, jobs| {
+                build_options
+                    .execution
+                    .check()
+                    .map_err(|error| error.to_string())?;
                 let (name, recipe, _) = &metadata[key];
                 let options = BuildOptions {
                     jobs,
@@ -361,6 +366,10 @@ pub fn export_catalog_with_workers(
             },
         )?;
     }
+    build_options
+        .execution
+        .check()
+        .map_err(|error| error.to_string())?;
     if !failures.is_empty() {
         return Err(format!(
             "{} package(s) failed:\n{}",
@@ -469,7 +478,8 @@ fn export_recipe(
         Store::new(root.join("store")),
         &downloads,
         root.join("install"),
-    );
+    )
+    .with_execution(build_options.execution.clone());
     let (mut artifact, receipt_bytes, proof) = if recipe.build.is_some() {
         let build = root.join("build");
         rootbeer_build::BuildPlan::resolve(catalog, key, inputs)?.execute(
@@ -493,6 +503,7 @@ fn export_recipe(
             .join("artifacts")
             .join(format!("{sha256}.tar.gz"));
         DownloadCache::new(&downloads)
+            .with_execution(build_options.execution.clone())
             .materialize(&format!("file://{}", archive.display()), Some(sha256))
             .map_err(|e| e.to_string())?;
         (artifact, receipt, None)
@@ -590,13 +601,14 @@ fn export_recipe(
     for check in &recipe.checks {
         let mut command = check.clone();
         command[0] = profile.join(&command[0]).to_string_lossy().into_owned();
-        rootbeer_build::run_with_sandbox(
+        rootbeer_build::run_with_execution(
             &command,
             check_workspace.path(),
             &environment,
             &root.join("checks.log"),
             Duration::from_secs(30),
             sandbox.as_ref(),
+            &build_options.execution,
         )?;
     }
     if let Some(environment) = &build_options.environment {
@@ -967,6 +979,15 @@ MAKE
 
     #[test]
     fn failed_recipes_do_not_discard_other_verified_results() {
+        retain_completed_recipes(false);
+    }
+
+    #[test]
+    fn cancelled_exports_reuse_completed_qualifications() {
+        retain_completed_recipes(true);
+    }
+
+    fn retain_completed_recipes(should_cancel: bool) {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("source");
         fs::create_dir_all(source.join("fixture")).unwrap();
@@ -980,7 +1001,7 @@ check:
 	true
 install:
 	mkdir -p $(DESTDIR)/bin
-	printf '#!/bin/sh\n[ "$$1" != "--fail" ]\n' > $(DESTDIR)/bin/xz
+	printf '#!/bin/sh\nif [ "$$1" = "--wait" ]; then /bin/sleep 30; fi\n[ "$$1" != "--fail" ]\n' > $(DESTDIR)/bin/xz
 	chmod +x $(DESTDIR)/bin/xz
 MAKE
 "#,
@@ -1013,12 +1034,15 @@ MAKE
         build.configure.clear();
         build.dependencies.clear();
         let mut failed = package.clone();
-        failed.name = "a-failure".into();
+        failed.name = if should_cancel { "z-wait" } else { "a-failure" }.into();
         failed
             .versions
             .get_mut(&failed.default_version)
             .unwrap()
-            .checks = vec![vec!["xz".into(), "--fail".into()]];
+            .checks = vec![vec![
+            "xz".into(),
+            if should_cancel { "--wait" } else { "--fail" }.into(),
+        ]];
         catalog.packages.insert(failed.name.clone(), failed);
         let options = ExportCache {
             directory: root.path().join("cache"),
@@ -1026,20 +1050,33 @@ MAKE
             recheck: false,
         };
         let output = root.path().join("output");
+        let execution = if should_cancel {
+            Execution::with_timeout(Duration::from_secs(3)).unwrap()
+        } else {
+            Execution::default()
+        };
         let error = export_catalog_with_workers(
             &catalog,
             "owner/index",
             &output,
             &BuildOptions {
                 jobs: 1,
+                execution,
                 ..Default::default()
             },
-            2,
+            if should_cancel { 1 } else { 2 },
             Some(&options),
             None,
         )
         .unwrap_err();
-        assert!(error.contains("a-failure@"), "{error}");
+        assert!(
+            error.contains(if should_cancel {
+                "deadline"
+            } else {
+                "a-failure@"
+            }),
+            "{error}"
+        );
         assert!(!output.exists());
         assert_eq!(
             fs::read_dir(options.directory.join("builds/results"))
@@ -1054,8 +1091,28 @@ MAKE
             1
         );
         let original_catalog_sha256 = catalog.sha256();
-        fs::remove_dir_all(options.directory.join("builds")).unwrap();
-        catalog.packages.remove("a-failure");
+        let plan = plan_export(
+            &catalog,
+            "owner/index",
+            &BuildOptions::default(),
+            Some(&options),
+            None,
+        )
+        .unwrap();
+        let ExportDecision::Reuse { receipt_sha256, .. } = &plan.packages["xz@5.8.3"] else {
+            panic!("completed qualification was lost");
+        };
+        if should_cancel {
+            let package = catalog.packages.get_mut("z-wait").unwrap();
+            package
+                .versions
+                .get_mut(&package.default_version)
+                .unwrap()
+                .checks = vec![vec!["xz".into(), "--version".into()]];
+        } else {
+            fs::remove_dir_all(options.directory.join("builds")).unwrap();
+            catalog.packages.remove("a-failure");
+        }
         export_catalog_with_workers(
             &catalog,
             "owner/index",
@@ -1070,8 +1127,9 @@ MAKE
         )
         .unwrap();
         let index: ArtifactIndex = publication::read_json(&output.join("index.json")).unwrap();
-        assert_eq!(index.artifacts.len(), 1);
+        assert_eq!(index.artifacts.len(), if should_cancel { 2 } else { 1 });
         let published = &index.artifacts["xz@5.8.3"][&ResolveContext::current().system];
+        assert_eq!(&published.receipt_sha256, receipt_sha256);
         assert!(
             matches!(&published.package.source, LockedSource::Url { url, .. } if url.starts_with("ghcr://owner/index/xz@sha256:"))
         );
@@ -1084,7 +1142,7 @@ MAKE
         assert!(receipt.build_key.is_some());
         assert_eq!(receipt.catalog_sha256, original_catalog_sha256);
         assert_ne!(receipt.catalog_sha256, catalog.sha256());
-        assert!(!options.directory.join("builds").exists());
+        assert_eq!(options.directory.join("builds").exists(), should_cancel);
         assert_eq!(
             receipt.build.sha256,
             catalog.packages["xz"].versions["5.8.3"]

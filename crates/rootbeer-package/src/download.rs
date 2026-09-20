@@ -7,8 +7,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::state_dir;
 use crate::store::hash_file;
+use crate::{state_dir, Execution};
 
 const USER_AGENT: &str = concat!("rootbeer/", env!("CARGO_PKG_VERSION"));
 
@@ -16,6 +16,7 @@ const USER_AGENT: &str = concat!("rootbeer/", env!("CARGO_PKG_VERSION"));
 pub struct DownloadCache {
     root: PathBuf,
     offline: bool,
+    execution: Execution,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -36,6 +37,7 @@ impl DownloadCache {
         Self {
             root: root.into(),
             offline: false,
+            execution: Execution::default(),
         }
     }
 
@@ -43,7 +45,14 @@ impl DownloadCache {
         Self {
             root: root.into(),
             offline: true,
+            execution: Execution::default(),
         }
+    }
+
+    /// Shares the caller’s cancellation and download deadline.
+    pub fn with_execution(mut self, execution: Execution) -> Self {
+        self.execution = execution;
+        self
     }
 
     pub fn materialize(
@@ -51,6 +60,7 @@ impl DownloadCache {
         url: &str,
         expected_sha256: Option<&str>,
     ) -> io::Result<DownloadedFile> {
+        self.execution.check()?;
         let blob = url
             .starts_with("ghcr://")
             .then(|| super::ghcr::GhcrBlob::parse(url))
@@ -87,7 +97,7 @@ impl DownloadCache {
 
         if expected_sha256.is_none() && (url.starts_with("https://") || url.starts_with("http://"))
         {
-            return with_retries(|| self.revalidate_url(url));
+            return with_execution_retries(&self.execution, || self.revalidate_url(url));
         }
 
         let (tmp, actual_sha256) = self.download_to_temp(url)?;
@@ -125,7 +135,7 @@ impl DownloadCache {
             .as_ref()
             .filter(|_| cached.is_some())
             .filter(|entry| entry.etag.is_some() || entry.last_modified.is_some());
-        let response = http_response(url, validators)?;
+        let response = http_response(url, validators, &self.execution)?;
         if response.status().as_u16() == 304 {
             return cached.filter(|_| validators.is_some()).ok_or_else(|| {
                 io::Error::other("received HTTP 304 without a verified cached download")
@@ -146,7 +156,7 @@ impl DownloadCache {
         };
         let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
         let mut reader = response.into_body().into_reader();
-        let sha256 = copy_reader_to_writer(url, &mut reader, &mut file)?;
+        let sha256 = copy_reader_to_writer(url, &mut reader, &mut file, &self.execution)?;
         file.as_file().sync_all()?;
         let downloaded = self.finish_download(file.path(), sha256, None, url)?;
         metadata.sha256 = downloaded.sha256.clone();
@@ -174,7 +184,7 @@ impl DownloadCache {
     }
 
     fn download_to_temp(&self, url: &str) -> io::Result<(PathBuf, String)> {
-        with_retries(|| self.download_once(url))
+        with_execution_retries(&self.execution, || self.download_once(url))
     }
 
     fn download_once(&self, url: &str) -> io::Result<(PathBuf, String)> {
@@ -186,7 +196,7 @@ impl DownloadCache {
                 Err(err) => return Err(err),
             };
 
-            match copy_url_to_writer(url, &mut file) {
+            match copy_url_to_writer(url, &mut file, &self.execution) {
                 Ok(sha256) => {
                     if let Err(error) = file.sync_all() {
                         let _ = fs::remove_file(&tmp);
@@ -286,7 +296,7 @@ impl Default for DownloadCache {
 
 pub fn read_url(url: &str) -> io::Result<Vec<u8>> {
     with_retries(|| {
-        let mut reader = url_reader(url)?;
+        let mut reader = url_reader(url, &Execution::default())?;
         let mut bytes = Vec::new();
         reader
             .read_to_end(&mut bytes)
@@ -308,20 +318,26 @@ where
     })
 }
 
-fn copy_url_to_writer(url: &str, writer: &mut impl Write) -> io::Result<String> {
-    let mut reader = url_reader(url)?;
-    copy_reader_to_writer(url, &mut reader, writer)
+fn copy_url_to_writer(
+    url: &str,
+    writer: &mut impl Write,
+    execution: &Execution,
+) -> io::Result<String> {
+    let mut reader = url_reader(url, execution)?;
+    copy_reader_to_writer(url, &mut reader, writer, execution)
 }
 
 fn copy_reader_to_writer(
     url: &str,
     reader: &mut impl Read,
     writer: &mut impl Write,
+    execution: &Execution,
 ) -> io::Result<String> {
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 8192];
 
     loop {
+        execution.check()?;
         let n = reader
             .read(&mut buf)
             .map_err(|error| body_error(url, error))?;
@@ -336,11 +352,12 @@ fn copy_reader_to_writer(
     Ok(hex(hasher.finalize().as_slice()))
 }
 
-fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
+fn url_reader(url: &str, execution: &Execution) -> io::Result<Box<dyn Read>> {
+    execution.check()?;
     if url.starts_with("ghcr://") {
         return super::ghcr::GhcrBlob::parse(url)
             .map_err(io::Error::other)?
-            .reader();
+            .reader_with_execution(execution);
     }
     if let Some(path) = url.strip_prefix("file://") {
         let file = fs::File::open(path)
@@ -355,7 +372,7 @@ fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
         ));
     }
 
-    let response = http_response(url, None)?;
+    let response = http_response(url, None, execution)?;
     if response.status().as_u16() == 304 {
         return Err(io::Error::other(
             "unexpected HTTP 304 without cache validators",
@@ -367,6 +384,7 @@ fn url_reader(url: &str) -> io::Result<Box<dyn Read>> {
 fn http_response(
     url: &str,
     cached: Option<&UrlCacheEntry>,
+    execution: &Execution,
 ) -> io::Result<ureq::http::Response<ureq::Body>> {
     let token = std::env::var("GITHUB_TOKEN").ok();
     let mut request = http_request(url, token.as_deref());
@@ -379,6 +397,7 @@ fn http_response(
     }
     let response = request
         .config()
+        .timeout_global(execution.remaining()?)
         .http_status_as_error(false)
         .build()
         .call()
@@ -460,7 +479,22 @@ fn retry_after(value: &str, now: SystemTime) -> Option<Duration> {
 }
 
 fn with_retries<T>(operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
-    retry_with_sleep(operation, std::thread::sleep)
+    with_execution_retries(&Execution::default(), operation)
+}
+
+fn with_execution_retries<T>(
+    execution: &Execution,
+    mut operation: impl FnMut() -> io::Result<T>,
+) -> io::Result<T> {
+    retry_with_sleep(
+        || {
+            execution.check()?;
+            operation()
+        },
+        |delay| {
+            let _ = execution.sleep(delay);
+        },
+    )
 }
 
 fn retry_with_sleep<T>(
@@ -506,6 +540,11 @@ pub fn http_request(
 ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .redirect_auth_headers(ureq::config::RedirectAuthHeaders::Never)
+        .timeout_resolve(Some(Duration::from_secs(30)))
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_send_request(Some(Duration::from_secs(30)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_recv_body(Some(Duration::from_secs(30)))
         .build()
         .into();
     let request = agent.get(url).header("User-Agent", USER_AGENT);
@@ -678,6 +717,30 @@ mod tests {
             .materialize(&server.url, None)
             .is_err());
         assert_eq!(fs::read_dir(empty.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn execution_deadline_bounds_stalled_http_and_removes_partial_downloads() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/archive", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nx")
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+        });
+        let root = tempfile::tempdir().unwrap();
+        let execution = Execution::with_timeout(Duration::from_millis(100)).unwrap();
+        let started = std::time::Instant::now();
+        let error = DownloadCache::new(root.path())
+            .with_execution(execution)
+            .materialize(&url, Some(&"a".repeat(64)))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        server.join().unwrap();
     }
 
     #[test]

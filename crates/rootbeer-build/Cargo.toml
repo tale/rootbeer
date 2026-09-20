@@ -16,4 +16,6 @@ libc = "0.2.182"
 goblin = { version = "0.10.7", default-features = false, features = ["std", "elf32", "elf64", "mach32", "mach64", "endian_fd"] }
 
 [build-dependencies]
+syn = { version = "2", features = ["full"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 sha2 = "0.10"

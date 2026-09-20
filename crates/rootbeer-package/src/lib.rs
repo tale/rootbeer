@@ -8,6 +8,8 @@ mod build_spec;
 pub mod catalog;
 pub mod definition;
 pub mod download;
+mod execution;
+pub use execution::Execution;
 pub mod ghcr;
 pub mod github;
 pub mod graph;

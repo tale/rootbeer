@@ -1,3 +1,4 @@
+use rootbeer_package::Execution;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc;
 use std::time::Instant;
@@ -16,6 +17,7 @@ pub fn run<R: Send>(
     tasks: Vec<Task>,
     workers: usize,
     jobs: usize,
+    execution: &Execution,
     operation: impl Fn(&str, usize) -> Result<R, String> + Sync,
     mut complete: impl FnMut(String, Result<R, String>) -> bool,
 ) -> Result<(), String> {
@@ -65,6 +67,11 @@ pub fn run<R: Send>(
     let (sender, receiver) = mpsc::channel();
     std::thread::scope(|scope| {
         while !pending.is_empty() || active > 0 {
+            if let Err(error) = execution.check() {
+                for (key, _) in std::mem::take(&mut pending) {
+                    complete(key, Err(error.to_string()));
+                }
+            }
             let blocked: Vec<_> = pending
                 .values()
                 .filter_map(|task| {
@@ -172,6 +179,7 @@ mod tests {
             ],
             2,
             3,
+            &Execution::default(),
             |key, jobs| {
                 let current = occupied.fetch_add(jobs, Ordering::SeqCst) + jobs;
                 peak.fetch_max(current, Ordering::SeqCst);
@@ -219,6 +227,7 @@ mod tests {
             ],
             2,
             2,
+            &Execution::default(),
             |key, _| {
                 started.lock().unwrap().push(key.to_string());
                 if key == "broken" {
@@ -247,6 +256,7 @@ mod tests {
             vec![task("broken", &[]), task("independent", &[])],
             1,
             2,
+            &Execution::default(),
             |key, _| {
                 assert_ne!(key, "broken");
                 Ok(())
@@ -271,6 +281,7 @@ mod tests {
             vec![import, task("compiler", &[])],
             2,
             4,
+            &Execution::default(),
             |key, jobs| {
                 assert_eq!(jobs, if key == "compiler" { 4 } else { 1 });
                 let mut arrivals = arrivals.lock().unwrap();
@@ -301,6 +312,7 @@ mod tests {
             ],
             1,
             1,
+            &Execution::default(),
             |key, _| {
                 started.lock().unwrap().push(key.to_string());
                 Ok(())
@@ -321,6 +333,7 @@ mod tests {
                 tasks,
                 2,
                 2,
+                &Execution::default(),
                 |_, _| -> Result<(), String> { panic!("invalid graph started work") },
                 |_, _| true
             )

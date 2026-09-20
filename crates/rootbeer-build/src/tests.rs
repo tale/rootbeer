@@ -910,3 +910,51 @@ fn failed_configure_retains_diagnostics_without_publishing_a_result() {
     assert!(!output.join("receipt.json").exists());
     assert!(!cache.join("results").exists());
 }
+
+#[test]
+fn execution_deadlines_stop_descendants_before_returning() {
+    let root = tempfile::tempdir().unwrap();
+    let writes = root.path().join("writes");
+    for should_cancel in [false, true] {
+        let execution = Execution::with_timeout(Duration::from_millis(300)).unwrap();
+        let cancel = execution.clone();
+        let writer = writes.clone();
+        let trigger = std::thread::spawn(move || {
+            if should_cancel {
+                let started = std::time::Instant::now();
+                while !writer.exists() && started.elapsed() < Duration::from_secs(5) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                cancel.cancel();
+            }
+        });
+        let error = run_with_execution(
+            &[
+                "/bin/sh".into(),
+                "-c".into(),
+                "(trap '' INT TERM; while :; do printf x >> writes; /bin/sleep 0.01; done) & wait"
+                    .into(),
+            ],
+            root.path(),
+            &BTreeMap::new(),
+            &root.path().join("log"),
+            Duration::from_secs(30),
+            None,
+            &execution,
+        )
+        .unwrap_err();
+        trigger.join().unwrap();
+        assert!(
+            error.contains(if should_cancel {
+                "cancelled"
+            } else {
+                "deadline"
+            }),
+            "{error}"
+        );
+        let completed = fs::read(&writes).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(completed, fs::read(&writes).unwrap());
+        fs::remove_file(&writes).unwrap();
+    }
+}

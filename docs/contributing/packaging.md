@@ -624,7 +624,9 @@ results. A dependent compilation can still reuse identical dependency outputs.
 
 Unclassified build files, shared executor code, manifests, the workspace lockfile,
 and environment changes invalidate conservatively. Backend dispatch changes are
-shared changes. Inline tests within shared source files also remain in the identity.
+shared changes. Trailing inline test modules and files imported only through `#[cfg(test)] mod`
+are excluded from source fingerprints. Other production source bytes remain exact. Scheduling and execution-budget policy are operational
+inputs, separate from the commands and environment that produce package bytes.
 CLI/docs changes do not change package identities. The scoped identity introduces
 new cache keys; old evidence is retained but never silently relabeled as compatible.
 
@@ -633,7 +635,12 @@ the recipe revision still invalidates compilation. Changed dependency recipes
 invalidate dependent qualifications; compilation can reuse dependencies with
 identical installed outputs and export contracts. Successful qualifications are
 saved per package, even when another package fails, so a retry retains completed
-work.
+work. `export --timeout SECONDS` bounds execution; SIGINT/SIGTERM request the same
+shutdown. Forge stops starting work, terminates its command groups, waits for active
+workers, and leaves completed qualifications intact. Retry with the same cache;
+only missing qualifications run. CI should set its outer deadline later than
+Forge's budget to leave time for cleanup and cache transport. Forced runner loss
+can still prevent retention.
 
 Use a trusted cache and identify the OS image and tools in `BUILD_ENVIRONMENT_ID`.
 A missing entry runs full verification; corruption fails. `--recheck` bypasses
