@@ -33,6 +33,28 @@ hashes. The caller-supplied host identity also remains part of the key.
 Checks, job allocation, archive paths, unrelated catalog entries, and publication destinations do not
 change build keys. Receipts retain the key, environment lock, and host identity.
 
+### Release one package
+
+For a dependency-free source build from a trusted producer:
+
+```sh
+rootbeer-forge release --recipe ../rootbeer-index/packages/shfmt.lua \
+  --receipt /tmp/shfmt-build/receipt.json --registry tale/rootbeer-index/shfmt \
+  --output /tmp/shfmt-release --key "$SIGNING_KEY_FILE" --public-key "$PUBLISHER_PUBLIC_KEY"
+rootbeer-forge push /tmp/shfmt-release --public-key "$PUBLISHER_PUBLIC_KEY"
+```
+
+`release` checks the recipe, archive, installed contents, and runtime audit before
+signing. It produces `package.json`, `package.tar.gz`, and the original `receipt.json`.
+It reads only the selected recipe and does not rebuild or execute the package.
+The signature approves that build; it does not independently authenticate the
+receipt's producer. CI must establish producer trust before giving it to the signer.
+
+`push` requires ORAS authenticated to GHCR with package write access. It uploads
+the three files together, checks anonymous downloads, and prints the immutable
+record reference. Retry the same command after upload failures; no signing key or
+rebuild is needed. This does not update catalog discovery.
+
 ### Go source builds
 
 Use `backend = "go"` with explicit binary entry points:

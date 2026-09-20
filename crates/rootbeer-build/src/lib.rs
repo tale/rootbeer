@@ -312,6 +312,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
             let mut artifact = match restored {
                 Some(mut artifact) => {
                     artifact.catalog_sha256 = plan.catalog_sha256.clone();
+                    artifact.recipe_sha256 = recipe.sha256();
                     artifact.package.runtime_dependencies =
                         runtime_dependencies(build, &dependencies);
                     artifact.dependencies = dependencies;
@@ -687,6 +688,7 @@ fn compile(
             2
         },
         build_key: None,
+        recipe_sha256: recipe.sha256(),
         build_environment: None,
         environment: None,
         isolation: None,

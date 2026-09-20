@@ -418,6 +418,7 @@ impl SourceBuild {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildArtifact {
     pub schema: u32,
+    pub recipe_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

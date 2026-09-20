@@ -1,0 +1,260 @@
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+
+use rootbeer_package::distribution::{BuildProvenance, PackageRecord};
+use rootbeer_package::{
+    BuildArtifact, CatalogPackage, LockedSource, PackageCatalog, PackageRealizer,
+};
+use rootbeer_store::{hash_bytes, Store};
+
+/// Verifies and signs one source build. The caller must trust the receipt's producer.
+/// The destination contains only this package's archive, receipt, and signed record.
+pub fn release_package(
+    definition: &CatalogPackage,
+    receipt: &Path,
+    registry: &str,
+    output: &Path,
+    key_der: &[u8],
+    public_key: &str,
+) -> Result<String, String> {
+    rootbeer_package::ghcr::validate_repository(registry)?;
+    let receipt_bytes = fs::read(receipt).map_err(|error| error.to_string())?;
+    let build: BuildArtifact =
+        serde_json::from_slice(&receipt_bytes).map_err(|error| error.to_string())?;
+    if !build.dependencies.is_empty() || !build.package.runtime_dependencies.is_empty() {
+        return Err("release supports dependency-free packages only".into());
+    }
+    if definition.name != build.package.name {
+        return Err("build receipt belongs to a different package".into());
+    }
+    let recipe = definition
+        .versions
+        .get(&build.package.version)
+        .ok_or("no matching package recipe")?
+        .clone();
+    let provenance = BuildProvenance {
+        environment: build
+            .environment
+            .ok_or("build receipt has no pinned environment")?,
+        isolation: build
+            .isolation
+            .ok_or("build receipt has no isolation evidence")?,
+        toolchain: build.toolchain,
+        runtime_audit_sha256: build
+            .runtime_audit_sha256
+            .ok_or("build receipt has no runtime audit")?,
+    };
+    let staging = crate::publication::staging(output)?;
+    let destination = staging.path().join("release");
+    fs::create_dir(&destination).map_err(|error| error.to_string())?;
+    fs::create_dir(destination.join("artifacts")).map_err(|error| error.to_string())?;
+    let realizer = PackageRealizer::with_dirs(
+        Store::new(staging.path().join("store")),
+        staging.path().join("downloads"),
+        staging.path().join("install"),
+    );
+    let catalog = PackageCatalog {
+        schema: 1,
+        packages: std::collections::BTreeMap::from([(definition.name.clone(), definition.clone())]),
+    };
+    let (system, artifact, checked_receipt) = crate::bundle::prepare_artifact(
+        &catalog,
+        receipt,
+        &format!("ghcr://{registry}"),
+        &destination,
+        &realizer,
+    )?;
+    if checked_receipt != receipt_bytes {
+        return Err("build receipt changed during release".into());
+    }
+    let LockedSource::Url { sha256, .. } = &artifact.package.source else {
+        unreachable!()
+    };
+    fs::rename(
+        destination
+            .join("artifacts")
+            .join(format!("{sha256}.tar.gz")),
+        destination.join("package.tar.gz"),
+    )
+    .map_err(|error| error.to_string())?;
+    fs::remove_dir(destination.join("artifacts")).map_err(|error| error.to_string())?;
+    let record = PackageRecord {
+        schema: 1,
+        system,
+        recipe,
+        artifact,
+        provenance,
+    };
+    let signed = crate::sign_package_record(&record, key_der, public_key)?;
+    let digest = hash_bytes(&signed);
+    fs::write(destination.join("package.json"), signed).map_err(|error| error.to_string())?;
+    fs::write(destination.join("receipt.json"), checked_receipt)
+        .map_err(|error| error.to_string())?;
+    fs::rename(destination, output).map_err(|error| error.to_string())?;
+    Ok(format!("ghcr://{registry}@sha256:{digest}"))
+}
+
+/// Uploads a verified package release as an OCI artifact, retaining all three blobs together.
+pub fn push_package(release: &Path, public_key: &str) -> Result<String, String> {
+    let release = release.canonicalize().map_err(|error| error.to_string())?;
+    let bytes = fs::read(release.join("package.json")).map_err(|error| error.to_string())?;
+    let signed: rootbeer_package::distribution::SignedPackageRecord =
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let record: PackageRecord =
+        serde_json::from_str(signed.record.get()).map_err(|error| error.to_string())?;
+    let record = rootbeer_package::distribution::verify_record(
+        &bytes,
+        public_key,
+        &record.artifact.package.id(),
+        &record.system,
+    )?;
+    let LockedSource::Url { url, sha256 } = &record.artifact.package.source else {
+        unreachable!()
+    };
+    let blob = rootbeer_package::ghcr::GhcrBlob::parse(url)?;
+    if rootbeer_store::hash_file(release.join("package.tar.gz"))
+        .map_err(|error| error.to_string())?
+        != *sha256
+        || rootbeer_store::hash_file(release.join("receipt.json"))
+            .map_err(|error| error.to_string())?
+            != record.artifact.receipt_sha256
+    {
+        return Err("package release contents changed".into());
+    }
+    let digest = hash_bytes(&bytes);
+    let status = Command::new("oras")
+        .current_dir(&release)
+        .args([
+            "push",
+            &format!("ghcr.io/{}:package-{digest}", blob.repository),
+            "--artifact-type",
+            "application/vnd.rootbeer.package.v1",
+            "package.json:application/vnd.rootbeer.package.record.v1+json",
+            "package.tar.gz:application/gzip",
+            "receipt.json:application/json",
+        ])
+        .status()
+        .map_err(|error| error.to_string())?;
+    if !status.success() {
+        return Err(format!("package upload failed: {status}"));
+    }
+    let downloads = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let cache = rootbeer_package::download::DownloadCache::new(downloads.path());
+    for hash in [&digest, sha256, &record.artifact.receipt_sha256] {
+        cache
+            .materialize_verified(&format!("ghcr://{}@sha256:{hash}", blob.repository), hash)
+            .map_err(|error| format!("cannot verify public package download: {error}"))?;
+    }
+    Ok(format!("ghcr://{}@sha256:{digest}", blob.repository))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+    use rootbeer_package::{BuildEnvironmentInput, BuildEnvironmentLock};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn releases_one_build_across_unrelated_catalog_changes_and_rejects_tampering() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut catalog, receipt) = crate::bundle::tests::fixture(root.path());
+        let mut build: BuildArtifact =
+            serde_json::from_slice(&fs::read(&receipt).unwrap()).unwrap();
+        build.environment = Some(BuildEnvironmentLock {
+            schema: 1,
+            system: build.system.clone(),
+            tools: ["sh", "cc", "make", "patch"]
+                .into_iter()
+                .map(|name| {
+                    (
+                        name.into(),
+                        BuildEnvironmentInput {
+                            path: format!("/usr/bin/{name}").into(),
+                            sha256: "d".repeat(64),
+                        },
+                    )
+                })
+                .collect(),
+            inputs: BTreeMap::new(),
+            variables: BTreeMap::new(),
+        });
+        build.isolation = Some("host".into());
+        build.toolchain.insert("cc".into(), "test compiler".into());
+        let report = rootbeer_build::audit::audit(&root.path().join("tree")).unwrap();
+        build.runtime_audit_sha256 = Some(hash_bytes(&serde_json::to_vec_pretty(&report).unwrap()));
+        fs::write(&receipt, serde_json::to_vec(&build).unwrap()).unwrap();
+        catalog
+            .packages
+            .get_mut(&build.package.name)
+            .unwrap()
+            .description
+            .push_str(" changed");
+        assert_ne!(build.catalog_sha256, catalog.sha256());
+        let key = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
+        let public_key: String = Ed25519KeyPair::from_pkcs8(key.as_ref())
+            .unwrap()
+            .public_key()
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let release = root.path().join("release");
+        let reference = release_package(
+            &catalog.packages[&build.package.name],
+            &receipt,
+            "example/packages/tool",
+            &release,
+            key.as_ref(),
+            &public_key,
+        )
+        .unwrap();
+        let bytes = fs::read(release.join("package.json")).unwrap();
+        assert!(reference.ends_with(&hash_bytes(&bytes)));
+        rootbeer_package::distribution::verify_record(
+            &bytes,
+            &public_key,
+            &build.package.id(),
+            &build.system,
+        )
+        .unwrap();
+        assert_eq!(fs::read_dir(&release).unwrap().count(), 3);
+        assert!(!String::from_utf8(bytes).unwrap().contains("catalog_sha256"));
+
+        let mut changed = catalog.packages[&build.package.name].clone();
+        changed
+            .versions
+            .get_mut(&build.package.version)
+            .unwrap()
+            .checks
+            .push(vec!["new-check".into()]);
+        assert!(release_package(
+            &changed,
+            &receipt,
+            "example/packages/tool",
+            &root.path().join("changed"),
+            key.as_ref(),
+            &public_key
+        )
+        .unwrap_err()
+        .contains("receipt does not match"));
+
+        fs::write(
+            receipt.parent().unwrap().join("package.tar.gz"),
+            b"tampered",
+        )
+        .unwrap();
+        let failed = root.path().join("failed");
+        assert!(release_package(
+            &catalog.packages[&build.package.name],
+            &receipt,
+            "example/packages/tool",
+            &failed,
+            key.as_ref(),
+            &public_key
+        )
+        .is_err());
+        assert!(!failed.exists());
+    }
+}

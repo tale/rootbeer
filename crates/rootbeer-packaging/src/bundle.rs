@@ -241,8 +241,8 @@ fn validate_receipt(catalog: &PackageCatalog, receipt: &BuildArtifact) -> Result
     };
     if !matches!(receipt.schema, 1 | 2)
         || (receipt.schema < 2 && !package.runtime_dependencies.is_empty())
-        || receipt.catalog_sha256 != catalog.sha256()
         || receipt.revision != recipe.revision
+        || receipt.recipe_sha256 != recipe.sha256()
         || !recipe.systems.contains(&receipt.system)
         || serde_json::to_value(&receipt.build).map_err(|e| e.to_string())?
             != serde_json::to_value(build).map_err(|e| e.to_string())?
@@ -371,6 +371,7 @@ pub(crate) mod tests {
         writer.into_inner().unwrap().finish().unwrap();
         let receipt = BuildArtifact {
             schema: 1,
+            recipe_sha256: recipe.sha256(),
             build_key: None,
             build_environment: None,
             environment: None,
@@ -512,6 +513,7 @@ pub(crate) mod tests {
                 kind: rootbeer_package::DependencyKind::Runtime,
             }];
         receipt.build = recipe.build.clone().unwrap();
+        receipt.recipe_sha256 = recipe.sha256();
         receipt.schema = 2;
         receipt.catalog_sha256 = catalog.sha256();
         let tree = root.path().join("tree");
@@ -629,8 +631,8 @@ pub(crate) mod tests {
         let mut receipt: BuildArtifact = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         for field in [
             "revision",
+            "recipe_sha256",
             "system",
-            "catalog_sha256",
             "build",
             "output_sha256",
             "bins",
@@ -639,8 +641,8 @@ pub(crate) mod tests {
             let mut value = serde_json::to_value(&receipt).unwrap();
             match field {
                 "revision" => value[field] = serde_json::json!(99),
+                "recipe_sha256" => value[field] = serde_json::json!("0".repeat(64)),
                 "system" => value[field] = serde_json::json!("x86_64-windows"),
-                "catalog_sha256" => value[field] = serde_json::json!("0".repeat(64)),
                 "build" => value[field]["configure"] = serde_json::json!(["--different"]),
                 "output_sha256" => value["package"][field] = serde_json::Value::Null,
                 "bins" => {

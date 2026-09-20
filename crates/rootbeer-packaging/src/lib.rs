@@ -7,6 +7,7 @@ pub use rootbeer_package::*;
 mod bundle;
 mod export;
 mod publication;
+mod release;
 pub use bundle::bundle_artifacts;
 pub use export::{
     candidate_files, checkpoint_results, export_catalog, export_catalog_shard,
@@ -17,6 +18,7 @@ pub use export::{
 pub use publication::{
     assemble_indexes, publish_index, verify_bundle, verify_candidate, PublishOptions,
 };
+pub use release::{push_package, release_package};
 
 mod sign;
 pub use sign::{sign_index, sign_package_record};

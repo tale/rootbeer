@@ -17,6 +17,30 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Approve one source build and prepare its signed package release
+    Release {
+        /// This package's existing Lua definition
+        #[arg(long)]
+        recipe: PathBuf,
+        #[arg(long)]
+        receipt: PathBuf,
+        /// GHCR repository, such as owner/packages/tool
+        #[arg(long)]
+        registry: String,
+        #[arg(long)]
+        output: PathBuf,
+        /// Publisher's Ed25519 PKCS#8 DER key
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long)]
+        public_key: String,
+    },
+    /// Upload a signed package release to GHCR without rebuilding or signing again
+    Push {
+        release: PathBuf,
+        #[arg(long)]
+        public_key: String,
+    },
     /// Add inferred update rules to copies of the selected catalog's GitHub packages
     SeedUpstreams {
         #[arg(long)]
@@ -195,7 +219,8 @@ enum Command {
         isolate: bool,
         #[arg(long)]
         output: PathBuf,
-        #[arg(short, long, default_value_t = 2)]
+        /// Compiler jobs; defaults to all available CPU cores
+        #[arg(short, long, default_value_t = std::thread::available_parallelism().map_or(1, usize::from))]
         jobs: usize,
         /// Persistent build result cache
         #[arg(long, requires = "cache_context")]
@@ -236,6 +261,39 @@ fn execute(args: Args) -> Result<(), String> {
     };
     let mut output = io::stdout().lock();
     match args.command {
+        Command::Release {
+            recipe,
+            receipt,
+            registry,
+            output: destination,
+            key,
+            public_key,
+        } => {
+            let definition = PackageDefinition::from_lua(
+                &std::fs::read_to_string(recipe).map_err(|error| error.to_string())?,
+            )?;
+            let reference = rootbeer_packaging::release_package(
+                &definition.package,
+                &receipt,
+                &registry,
+                &destination,
+                &std::fs::read(key).map_err(|error| error.to_string())?,
+                &public_key,
+            )?;
+            writeln!(
+                output,
+                "prepared package release\nrecord: {}\nreference: {reference}",
+                destination.join("package.json").display(),
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        Command::Push {
+            release,
+            public_key,
+        } => {
+            let reference = rootbeer_packaging::push_package(&release, &public_key)?;
+            writeln!(output, "published {reference}").map_err(|error| error.to_string())?;
+        }
         Command::SeedUpstreams { output } => {
             let count = rootbeer_packaging::seed_upstreams(catalog()?, &output)?;
             writeln!(io::stdout(), "Seeded {count} GitHub upstream definitions")
