@@ -9,6 +9,6 @@ stylua = "latest"
 "aqua:Kampfkarren/selene" = "latest"
 
 [env]
-ROOTBEER_INDEX_URL = "https://tale.github.io/rootbeer-index/current.json"
+ROOTBEER_INDEX_URL = "https://pdr.rbpkg.com/current.json"
 ROOTBEER_INDEX_PUBLIC_KEY = "028c5b185fb63ea61128a0bf6fb0decc8b700020561db08d82a998c7d0493bc0"
 _.path = ["./scripts/bin", "./target/debug"]

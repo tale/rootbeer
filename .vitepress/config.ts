@@ -9,7 +9,7 @@ export default defineConfig({
   themeConfig: {
     catalog: {
       repositoryUrl: "https://github.com/tale/rootbeer-index",
-      url: process.env.ROOTBEER_INDEX_URL || "https://tale.github.io/rootbeer-index/current.json",
+      url: process.env.ROOTBEER_INDEX_URL || "https://pdr.rbpkg.com/current.json",
       publicKey:
         process.env.ROOTBEER_INDEX_PUBLIC_KEY ||
         "028c5b185fb63ea61128a0bf6fb0decc8b700020561db08d82a998c7d0493bc0",

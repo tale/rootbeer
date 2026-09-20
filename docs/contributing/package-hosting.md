@@ -5,7 +5,7 @@
 | Site                            | Owner               | Published content                                               |
 | ------------------------------- | ------------------- | --------------------------------------------------------------- |
 | `rootbeer.tale.me`              | Rootbeer repository | Documentation, package search, installer, and nightly binaries. |
-| `tale.github.io/rootbeer-index` | Index repository    | Signed latest manifest, immutable snapshots, and receipts.      |
+| `pdr.rbpkg.com`                 | Index repository    | Signed latest manifest, immutable snapshots, and receipts.      |
 | GHCR                            | Index publisher     | Source-built and mirrored package archives addressed by digest. |
 
 Package search fetches the live signed index in the browser. Publishing new
@@ -48,7 +48,7 @@ introducing schema 4 recipes. Older clients
 cannot parse these additions, even when selecting an unrelated package.
 
 The active catalog uses `--manifest current.json`. CLI and website builds use
-`https://tale.github.io/rootbeer-index/current.json` with the existing public key.
+`https://pdr.rbpkg.com/current.json` with the existing public key.
 
 Intel macOS is unsupported. Publish the three supported platforms through
 `current.json`; retired Intel binaries and catalog channels are no longer served.
