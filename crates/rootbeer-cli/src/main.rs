@@ -5,6 +5,7 @@ mod init;
 mod progress;
 mod remote;
 mod run;
+mod search;
 mod typegen;
 mod update;
 
@@ -45,6 +46,9 @@ enum Commands {
 
     /// Run a package command without a configuration or permanent installation
     Run(run::RunArgs),
+
+    /// Search published packages in the distribution manifest
+    Search(search::Args),
 
     /// Install packages for your user without a Lua configuration
     Use(run::UseArgs),
@@ -88,6 +92,7 @@ fn main() {
         Commands::Init(args) => init::run(args),
         Commands::Run(args) => run::run(args),
         Commands::Use(args) => run::install(args),
+        Commands::Search(args) => search::run(args),
         Commands::Unuse(args) => run::uninstall(args),
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),

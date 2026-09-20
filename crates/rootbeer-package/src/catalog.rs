@@ -192,6 +192,7 @@ pub struct CatalogResolver {
     inputs: PackageResolverInputs,
     backends: ResolverStack,
     fallback: Option<super::index::IndexResolver>,
+    discovery: Option<super::discovery::DiscoveryResolver>,
 }
 
 impl CatalogResolver {
@@ -205,6 +206,9 @@ impl CatalogResolver {
             inputs: inputs.clone(),
             backends,
             fallback: None,
+            discovery: inputs
+                .discovery()
+                .map(super::discovery::DiscoveryResolver::new),
         }
     }
 
@@ -227,6 +231,9 @@ impl PackageResolver for CatalogResolver {
     ) -> Result<Option<PackageResolution>, String> {
         let catalog = &self.catalog;
         let Some(package) = catalog.find(&request.name) else {
+            if let Some(discovery) = &self.discovery {
+                return discovery.resolve(request, context);
+            }
             if let Some(fallback) = &self.fallback {
                 return fallback.resolve(request, context);
             }

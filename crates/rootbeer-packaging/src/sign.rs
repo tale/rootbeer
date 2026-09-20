@@ -12,6 +12,7 @@ pub fn sign_package_record(
     use rootbeer_package::distribution::{signing_message, SignedPackageRecord, RECORD_LIMIT};
 
     record.validate()?;
+    record.verify_provenance(public_key)?;
     let key =
         Ed25519KeyPair::from_pkcs8(key_der).map_err(|_| "invalid Ed25519 PKCS#8 signing key")?;
     if key.public_key().as_ref() != decode_hex::<32>(public_key)? {

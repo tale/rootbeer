@@ -198,6 +198,7 @@ pub enum ResolutionProof {
     Catalog(super::CatalogProof),
     SourceBuild(crate::SourceBuildProof),
     PublishedIndex(super::PublishedIndexProof),
+    PackageRecord(super::discovery::PackageRecordProof),
     Snapshot(SnapshotProof),
     MetadataClosure(MetadataClosureProof),
     GitRelease(GitReleaseProof),

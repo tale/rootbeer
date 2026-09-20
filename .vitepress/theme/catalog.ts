@@ -14,6 +14,7 @@ export interface CatalogPackage {
 }
 
 export interface CatalogRecipe {
+  records?: Record<string, { url: string; sha256: string }>;
   systems: string[];
   bins: string[];
   apps?: Record<string, string>;
@@ -82,38 +83,85 @@ async function bytes(url: string, limit: number): Promise<Uint8Array> {
   return output;
 }
 
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    const keys = Object.keys(object).sort((a, b) => {
+      const left = Array.from(a, (character) => character.codePointAt(0)!);
+      const right = Array.from(b, (character) => character.codePointAt(0)!);
+      for (let index = 0; index < Math.min(left.length, right.length); index++) {
+        if (left[index] !== right[index]) return left[index] - right[index];
+      }
+      return left.length - right.length;
+    });
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonical(object[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
   const decoder = new TextDecoder();
-  const manifest = JSON.parse(decoder.decode(await bytes(source.url, 65536)));
-  if (manifest.schema !== 1 || !Number.isSafeInteger(manifest.sequence) || manifest.sequence <= 0) {
+  const manifest = JSON.parse(decoder.decode(await bytes(source.url, 16 * 1024 * 1024)));
+  if (
+    ![1, 2].includes(manifest.schema) ||
+    !Number.isSafeInteger(manifest.sequence) ||
+    manifest.sequence <= 0
+  ) {
     throw new Error("The catalog manifest is not supported.");
   }
-  https(manifest.index.url);
-  hex(manifest.index.sha256, 32);
-  const key = await crypto.subtle.importKey("raw", hex(source.publicKey, 32), "Ed25519", false, [
-    "verify",
-  ]);
-  const payload = new TextEncoder().encode(
-    JSON.stringify([
-      "rootbeer-index-v1",
-      manifest.sequence,
-      manifest.index.url,
-      manifest.index.sha256,
-    ]),
-  );
-  if (!(await crypto.subtle.verify("Ed25519", key, hex(manifest.signature, 64), payload))) {
-    throw new Error("The package catalog signature could not be verified.");
+  let index;
+  let snapshotUrl = source.url;
+  if (manifest.schema === 2) {
+    const key = await crypto.subtle.importKey("raw", hex(source.publicKey, 32), "Ed25519", false, [
+      "verify",
+    ]);
+    const payload = new TextEncoder().encode(
+      canonical(["rootbeer-discovery-v1", manifest.sequence, manifest.catalog, manifest.records]),
+    );
+    if (!(await crypto.subtle.verify("Ed25519", key, hex(manifest.signature, 64), payload))) {
+      throw new Error("The package discovery signature could not be verified.");
+    }
+    for (const records of Object.values(manifest.records) as Record<
+      string,
+      { url: string; sha256: string }
+    >[]) {
+      for (const record of Object.values(records)) {
+        https(record.url);
+        hex(record.sha256, 32);
+      }
+    }
+    index = { schema: 8, catalog: manifest.catalog, artifacts: manifest.records };
+  } else {
+    https(manifest.index.url);
+    hex(manifest.index.sha256, 32);
+    const key = await crypto.subtle.importKey("raw", hex(source.publicKey, 32), "Ed25519", false, [
+      "verify",
+    ]);
+    const payload = new TextEncoder().encode(
+      JSON.stringify([
+        "rootbeer-index-v1",
+        manifest.sequence,
+        manifest.index.url,
+        manifest.index.sha256,
+      ]),
+    );
+    if (!(await crypto.subtle.verify("Ed25519", key, hex(manifest.signature, 64), payload))) {
+      throw new Error("The package catalog signature could not be verified.");
+    }
+    const snapshot = await bytes(manifest.index.url, 16 * 1024 * 1024);
+    const digest = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", snapshot)),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
+    if (digest !== manifest.index.sha256)
+      throw new Error("The package catalog contents could not be verified.");
+    index = JSON.parse(decoder.decode(snapshot));
+    snapshotUrl = manifest.index.url;
   }
-  const snapshot = await bytes(manifest.index.url, 16 * 1024 * 1024);
-  const digest = Array.from(
-    new Uint8Array(await crypto.subtle.digest("SHA-256", snapshot)),
-    (byte) => byte.toString(16).padStart(2, "0"),
-  ).join("");
-  if (digest !== manifest.index.sha256)
-    throw new Error("The package catalog contents could not be verified.");
-  const index = JSON.parse(decoder.decode(snapshot));
   if (
-    ![1, 2, 3, 4, 5, 6, 7].includes(index.schema) ||
+    (![1, 2, 3, 4, 5, 6, 7].includes(index.schema) &&
+      !(manifest.schema === 2 && index.schema === 8)) ||
     index.catalog?.schema !== 1 ||
     !index.catalog.packages ||
     !index.artifacts
@@ -177,9 +225,10 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
         }
       }
       const published = index.artifacts[`${pkg.name}@${version}`] ?? {};
+      if (index.schema === 8) recipe.records = published;
       recipe.systems = recipe.systems.filter(
         (system) =>
-          Object.hasOwn(published, system) || (index.schema >= 7 && recipe.build !== undefined),
+          Object.hasOwn(published, system) || (index.schema === 7 && recipe.build !== undefined),
       );
     }
   }
@@ -187,7 +236,7 @@ export async function loadCatalog(source: CatalogSource): Promise<Catalog> {
     packages: packages
       .filter((pkg) => availableVersions(pkg).length)
       .sort((a, b) => a.name.localeCompare(b.name)),
-    snapshotUrl: manifest.index.url,
+    snapshotUrl,
   };
 }
 

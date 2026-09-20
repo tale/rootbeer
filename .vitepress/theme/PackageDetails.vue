@@ -132,6 +132,14 @@ function chooseCommand(command: string) {
 <template>
   <div class="package-details">
     <nav class="package-links" :aria-label="`${pkg.name} links`">
+      <a
+        v-for="(record, platform) in recipe?.records"
+        :key="platform"
+        :href="record.url"
+        target="_blank"
+        rel="noopener noreferrer"
+        >Record · {{ platform }}</a
+      >
       <a :href="pkg.homepage" target="_blank" rel="noopener noreferrer">Homepage ↗</a>
       <a v-if="recipeUrl" :href="recipeUrl" target="_blank" rel="noopener noreferrer"
         >Package recipe ↗</a

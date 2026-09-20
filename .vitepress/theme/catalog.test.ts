@@ -336,3 +336,59 @@ test("links exact dependencies with their scope and selected platform", () => {
   assert.equal(url.searchParams.get("platform"), "aarch64-linux");
   assert.equal(dependencies[0].request, "test-library@1.2+build.3");
 });
+
+test("discovery uses one manifest request and exposes only published package records", async () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const catalog = {
+    packages: {
+      demo: {
+        aliases: [],
+        default_version: "1",
+        description: "A published tool",
+        homepage: "https://example.com",
+        name: "demo",
+        versions: {
+          "1": { bins: ["demo"], revision: 1, systems: ["aarch64-macos", "x86_64-linux"] },
+        },
+      },
+    },
+    schema: 1,
+  };
+  const records = {
+    "demo@1": {
+      "aarch64-macos": { sha256: "a".repeat(64), url: "https://example.com/records/demo.json" },
+    },
+  };
+  const payload = JSON.stringify(["rootbeer-discovery-v1", 1, catalog, records]);
+  const manifest = {
+    schema: 2,
+    sequence: 1,
+    catalog,
+    records,
+    signature: sign(null, Buffer.from(payload), privateKey).toString("hex"),
+  };
+  const source = {
+    url: "https://example.com/current.json",
+    publicKey: publicKey.export({ type: "spki", format: "der" }).subarray(-32).toString("hex"),
+  };
+  const original = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async (url) => {
+    assert.equal(String(url), source.url);
+    requests++;
+    return new Response(JSON.stringify(manifest));
+  };
+  try {
+    const result = await loadCatalog(source);
+    assert.equal(requests, 1);
+    assert.deepEqual(result.packages[0].versions["1"].systems, ["aarch64-macos"]);
+    assert.equal(
+      result.packages[0].versions["1"].records?.["aarch64-macos"].url,
+      records["demo@1"]["aarch64-macos"].url,
+    );
+    manifest.records["demo@1"]["aarch64-macos"].url = "https://example.com/other.json";
+    await assert.rejects(loadCatalog(source), /signature/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

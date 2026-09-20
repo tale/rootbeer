@@ -72,12 +72,46 @@ impl OfficialIndexSource {
     /// Explicit refreshes never use a stale cache.
     pub fn select(&self, state: &Path, should_refresh: bool) -> Result<IndexSelection, String> {
         self.validate()?;
-        self.select_with(state, should_refresh, fetch)
+        let cached = crate::discovery::cached(self, state)?;
+        let response = fetch(&self.url, crate::discovery::MANIFEST_LIMIT);
+        match response {
+            Ok(bytes) => {
+                if serde_json::from_slice::<serde_json::Value>(&bytes)
+                    .ok()
+                    .and_then(|value| value["schema"].as_u64())
+                    == Some(2)
+                {
+                    return crate::discovery::select(self, state, &bytes);
+                }
+                if cached.is_some() {
+                    return Err("refusing to downgrade package discovery".into());
+                }
+                self.select_with(state, should_refresh, |url, limit| {
+                    if url == self.url {
+                        Ok(bytes.clone())
+                    } else {
+                        fetch(url, limit)
+                    }
+                })
+            }
+            Err(FetchError::Unavailable(reason)) if cached.is_some() && !should_refresh => {
+                let mut selection = crate::discovery::select(self, state, &cached.unwrap())?;
+                selection.notice = Some(format!("{reason}; using cached package discovery"));
+                Ok(selection)
+            }
+            Err(error) => {
+                let mut error = Some(error);
+                self.select_with(state, should_refresh, |_, _| Err(error.take().unwrap()))
+            }
+        }
     }
 
     /// Selects a verified cached snapshot without contacting the index server.
     pub fn select_offline(&self, state: &Path) -> Result<IndexSelection, String> {
         self.validate()?;
+        if let Some(bytes) = crate::discovery::cached(self, state)? {
+            return crate::discovery::select(self, state, &bytes);
+        }
         let identity = hash_bytes(&serde_json::to_vec(self).map_err(|e| e.to_string())?);
         let snapshot = self
             .cached(&state.join("indexes").join(identity), state)?
@@ -276,7 +310,7 @@ fn verify_index(pin: &PackageIndexPin, bytes: &[u8]) -> Result<(), String> {
     index.validate()
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("cache path has no parent")?;
     let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
     file.write_all(bytes).map_err(|e| e.to_string())?;
