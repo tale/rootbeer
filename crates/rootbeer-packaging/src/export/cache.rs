@@ -111,24 +111,20 @@ impl<'a> Cache<'a> {
         if self.options.recheck {
             return Ok(None);
         }
-        let mut expected = inputs.clone();
-        let mut directory = self.options.directory.join(expected.fingerprint()?);
-        if !directory.try_exists().map_err(|e| e.to_string())? {
-            let Some(compatible) = compatible_inputs(inputs)? else {
-                return Ok(None);
-            };
-            expected = compatible;
-            directory = self.options.directory.join(expected.fingerprint()?);
-            if !directory.try_exists().map_err(|e| e.to_string())? {
-                return Ok(None);
+        let candidates = std::iter::once(inputs.clone()).chain(compatible_inputs(inputs)?);
+        for expected in candidates {
+            let directory = self.options.directory.join(expected.fingerprint()?);
+            if !directory.try_exists().map_err(|error| error.to_string())? {
+                continue;
             }
+            let record: Record = publication::read_json(&directory.join("record.json"))?;
+            if record.schema != 1 || record.inputs != expected {
+                return Err("qualification cache schema or inputs mismatch".into());
+            }
+            inputs.validate(&record.artifact)?;
+            return Ok(Some((directory, record)));
         }
-        let record: Record = publication::read_json(&directory.join("record.json"))?;
-        if record.schema != 1 || record.inputs != expected {
-            return Err("qualification cache schema or inputs mismatch".into());
-        }
-        inputs.validate(&record.artifact)?;
-        Ok(Some((directory, record)))
+        Ok(None)
     }
 
     pub(super) fn inspect(
@@ -187,29 +183,39 @@ impl<'a> Cache<'a> {
     }
 }
 
-fn compatible_inputs(inputs: &Inputs) -> Result<Option<Inputs>, String> {
-    let shared = env!("ROOTBEER_COMPATIBLE_ENGINE_IDENTITY");
-    if shared.is_empty() {
-        return Ok(None);
-    }
+fn compatible_inputs(inputs: &Inputs) -> Result<Vec<Inputs>, String> {
     let implementations = inputs
         .recipes
         .values()
         .map(|recipe| {
-            rootbeer_build::compatible_engine_identity(
-                recipe.build.as_ref().map(|build| &build.backend),
-            )
+            let backend = recipe.build.as_ref().map(|build| &build.backend);
+            std::iter::once(rootbeer_build::engine_identity(backend))
+                .chain(rootbeer_build::compatible_engine_identities(backend))
+                .collect::<Vec<_>>()
         })
-        .collect::<Option<std::collections::BTreeSet<_>>>();
-    let Some(implementations) = implementations else {
-        return Ok(None);
-    };
-    let mut compatible = inputs.clone();
-    compatible.engine = hash_bytes(
-        &serde_json::to_vec(&("rootbeer-qualification-engine-v2", shared, implementations))
-            .map_err(|error| error.to_string())?,
-    );
-    Ok(Some(compatible))
+        .collect::<Vec<_>>();
+    let mut candidates = Vec::new();
+    for shared in std::iter::once(env!("ROOTBEER_ENGINE_IDENTITY")).chain(
+        env!("ROOTBEER_COMPATIBLE_ENGINE_IDENTITY")
+            .split(',')
+            .filter(|value| !value.is_empty()),
+    ) {
+        for index in 0..implementations.first().map_or(0, Vec::len) {
+            let backends = implementations
+                .iter()
+                .map(|values| &values[index])
+                .collect::<std::collections::BTreeSet<_>>();
+            let mut candidate = inputs.clone();
+            candidate.engine = hash_bytes(
+                &serde_json::to_vec(&("rootbeer-qualification-engine-v2", shared, backends))
+                    .map_err(|error| error.to_string())?,
+            );
+            if candidate.engine != inputs.engine {
+                candidates.push(candidate);
+            }
+        }
+    }
+    Ok(candidates)
 }
 
 pub(crate) fn verify_qualifications(
@@ -379,6 +385,77 @@ fn import_selected(bundle: &Path, directory: &Path, system: Option<&str>) -> Res
         fs::rename(entry, destination).map_err(|error| error.to_string())?;
     }
     Ok(records.len())
+}
+
+/// Copies one platform's completed qualifications into a retry checkpoint, without build scratch.
+/// The caller must stop writers and retain the checkpoint within the producer's trust boundary.
+pub fn checkpoint_results(
+    catalog: &PackageCatalog,
+    cache: &Path,
+    output: &Path,
+    shard: Option<super::ExportShard>,
+) -> Result<usize, String> {
+    catalog.validate()?;
+    if let Some(shard) = shard {
+        shard.validate()?;
+    }
+    let staging = publication::staging(output)?;
+    let destination = staging.path().join("checkpoint");
+    fs::create_dir(&destination).map_err(|error| error.to_string())?;
+    let system = rootbeer_package::ResolveContext::current().system;
+    let groups = super::shard_groups(catalog, &system)?;
+    let mut count = 0;
+    if cache.try_exists().map_err(|error| error.to_string())? {
+        for entry in fs::read_dir(cache).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !rootbeer_package::index::is_sha256(&name) {
+                continue;
+            }
+            if !entry
+                .file_type()
+                .map_err(|error| error.to_string())?
+                .is_dir()
+            {
+                return Err("result cache entry must be a regular directory".into());
+            }
+            let record: Record = publication::read_json(&entry.path().join("record.json"))?;
+            if record.schema != 1
+                || record.inputs.fingerprint()? != name
+                || !record.inputs.recipes.contains_key(&record.inputs.package)
+            {
+                return Err("qualification cache schema or inputs mismatch".into());
+            }
+            let key = &record.inputs.package;
+            let Ok((package, _, _)) = rootbeer_package::graph::find_recipe(catalog, key) else {
+                continue;
+            };
+            if record.inputs.system != system
+                || shard.is_some_and(|shard| !shard.contains(&groups[&package.name]))
+            {
+                continue;
+            }
+            if inputs(
+                catalog,
+                key,
+                &system,
+                &record.inputs.registry,
+                &record.inputs.engine,
+                &record.inputs.environment,
+            )? != record.inputs
+            {
+                continue;
+            }
+            record.inputs.validate(&record.artifact)?;
+            let target = destination.join(name);
+            publication::create_bundle(&target)?;
+            copy_artifact(&record.artifact, &entry.path(), &target)?;
+            publication::write_json(&target.join("record.json"), &record)?;
+            count += 1;
+        }
+    }
+    fs::rename(destination, output).map_err(|error| error.to_string())?;
+    Ok(count)
 }
 
 fn copy_artifact(
@@ -746,7 +823,41 @@ mod tests {
         let record: serde_json::Value = publication::read_json(&record_path).unwrap();
         assert!(record.get("index").is_none());
         assert!(record.get("catalog").is_none());
-        if let Some(predecessor) = compatible_inputs(&inputs).unwrap() {
+        fs::create_dir_all(options.directory.join("builds/compiler")).unwrap();
+        fs::write(
+            options.directory.join("builds/compiler/scratch"),
+            "disposable",
+        )
+        .unwrap();
+        let checkpoint = root.path().join("checkpoint");
+        assert_eq!(
+            checkpoint_results(&catalog, &options.directory, &checkpoint, None).unwrap(),
+            1
+        );
+        assert!(!checkpoint.join("builds").exists());
+        let resumed = ExportCache {
+            directory: checkpoint,
+            context: options.context.clone(),
+            recheck: false,
+        };
+        assert_eq!(
+            Cache::new(&resumed, &build_options)
+                .unwrap()
+                .inspect(&inputs)
+                .unwrap()
+                .unwrap()
+                .0,
+            fingerprint
+        );
+        for index in 0..4 {
+            let shard = super::super::ExportShard { index, count: 4 };
+            let output = root.path().join(format!("checkpoint-{index}"));
+            assert_eq!(
+                checkpoint_results(&catalog, &options.directory, &output, Some(shard)).unwrap(),
+                usize::from(shard.contains("xz"))
+            );
+        }
+        if let Some(predecessor) = compatible_inputs(&inputs).unwrap().into_iter().last() {
             let mut original: Record = publication::read_json(&record_path).unwrap();
             original.inputs = predecessor.clone();
             let retained = options.directory.join(predecessor.fingerprint().unwrap());
@@ -783,7 +894,7 @@ mod tests {
                 .as_mut()
                 .unwrap()
                 .backend = crate::BuildBackend::Go;
-            assert!(compatible_inputs(&changed).unwrap().is_none());
+            assert!(cache.inspect(&changed).unwrap().is_none());
             let refresh = ExportCache {
                 recheck: true,
                 directory: options.directory.clone(),
@@ -811,6 +922,13 @@ mod tests {
             publication::write_json(&record_path, &changed).unwrap();
             assert!(cache.restore(&inputs, &source).is_err(), "{field}");
             assert!(cache.inspect(&inputs).is_err(), "{field}");
+            assert!(checkpoint_results(
+                &catalog,
+                &options.directory,
+                &root.path().join(format!("corrupt-{field}")),
+                None
+            )
+            .is_err());
         }
         publication::write_json(&record_path, &record).unwrap();
         let output = root.path().join("output");
