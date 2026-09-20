@@ -9,7 +9,7 @@ use crate::{BuildEnvironmentLock, CatalogRecipe, PublishedArtifact};
 
 pub const RECORD_LIMIT: usize = 1024 * 1024;
 
-/// Publisher-approved build evidence for one package, independent of a catalog or CI run.
+/// Publisher-approved qualification evidence for one package, independent of a catalog or CI run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageRecord {
@@ -17,7 +17,42 @@ pub struct PackageRecord {
     pub system: String,
     pub recipe: CatalogRecipe,
     pub artifact: PublishedArtifact,
-    pub provenance: BuildProvenance,
+    pub provenance: PackageProvenance,
+}
+
+/// Distinguishes compilation evidence from an approved upstream binary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PackageProvenance {
+    Source(Box<BuildProvenance>),
+    Upstream(Box<UpstreamProvenance>),
+}
+
+impl PackageProvenance {
+    pub fn engine_sha256(&self) -> &str {
+        match self {
+            Self::Source(provenance) => &provenance.engine_sha256,
+            Self::Upstream(provenance) => &provenance.engine_sha256,
+        }
+    }
+
+    pub fn environment_sha256(&self) -> &str {
+        match self {
+            Self::Source(provenance) => &provenance.environment_sha256,
+            Self::Upstream(provenance) => &provenance.environment_sha256,
+        }
+    }
+}
+
+/// Exact upstream bytes and installation inputs approved by the publisher.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpstreamProvenance {
+    pub engine_sha256: String,
+    pub environment_sha256: String,
+    pub upstream: crate::LockedPackage,
+    pub resolution: crate::ResolutionProof,
+    pub resolver_inputs: crate::PackageResolverInputs,
 }
 
 /// Recorded build inputs; the publisher signature establishes approval, not builder identity.
@@ -47,12 +82,12 @@ impl PackageRecord {
             &self.artifact.package.id(),
             &self.system,
             &self.recipe,
-            &self.provenance.engine_sha256,
-            &self.provenance.environment_sha256,
+            self.provenance.engine_sha256(),
+            self.provenance.environment_sha256(),
         )
     }
 
-    /// Validates the dependency-free source-package contract supported by this schema.
+    /// Validates the dependency-free package contract supported by this schema.
     pub fn validate(&self) -> Result<(), String> {
         let package = &self.artifact.package;
         if self.schema != 1 {
@@ -68,22 +103,65 @@ impl PackageRecord {
             return Err("invalid package record identity".into());
         }
         self.recipe.validate()?;
-        let build = self
+        if self
             .recipe
             .build
             .as_ref()
-            .ok_or("package record requires a source build")?;
-        if !build.dependencies.is_empty() || !package.runtime_dependencies.is_empty() {
+            .is_some_and(|build| !build.dependencies.is_empty())
+            || !package.runtime_dependencies.is_empty()
+        {
             return Err("package records with dependencies are not supported yet".into());
         }
-        self.artifact
-            .validate(&package.id(), &self.system, &self.recipe)?;
-        let provenance = &self.provenance;
+        if !crate::index::is_sha256(self.provenance.engine_sha256())
+            || !crate::index::is_sha256(self.provenance.environment_sha256())
+        {
+            return Err("invalid package qualification identity".into());
+        }
+        match (&self.recipe.build, &self.provenance) {
+            (Some(_), PackageProvenance::Source(provenance)) => {
+                self.artifact
+                    .validate(&package.id(), &self.system, &self.recipe)?;
+                provenance.validate(&self.system)
+            }
+            (None, PackageProvenance::Upstream(provenance)) => {
+                let mut recipe = self.recipe.clone();
+                recipe.mirror = false;
+                PublishedArtifact {
+                    package: provenance.upstream.clone(),
+                    ..self.artifact.clone()
+                }
+                .validate(&package.id(), &self.system, &recipe)?;
+                if !matches!(&provenance.upstream.source, crate::LockedSource::Url { url, .. } if url.starts_with("https://"))
+                {
+                    return Err("upstream evidence requires an HTTPS artifact".into());
+                }
+                recipe.mirror = true;
+                self.artifact
+                    .validate(&package.id(), &self.system, &recipe)?;
+                let mut expected = provenance.upstream.clone();
+                expected.source = package.source.clone();
+                expected.install = crate::LockedInstall::Archive {
+                    format: crate::ArchiveFormat::TarGz,
+                    strip_prefix: None,
+                };
+                if expected != *package {
+                    return Err("repackaged artifact differs from its upstream output".into());
+                }
+                Ok(())
+            }
+            _ => Err("package provenance does not match its recipe kind".into()),
+        }
+    }
+}
+
+impl BuildProvenance {
+    fn validate(&self, system: &str) -> Result<(), String> {
+        let provenance = self;
         let environment = &provenance.environment;
         if environment.schema != 1
             || !crate::index::is_sha256(&provenance.engine_sha256)
             || !crate::index::is_sha256(&provenance.environment_sha256)
-            || environment.system != self.system
+            || environment.system != system
             || ["sh", "cc", "make", "patch"]
                 .iter()
                 .any(|name| !environment.tools.contains_key(*name))
@@ -205,7 +283,7 @@ mod tests {
             system: "aarch64-linux".into(),
             recipe: index.catalog.packages[&package.name].versions[&package.version].clone(),
             artifact,
-            provenance: BuildProvenance {
+            provenance: PackageProvenance::Source(Box::new(BuildProvenance {
                 engine_sha256: "a".repeat(64),
                 environment_sha256: "b".repeat(64),
                 environment: BuildEnvironmentLock {
@@ -229,7 +307,7 @@ mod tests {
                 isolation: "host".into(),
                 toolchain: BTreeMap::from([("cc".into(), "test compiler".into())]),
                 runtime_audit_sha256: "e".repeat(64),
-            },
+            })),
         };
         let key = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let record = serde_json::value::to_raw_value(&record).unwrap();
@@ -291,7 +369,10 @@ mod tests {
             .push("dependency@1".into());
         assert!(record.validate().unwrap_err().contains("dependencies"));
         record.recipe.build.as_mut().unwrap().dependencies.clear();
-        record.provenance.environment.tools.clear();
+        let PackageProvenance::Source(provenance) = &mut record.provenance else {
+            panic!()
+        };
+        provenance.environment.tools.clear();
         assert!(record.validate().is_err());
     }
 
@@ -302,10 +383,13 @@ mod tests {
         let expected = record.input_key();
         for change in 0..5 {
             let mut changed = record.clone();
+            let PackageProvenance::Source(provenance) = &mut changed.provenance else {
+                panic!()
+            };
             match change {
                 0 => changed.recipe.checks.push(vec!["additional-check".into()]),
-                1 => changed.provenance.engine_sha256 = "c".repeat(64),
-                2 => changed.provenance.environment_sha256 = "c".repeat(64),
+                1 => provenance.engine_sha256 = "c".repeat(64),
+                2 => provenance.environment_sha256 = "c".repeat(64),
                 3 => changed.system = "x86_64-linux".into(),
                 _ => changed.artifact.package.version.push_str(".1"),
             }

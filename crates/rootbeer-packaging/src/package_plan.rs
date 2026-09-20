@@ -4,7 +4,7 @@ use rootbeer_package::{
 
 use crate::BuildOptions;
 
-/// One source package to qualify on the current platform.
+/// One package to qualify on the current platform.
 #[derive(Debug, serde::Serialize)]
 pub struct PackageTask {
     pub package: String,
@@ -13,7 +13,7 @@ pub struct PackageTask {
     pub key: String,
 }
 
-/// Plans explicitly selected, dependency-free source packages without building them.
+/// Plans explicitly selected, dependency-free packages without building them.
 pub fn plan_packages(
     catalog: &PackageCatalog,
     requests: &[String],
@@ -35,11 +35,11 @@ pub fn plan_packages(
         if *request != id {
             return Err(format!("use the exact canonical request {id}"));
         }
-        let build = recipe
+        if recipe
             .build
             .as_ref()
-            .ok_or_else(|| format!("{id}: requires a source recipe"))?;
-        if !build.dependencies.is_empty() {
+            .is_some_and(|build| !build.dependencies.is_empty())
+        {
             return Err(format!(
                 "{id}: separate dependency results are not supported yet"
             ));
@@ -47,7 +47,8 @@ pub fn plan_packages(
         if !recipe.systems.contains(&system) {
             continue;
         }
-        let engine = rootbeer_build::engine_identity(Some(&build.backend));
+        let engine =
+            rootbeer_build::engine_identity(recipe.build.as_ref().map(|build| &build.backend));
         let environment = match environments.get(&engine) {
             Some(environment) => environment,
             None => {
