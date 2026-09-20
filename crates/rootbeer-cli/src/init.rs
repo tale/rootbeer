@@ -21,7 +21,7 @@ pub struct Args {
 const STARTER_MANIFEST: &str = r#"local rb = require("rootbeer")
 
 -- Write files, create symlinks, and configure your system here.
--- See https://rootbeer.tale.me for documentation.
+-- See https://rbpkg.com for documentation.
 
 -- Example: write a simple file
 -- rb.file("~/.config/example.txt", "hello from rootbeer!\n")

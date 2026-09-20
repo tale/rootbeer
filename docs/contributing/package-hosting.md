@@ -4,7 +4,7 @@
 
 | Site                            | Owner               | Published content                                               |
 | ------------------------------- | ------------------- | --------------------------------------------------------------- |
-| `rootbeer.tale.me`              | Rootbeer repository | Documentation, package search, installer, and nightly binaries. |
+| `rbpkg.com`                     | Rootbeer repository | Documentation, package search, installer, and nightly binaries. |
 | `pdr.rbpkg.com`                 | Index repository    | Signed latest manifest, immutable snapshots, and receipts.      |
 | GHCR                            | Index publisher     | Source-built and mirrored package archives addressed by digest. |
 

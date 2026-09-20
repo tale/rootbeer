@@ -70,7 +70,7 @@ const command = computed(() =>
 );
 const snippet = computed(() =>
   mode.value === "bootstrap"
-    ? 'sh -c "$(curl -fsSL https://rootbeer.tale.me/rb.sh)"\nexport PATH="$HOME/.rootbeer/bin:$PATH"'
+    ? 'sh -c "$(curl -fsSL https://rbpkg.com/rb.sh)"\nexport PATH="$HOME/.rootbeer/bin:$PATH"'
     : isLibrary.value
       ? `dependencies = { "${props.pkg.name}@${selectedVersion.value}" }`
       : mode.value === "use"

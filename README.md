@@ -5,7 +5,7 @@
 Rootbeer manages your tools, dotfiles, and shell settings from a Lua configuration.
 Keep it in Git and use it to set up your macOS and Linux machines.
 
-**[Documentation](https://rootbeer.tale.me) · [Package catalog](https://rootbeer.tale.me/packages/)**
+**[Documentation](https://rbpkg.com) · [Package catalog](https://rbpkg.com/packages/)**
 
 ## Quick Start
 
@@ -13,13 +13,13 @@ Install and bootstrap in one command:
 
 ```bash
 # Clone an existing dotfiles repo
-sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init tale/dotfiles
+sh -c "$(curl -fsSL rbpkg.com/rb.sh)" -- init tale/dotfiles
 
 # Clone via SSH (if keys are already set up)
-sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init --ssh tale/dotfiles
+sh -c "$(curl -fsSL rbpkg.com/rb.sh)" -- init --ssh tale/dotfiles
 
 # Or start fresh
-sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init
+sh -c "$(curl -fsSL rbpkg.com/rb.sh)" -- init
 ```
 
 Then apply your configuration:
@@ -72,12 +72,12 @@ zsh.config({
 
 ## Packages
 
-[Find packages](https://rootbeer.tale.me/packages/) to add to `init.lua`, then run
+[Find packages](https://rbpkg.com/packages/) to add to `init.lua`, then run
 `rb apply`, then run `eval "$(rb env)"` to use the installed commands.
 The Zsh example above also loads them automatically in Zsh login shells.
 Commit `rootbeer.lock` to save your package versions, and run `rb apply --update`
 when you want to update them. See the
-[package guide](https://rootbeer.tale.me/guide/packages) for other shells and version selection.
+[package guide](https://rbpkg.com/guide/packages) for other shells and version selection.
 
 ## Key Ideas
 

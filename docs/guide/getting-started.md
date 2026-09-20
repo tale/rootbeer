@@ -8,7 +8,7 @@ Rootbeer supports Apple silicon macOS, Linux ARM64, and Linux x86-64. The instal
 `curl` and `unzip`; on Ubuntu, install them with `sudo apt install curl unzip`.
 
 ```sh
-sh -c "$(curl -fsSL https://rootbeer.tale.me/rb.sh)"
+sh -c "$(curl -fsSL https://rbpkg.com/rb.sh)"
 export PATH="$HOME/.rootbeer/bin:$PATH"
 ```
 

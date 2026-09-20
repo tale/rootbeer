@@ -1,9 +1,9 @@
 #!/bin/sh
 # Rootbeer nightly installer
-# Usage: sh -c "$(curl -fsSL rootbeer.tale.me/rb.sh)" -- init tale/dotfiles
+# Usage: sh -c "$(curl -fsSL rbpkg.com/rb.sh)" -- init tale/dotfiles
 set -e
 
-BASE_URL="https://rootbeer.tale.me/nightly"
+BASE_URL="https://rbpkg.com/nightly"
 INSTALL_DIR="${HOME}/.rootbeer/bin"
 
 detect_platform() {
