@@ -155,8 +155,12 @@ mod macos {
         }
         reject_external_signature(source)?;
         if metadata.is_file() {
-            fs::copy(source, destination)?;
-            return Ok(());
+            // macOS fs::copy also carries Finder metadata that invalidates code verification.
+            io::copy(
+                &mut fs::File::open(source)?,
+                &mut fs::File::create(destination)?,
+            )?;
+            return fs::set_permissions(destination, metadata.permissions());
         }
         if !metadata.is_dir() {
             return Err(io::Error::other(format!(

@@ -166,6 +166,20 @@ mod tests {
         run(Command::new("/usr/bin/codesign")
             .args(["--force", "--sign", "-"])
             .arg(&app));
+        run(Command::new("/usr/bin/xattr")
+            .args([
+                "-wx",
+                "com.apple.FinderInfo",
+                "5445535400000000000000000000000000000000000000000000000000000000",
+            ])
+            .arg(app.join("Contents/MacOS/demo")));
+        assert!(!Command::new("/usr/bin/codesign")
+            .args(["--verify", "--deep", "--strict"])
+            .arg(&app)
+            .output()
+            .unwrap()
+            .status
+            .success());
         let archive = root.path().join("demo.dmg");
         run(Command::new("/usr/bin/hdiutil")
             .args(["create", "-fs", "HFS+", "-format", "UDZO", "-srcfolder"])
