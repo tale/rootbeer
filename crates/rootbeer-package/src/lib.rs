@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod definition;
 pub mod discovery;
 pub mod distribution;
+mod dmg;
 pub mod download;
 mod execution;
 pub use execution::Execution;

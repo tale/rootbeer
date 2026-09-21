@@ -120,6 +120,14 @@ impl PackageRealizer {
                 extracted.path()
             }
             (SourceMaterial::Tree(path), LockedInstall::Directory { .. }) => path.as_path(),
+            (SourceMaterial::File(path), LockedInstall::Dmg) => {
+                fs::create_dir_all(&self.temp_dir)?;
+                extracted = tempfile::Builder::new()
+                    .prefix("realize-")
+                    .tempdir_in(&self.temp_dir)?;
+                super::dmg::extract(path, extracted.path(), &package.provides.apps)?;
+                extracted.path()
+            }
             (SourceMaterial::File(path), LockedInstall::Archive { format, .. }) => {
                 fs::create_dir_all(&self.temp_dir)?;
                 extracted = tempfile::Builder::new()
@@ -131,11 +139,11 @@ impl PackageRealizer {
 
             (
                 SourceMaterial::Tree(_),
-                LockedInstall::Archive { .. } | LockedInstall::Binary { .. },
+                LockedInstall::Archive { .. } | LockedInstall::Binary { .. } | LockedInstall::Dmg,
             ) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "archive or binary install requires a file or URL source",
+                    "archive, binary, or DMG install requires a file or URL source",
                 ));
             }
 
@@ -279,7 +287,7 @@ enum SourceMaterial {
 
 fn install_root(source_root: &Path, install: &LockedInstall) -> io::Result<PathBuf> {
     match install {
-        LockedInstall::Binary { .. } => Ok(source_root.to_path_buf()),
+        LockedInstall::Binary { .. } | LockedInstall::Dmg => Ok(source_root.to_path_buf()),
         LockedInstall::Directory { strip_prefix } | LockedInstall::Archive { strip_prefix, .. } => {
             let root = match strip_prefix {
                 Some(prefix) => {

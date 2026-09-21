@@ -69,6 +69,9 @@ pub enum LockedSource {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LockedInstall {
+    /// Copy declared application bundles from a read-only macOS disk image.
+    Dmg,
+
     /// Install a single executable at a relative path in the output tree.
     Binary { path: PathBuf },
 

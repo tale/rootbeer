@@ -91,6 +91,7 @@ function rootbeer.exec(cmd, args) end
 --- @field sha256 string Locked source hash.
 
 --- @class rootbeer.PackageInstall
+--- @field dmg? boolean Copy declared application bundles from a read-only macOS disk image.
 --- @field directory? boolean Install a directory tree source.
 --- @field archive? "tar.gz"|"tgz"|"tar.xz"|"txz"|"zip" Install an archive source.
 --- @field binary? string Install a raw executable at this relative path.

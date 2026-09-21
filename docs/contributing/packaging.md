@@ -389,6 +389,17 @@ links in `~/Applications`; existing apps and unmanaged links cause a conflict.
 Temporary `rb run --app` launches do not create these links. Neither operation
 configures login items or grants permissions.
 
+DMG release assets use the same `outputs.apps` and `outputs.bin_paths` fields.
+Preparation mounts the verified image read-only on macOS, copies only the declared
+bundles at their relative paths, and detaches the image even when copying fails.
+Finder backgrounds and the image's `/Applications` shortcut are not included.
+Internal relative bundle symlinks are preserved; links outside a bundle are rejected.
+The published artifact is a normal archive, so installation needs no disk-image mount.
+PKG installers and installer scripts are unsupported.
+
+For a locked DMG in a Lua configuration, use `install = { dmg = true }` and declare
+its `apps` and `bins` paths. DMG installation does not use `strip_prefix`.
+
 A moving tag such as `tip` is not a package version. Give each approved snapshot
 an exact version, select its exact asset name, and pin every platform's verified
 SHA-256 in that version's `inputs.prebuilt.checksums` map. Set `inputs.prebuilt.mirror = true` to retain the
