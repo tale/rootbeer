@@ -243,6 +243,7 @@ impl RecipeDefinition {
         });
         let definition = PackageDefinition {
             package: CatalogPackage {
+                extra: Default::default(),
                 name: self.name.clone(),
                 aliases: self.aliases.clone(),
                 description: self.description.clone(),
@@ -341,6 +342,7 @@ impl RecipeDefinition {
             .outputs
             .overlay(&entry.outputs.clone().unwrap_or_default());
         let mut recipe = CatalogRecipe {
+            extra: Default::default(),
             platforms: BTreeMap::new(),
             install: None,
             revision: entry.revision,

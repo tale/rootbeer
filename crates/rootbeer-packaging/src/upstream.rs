@@ -53,6 +53,7 @@ fn import_with_fetch(
     let staging = crate::staging::staging(output)?;
     let mut resolved = Vec::new();
     let mut candidates = PackageCatalog {
+        extra: Default::default(),
         schema: 1,
         packages: BTreeMap::new(),
     };
@@ -323,6 +324,7 @@ mod tests {
         let output = root.path().join("output");
         let package = crate::test_catalog::catalog().find("age").unwrap().clone();
         let catalog = PackageCatalog {
+            extra: Default::default(),
             schema: 1,
             packages: BTreeMap::from([("age".into(), package)]),
         };

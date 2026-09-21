@@ -108,6 +108,7 @@ fn prepare_source(
             .ok_or("build receipt has no runtime audit")?,
     };
     let catalog = PackageCatalog {
+        extra: Default::default(),
         schema: 1,
         packages: std::collections::BTreeMap::from([(definition.name.clone(), definition.clone())]),
     };
@@ -133,6 +134,7 @@ fn prepare_source(
     .map_err(|error| error.to_string())?;
     fs::remove_dir(destination.join("artifacts")).map_err(|error| error.to_string())?;
     Ok(PackageRecord {
+        extra: Default::default(),
         schema: 1,
         system,
         recipe: recipe.clone(),
@@ -179,6 +181,7 @@ fn prepare_binary(
         sha256: sha256.clone(),
     };
     let record = PackageRecord {
+        extra: Default::default(),
         schema: 1,
         system: receipt.system,
         recipe: recipe.clone(),

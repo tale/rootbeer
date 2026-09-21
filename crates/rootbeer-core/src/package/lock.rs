@@ -606,6 +606,7 @@ mod tests {
         )
         .unwrap();
         let catalog = crate::package::PackageCatalog {
+            extra: Default::default(),
             schema: 1,
             packages: BTreeMap::from([("demo".into(), definition.package)]),
         };

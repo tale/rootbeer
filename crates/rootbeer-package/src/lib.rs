@@ -35,7 +35,7 @@ pub use build_spec::{
     BuildArtifact, BuildBackend, BuildDependency, BuildEnvironmentInput, BuildEnvironmentLock,
     BuildSteps, DependencyKind, GoBuild, RustBuild, SourceBuild,
 };
-pub use catalog::{CatalogPackage, CatalogProof, CatalogRecipe, PackageCatalog};
+pub use catalog::{CatalogPackage, CatalogProof, CatalogRecipe, ExtraFields, PackageCatalog};
 pub use definition::{PackageDefinition, PackageUpstream};
 pub use github::GitHubResolver;
 pub use index::{PackageIndexPin, PublishedIndexProof};

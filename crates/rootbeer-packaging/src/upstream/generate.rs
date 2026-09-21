@@ -104,6 +104,7 @@ pub(super) fn package(
     let mut package = match existing {
         Some(package) => package.clone(),
         None => CatalogPackage {
+            extra: Default::default(),
             name: upstream.name.clone(),
             aliases: upstream.aliases.clone(),
             description: upstream
@@ -193,6 +194,7 @@ pub(super) fn package(
         let recipe = generated
             .entry(version.to_string())
             .or_insert_with(|| CatalogRecipe {
+                extra: Default::default(),
                 platforms: BTreeMap::new(),
                 install: None,
                 revision: 1,
@@ -365,6 +367,7 @@ pub(super) fn source_package(
         package.versions.insert(
             (*version).into(),
             CatalogRecipe {
+                extra: Default::default(),
                 platforms: BTreeMap::new(),
                 install: None,
                 revision: 1,

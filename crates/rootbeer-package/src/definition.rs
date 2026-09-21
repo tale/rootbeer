@@ -259,6 +259,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let definition = definition();
         let expected = PackageCatalog {
+            extra: Default::default(),
             schema: 1,
             packages: BTreeMap::from([("age".into(), definition.package.clone())]),
         };
