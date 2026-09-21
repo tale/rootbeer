@@ -85,11 +85,13 @@ impl CatalogRecipe {
 
     /// Whether the recipe declares an upstream binary for this platform.
     pub fn has_prebuilt(&self, system: &str) -> bool {
-        self.source.as_ref().is_some_and(|source| {
-            self.build.is_none()
-                || !source.starts_with("github:")
-                || self.assets.contains_key(system)
-        })
+        let recipe = self.platforms.get(system).unwrap_or(self);
+        recipe.systems.iter().any(|value| value == system)
+            && recipe.source.as_ref().is_some_and(|source| {
+                recipe.build.is_none()
+                    || !source.starts_with("github:")
+                    || recipe.assets.contains_key(system)
+            })
     }
 
     pub(crate) fn validate(&self) -> Result<(), String> {

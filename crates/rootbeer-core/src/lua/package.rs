@@ -330,6 +330,7 @@ fn request_bins(lua: &Lua, cx: &Ctx<'_>, request: &PackageRequest) -> LuaResult<
             let recipe = package.versions.get(version).ok_or_else(|| {
                 LuaError::RuntimeError(format!("{}@{version}: no local recipe", package.name))
             })?;
+            let recipe = recipe.for_system(&context.system);
             if !recipe.systems.contains(&context.system) {
                 return Err(LuaError::RuntimeError(format!(
                     "{}@{version}: no local recipe for {}",

@@ -96,6 +96,7 @@ impl PackageCatalog {
         self.packages
             .values()
             .flat_map(|package| package.versions.values())
+            .flat_map(|recipe| std::iter::once(recipe).chain(recipe.platforms.values()))
             .filter_map(|recipe| recipe.build.as_ref())
             .flat_map(|build| &build.dependencies)
             .any(|dependency| {
