@@ -31,7 +31,7 @@ for the complete walkthrough. The module exposes:
 `rb.package("ripgrep")` accepts one entry. Add `@version` to choose an exact version.
 Rootbeer saves package versions in `rootbeer.lock`.
 
-[Find packages](/packages/) or follow the [package guide](/guide/packages) to get started.
+[Find packages](https://search.rbpkg.com) or follow the [package guide](/guide/packages) to get started.
 
 ## API Reference
 

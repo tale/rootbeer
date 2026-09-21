@@ -1,6 +1,6 @@
 # Packages
 
-[Browse packages](/packages/) to find a tool, check its commands and supported
+[Browse packages](https://search.rbpkg.com) to find a tool, check its commands and supported
 platforms, and choose a version. You can run it immediately, keep it installed,
 or declare it in your dotfile configuration.
 

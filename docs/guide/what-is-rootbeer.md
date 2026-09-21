@@ -13,7 +13,7 @@ rb run ripgrep -- --hidden TODO .
 
 Keep tools installed with `rb use jq ripgrep`. Rootbeer saves resolved versions
 and verified downloads so you choose when to update. Browse the
-[package catalog](/packages/) for commands, versions, and platform support.
+[package catalog](https://search.rbpkg.com) for commands, versions, and platform support.
 
 ## Config is code
 

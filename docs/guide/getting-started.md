@@ -26,7 +26,7 @@ rb run jq -- --version
 Rootbeer downloads and runs `jq`, caching it for later use. Arguments after `--`
 go to the tool. No `rb init` or shell configuration is needed.
 
-[Browse packages](/packages/) to find another tool and check its versions,
+[Browse packages](https://search.rbpkg.com) to find another tool and check its versions,
 commands, and supported platforms.
 
 ## Keep tools installed

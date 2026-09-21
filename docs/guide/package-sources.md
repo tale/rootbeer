@@ -1,6 +1,6 @@
 # Other package sources
 
-[Browse the catalog](/packages/) for packages available by name. For another tool,
+[Browse the catalog](https://search.rbpkg.com) for packages available by name. For another tool,
 you can request a GitHub release or an Aqua recipe with `rb run`, `rb use`, or
 `rb.packages()`.
 

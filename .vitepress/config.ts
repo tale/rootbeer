@@ -7,20 +7,13 @@ export default defineConfig({
   title: "Rootbeer",
   description: "Run tools, manage packages, and configure your system with Lua.",
   themeConfig: {
-    catalog: {
-      repositoryUrl: "https://github.com/tale/rootbeer-index",
-      url: process.env.ROOTBEER_INDEX_URL || "https://pdr.rbpkg.com/current.json",
-      publicKey:
-        process.env.ROOTBEER_INDEX_PUBLIC_KEY ||
-        "028c5b185fb63ea61128a0bf6fb0decc8b700020561db08d82a998c7d0493bc0",
-    },
     search: { provider: "local" },
     nav: [
       { text: "Documentation", link: "/guide/getting-started", activeMatch: "^/(guide|modules)/" },
       { text: "Reference", link: "/reference/", activeMatch: "^/(reference|formats|scripts)/" },
       {
         text: "Package catalog ↗",
-        link: "/packages/",
+        link: "https://search.rbpkg.com",
         target: "_blank",
         rel: "noopener noreferrer",
       },

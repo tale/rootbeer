@@ -11,7 +11,7 @@ hero:
       link: /guide/getting-started
     - theme: alt
       text: Browse packages ↗
-      link: /packages/
+      link: https://search.rbpkg.com
       target: _blank
       rel: noopener noreferrer
 
@@ -67,6 +67,6 @@ eval "$(rb env)"
 
 You can now use `rg`. Zsh must be installed to use the shell configuration;
 start it with `zsh -l`. See [your configuration](/guide/configuration) for setup,
-or [browse packages](/packages/).
+or [browse packages](https://search.rbpkg.com).
 
 </div>

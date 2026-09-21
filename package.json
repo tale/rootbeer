@@ -9,8 +9,7 @@
     "dev": "vitepress dev",
     "prebuild": "pnpm lua2md",
     "build": "vitepress build",
-    "preview": "vitepress preview",
-    "test:catalog": "node --test .vitepress/theme/catalog.test.ts"
+    "preview": "vitepress preview"
   },
   "devDependencies": {
     "oxfmt": "^0.68.0",
