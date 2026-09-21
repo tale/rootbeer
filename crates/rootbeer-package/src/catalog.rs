@@ -294,6 +294,9 @@ impl PackageResolver for CatalogResolver {
             .map_err(|e| e.to_string())?;
         let mut locked = resolution.package;
         locked.provides.apps = recipe.apps.clone();
+        if locked.install == super::LockedInstall::Dmg && recipe.apps.is_empty() {
+            return Err("DMG recipes must declare application bundles in outputs.apps".into());
+        }
         if let (Some("github"), super::LockedInstall::Binary { path }, true) = (
             source.resolver.as_deref(),
             &mut locked.install,

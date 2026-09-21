@@ -526,20 +526,34 @@ fn parse_source(cx: &Ctx<'_>, source: Table) -> LuaResult<LockedSource> {
 fn parse_install(install: Table) -> LuaResult<LockedInstall> {
     fields(
         &install,
-        &["binary", "directory", "archive", "strip_prefix"],
+        &["binary", "directory", "archive", "dmg", "strip_prefix"],
     )?;
     let binary = optional::<String>(&install, "binary")?;
     let directory = optional::<bool>(&install, "directory")?.unwrap_or(false);
     let archive = optional::<String>(&install, "archive")?;
-    if usize::from(binary.is_some()) + usize::from(directory) + usize::from(archive.is_some()) != 1
+    let is_dmg = optional::<bool>(&install, "dmg")?.unwrap_or(false);
+    if usize::from(binary.is_some())
+        + usize::from(directory)
+        + usize::from(archive.is_some())
+        + usize::from(is_dmg)
+        != 1
     {
         return Err(LuaError::RuntimeError(
-            "package install requires exactly one of directory, archive, or binary".into(),
+            "package install requires exactly one of directory, archive, binary, or dmg".into(),
         ));
     }
     let strip_prefix = optional::<String>(&install, "strip_prefix")?
         .map(|path| relative_path(&path))
         .transpose()?;
+
+    if is_dmg {
+        if strip_prefix.is_some() {
+            return Err(LuaError::RuntimeError(
+                "DMG install uses declared app paths, not strip_prefix".into(),
+            ));
+        }
+        return Ok(LockedInstall::Dmg);
+    }
 
     if let Some(path) = binary {
         if strip_prefix.is_some() {

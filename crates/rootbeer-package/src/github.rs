@@ -71,6 +71,9 @@ impl GitHubResolver {
                     bins,
                 )
             }
+            None if asset.name.to_ascii_lowercase().ends_with(".dmg") => {
+                (LockedInstall::Dmg, request.bins.clone())
+            }
             None => {
                 let bins = if request.bins.is_empty() {
                     BTreeMap::from([(repo.to_string(), PathBuf::from(repo))])
@@ -196,6 +199,9 @@ fn archive_format(name: &str) -> Option<ArchiveFormat> {
 }
 
 fn is_installable(name: &str) -> bool {
+    if name.ends_with(".dmg") {
+        return true;
+    }
     if archive_format(name).is_some() {
         return !name.contains("source") && !name.contains("debug") && !name.contains("symbols");
     }
@@ -225,6 +231,9 @@ pub fn select_asset<'a>(
         if !is_installable(&asset.name.to_ascii_lowercase()) {
             return Err(format!("unsupported GitHub asset format `{name}`"));
         }
+        if name.to_ascii_lowercase().ends_with(".dmg") && !context.system.ends_with("-macos") {
+            return Err("DMG assets require macOS".into());
+        }
         return Ok(asset);
     }
     let (arch, os) = context
@@ -246,6 +255,7 @@ pub fn select_asset<'a>(
         .filter(|asset| {
             let name = asset.name.to_ascii_lowercase();
             is_installable(&name)
+                && (!name.ends_with(".dmg") || os == "macos")
                 && os_names.iter().any(|os| has_token(&name, os))
                 && (arch_names.iter().any(|arch| has_token(&name, arch))
                     || (os == "macos" && has_token(&name, "universal")))
@@ -369,13 +379,39 @@ mod tests {
     #[test]
     fn rejects_wrong_architecture_and_unsupported_installers() {
         let assets = vec![
-            asset("tool-darwin-arm64.dmg"),
+            asset("tool-darwin-arm64.pkg"),
             asset("tool-darwin-amd64.tar.gz"),
         ];
         let context = ResolveContext::new("aarch64-macos");
         assert!(select_asset(&assets, None, &context).is_err());
-        assert!(select_asset(&assets, Some("tool-darwin-arm64.dmg"), &context).is_err());
+        assert!(select_asset(&assets, Some("tool-darwin-arm64.pkg"), &context).is_err());
         assert!(!has_token("tool-arm64e", "arm64"));
+    }
+
+    #[test]
+    fn selects_dmg_only_for_macos_and_keeps_declared_command_paths() {
+        let assets = vec![asset("tool-darwin-arm64.dmg")];
+        let context = ResolveContext::new("aarch64-macos");
+        assert_eq!(
+            select_asset(&assets, None, &context).unwrap().name,
+            assets[0].name
+        );
+        assert!(select_asset(
+            &assets,
+            Some(&assets[0].name),
+            &ResolveContext::new("aarch64-linux")
+        )
+        .is_err());
+        let root = tempfile::tempdir().unwrap();
+        let resolver = release_fixture(root.path(), "owner/tool", &assets[0].name, b"disk image");
+        let mut request = PackageRequest::new("owner/tool")
+            .resolver("github")
+            .version("v1");
+        request.asset = Some(assets[0].name.clone());
+        request.bins = BTreeMap::from([("tool".into(), "Tool.app/Contents/MacOS/tool".into())]);
+        let resolution = resolver.resolve(&request, &context).unwrap().unwrap();
+        assert_eq!(resolution.package.install, LockedInstall::Dmg);
+        assert_eq!(resolution.package.provides.bins, request.bins);
     }
 
     #[test]

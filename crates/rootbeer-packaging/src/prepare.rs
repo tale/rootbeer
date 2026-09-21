@@ -135,6 +135,128 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
+    #[cfg(target_os = "macos")]
+    fn dmg_roundtrip_preserves_code_signatures_resources_and_output_identity() {
+        use std::os::unix::fs::symlink;
+        use std::process::Command;
+
+        fn run(command: &mut Command) {
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{command:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let app = source.join("Demo.app");
+        fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+        fs::create_dir_all(app.join("Contents/Resources")).unwrap();
+        fs::write(app.join("Contents/Info.plist"), r#"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>demo</string><key>CFBundleIdentifier</key><string>org.rootbeer.dmg-test</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>"#).unwrap();
+        fs::write(app.join("Contents/Resources/message"), "preserved").unwrap();
+        symlink("Resources", app.join("Contents/LinkedResources")).unwrap();
+        let program = root.path().join("demo.c");
+        fs::write(&program, "int main(void) { return 0; }\n").unwrap();
+        run(Command::new("/usr/bin/cc")
+            .arg(&program)
+            .arg("-o")
+            .arg(app.join("Contents/MacOS/demo")));
+        run(Command::new("/usr/bin/codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(&app));
+        let archive = root.path().join("demo.dmg");
+        run(Command::new("/usr/bin/hdiutil")
+            .args(["create", "-fs", "HFS+", "-format", "UDZO", "-srcfolder"])
+            .arg(&source)
+            .arg(&archive));
+        let options = BuildOptions {
+            downloads: root.path().join("downloads"),
+            ..Default::default()
+        };
+        let cached = DownloadCache::new(&options.downloads)
+            .materialize(&format!("file://{}", archive.display()), None)
+            .unwrap();
+        let system = ResolveContext::current().system;
+        let catalog: PackageCatalog = serde_json::from_value(serde_json::json!({
+            "schema": 1, "packages": {"demo": {
+                "name": "demo", "description": "DMG qualification fixture", "homepage": "https://example.com",
+                "default_version": "1", "versions": {"1": {
+                    "revision": 1, "source": "github:example/demo@v1", "systems": [system],
+                    "assets": {system.clone(): "demo.dmg"}, "checksums": {system.clone(): cached.sha256},
+                    "bins": ["demo"], "bin_paths": {"demo": "Demo.app/Contents/MacOS/demo"},
+                    "apps": {"Demo.app": "Demo.app"}, "checks": [["demo", "--version"]]
+                }}
+            }}
+        })).unwrap();
+        catalog.validate().unwrap();
+        let package = LockedPackage {
+            name: "demo".into(),
+            version: "1".into(),
+            source: LockedSource::Url {
+                url: "https://example.com/demo.dmg".into(),
+                sha256: cached.sha256,
+            },
+            install: LockedInstall::Dmg,
+            provides: Provides {
+                bins: BTreeMap::from([("demo".into(), "Demo.app/Contents/MacOS/demo".into())]),
+                apps: BTreeMap::from([("Demo.app".into(), "Demo.app".into())]),
+            },
+            output_sha256: None,
+            runtime_dependencies: BTreeMap::new(),
+        };
+        let resolution = PackageResolution::new(
+            package,
+            ResolutionProof::Snapshot(SnapshotProof {
+                resolver: "fixture".into(),
+                source: SnapshotSource::Url {
+                    url: "https://example.com/metadata.json".into(),
+                },
+                documents: vec![],
+            }),
+        );
+        let prepared = root.path().join("prepared");
+        let package = prepare_binary(
+            &catalog,
+            "demo@1",
+            &prepared,
+            &options,
+            resolution,
+            PackageResolverInputs::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            package.install,
+            LockedInstall::Archive {
+                format: ArchiveFormat::TarGz,
+                ..
+            }
+        ));
+        let installed = PackageRealizer::with_dirs(
+            Store::new(root.path().join("consumer")),
+            root.path().join("downloads"),
+            root.path().join("install"),
+        )
+        .realize(&package)
+        .unwrap();
+        run(Command::new("/usr/bin/codesign")
+            .args(["--verify", "--deep", "--strict"])
+            .arg(&installed.apps["Demo.app"]));
+        assert_eq!(
+            fs::read(installed.apps["Demo.app"].join("Contents/LinkedResources/message")).unwrap(),
+            b"preserved"
+        );
+        assert_eq!(
+            package.output_sha256.as_ref(),
+            Some(&installed.store_entry.output_sha256)
+        );
+        let command = root.path().join("demo");
+        symlink(&installed.bins["demo"], &command).unwrap();
+        run(&mut Command::new(command));
+    }
+
+    #[test]
     fn qualifies_and_signs_upstream_binaries_without_source_build_evidence() {
         for is_archive in [false, true] {
             let root = tempfile::tempdir().unwrap();

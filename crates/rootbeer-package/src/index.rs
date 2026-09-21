@@ -300,6 +300,13 @@ impl super::PublishedArtifact {
                 .map_err(|e| e.to_string())?;
         }
         match &package.install {
+            LockedInstall::Dmg => {
+                if !system.ends_with("-macos") || package.provides.apps.is_empty() {
+                    return Err(
+                        "DMG artifacts require macOS and declared application bundles".into(),
+                    );
+                }
+            }
             LockedInstall::Archive { strip_prefix, .. } => {
                 if let Some(path) = strip_prefix {
                     super::realize::validate_relative_path("index archive prefix", path)
