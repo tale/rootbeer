@@ -67,11 +67,11 @@ impl ArtifactIndex {
         self.validate()?;
         for package in self.catalog.packages.values() {
             for (version, recipe) in &package.versions {
-                if self.schema >= 7 && recipe.build.is_some() {
-                    continue;
-                }
                 let key = format!("{}@{version}", package.name);
-                for system in &recipe.systems {
+                for system in recipe.supported_systems() {
+                    if self.schema >= 7 && recipe.for_system(system).build.is_some() {
+                        continue;
+                    }
                     if !self
                         .artifacts
                         .get(&key)
@@ -226,14 +226,17 @@ impl ArtifactIndex {
                     if self.schema < 6 {
                         return Err("runtime dependencies require artifact index schema 6".into());
                     }
-                    let (_, _, recipe) =
-                        super::graph::find_recipe(&self.catalog, &dependency.id())?;
+                    let (_, _, recipe) = super::graph::find_recipe_for_system(
+                        &self.catalog,
+                        &dependency.id(),
+                        system,
+                    )?;
                     super::PublishedArtifact {
                         revision: recipe.revision,
                         receipt_sha256: artifact.receipt_sha256.clone(),
                         package: dependency.clone(),
                     }
-                    .validate(&dependency.id(), system, recipe)?;
+                    .validate(&dependency.id(), system, &recipe)?;
                 }
             }
         }
@@ -248,6 +251,7 @@ impl super::PublishedArtifact {
         system: &str,
         recipe: &super::CatalogRecipe,
     ) -> Result<(), String> {
+        let recipe = &recipe.for_system(system);
         let package = &self.package;
         let runtime: std::collections::BTreeSet<_> = recipe
             .build
@@ -336,6 +340,18 @@ impl super::PublishedArtifact {
         }
         if !is_sha256(sha256) {
             return Err(format!("{key}: invalid archive SHA-256"));
+        }
+        if !recipe.mirror
+            && recipe
+                .source
+                .as_deref()
+                .is_some_and(|source| source.starts_with("https://"))
+            && (recipe.source.as_ref() != Some(url)
+                || recipe.install.as_ref() != Some(&package.install))
+        {
+            return Err(format!(
+                "{key}: download differs from the approved URL or install format"
+            ));
         }
         if recipe.build.is_none() && recipe.mirror && !url.starts_with("ghcr://") {
             return Err(format!("{key}: mirrored artifacts must use GHCR"));

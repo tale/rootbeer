@@ -399,6 +399,24 @@ Bundles with extended-attribute code signatures are rejected because the package
 archive cannot preserve those attributes. Embedded signatures remain intact.
 PKG installers and installer scripts are unsupported.
 
+App-only recipes may omit `bins` and `checks`. Qualification checks each bundle's
+`Info.plist`, executable, and deep code signature without launching the application.
+Recipes exporting commands still need command checks.
+
+Vendor downloads use `inputs.prebuilt.url`, an explicit `install` format, and
+version-owned `checksums`. For example, `install = "Dmg"` selects DMG extraction.
+URLs must use HTTPS; every supported platform must have a pinned SHA-256.
+Publication retains the verified output in GHCR and the upstream URL/hash in its receipt.
+
+A version can declare `platforms = { ["aarch64-macos"] = { ... } }` with its own
+`inputs`, `outputs`, and revision. Each platform entry inherits the package's shared
+defaults, owns its checksums, and replaces output maps/lists explicitly. It does not
+inherit the enclosing version's overrides. This permits a macOS app and Linux CLI to
+use different upstream repositories while sharing one canonical package/version.
+Only the selected platform contract enters its receipt, signature, and cache key;
+adding another platform preserves existing approvals. Platform entries cannot nest.
+Use `default_versions` to retain a platform release when another upstream advances.
+
 For a locked DMG in a Lua configuration, use `install = { dmg = true }` and declare
 its `apps` and `bins` paths. DMG installation does not use `strip_prefix`.
 

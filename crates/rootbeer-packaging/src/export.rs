@@ -58,7 +58,7 @@ pub fn plan_export(
     for package in catalog.packages.values() {
         for (version, recipe) in &package.versions {
             let key = format!("{}@{version}", package.name);
-            if !recipe.systems.contains(&system)
+            if !recipe.supported_systems().contains(&system)
                 || shard.is_some_and(|shard| !shard.contains(&groups[&package.name]))
             {
                 continue;
@@ -135,13 +135,17 @@ fn shard_groups(
         package
             .versions
             .values()
-            .filter(|recipe| recipe.systems.iter().any(|value| value == system))
-            .filter_map(move |recipe| recipe.build.as_ref().map(|build| (&package.name, build)))
+            .map(move |recipe| (&package.name, recipe.for_system(system)))
+            .filter(|(_, recipe)| recipe.systems.iter().any(|value| value == system))
+            .filter_map(|(name, recipe)| recipe.build.map(|build| (name, build)))
     });
     for (name, build) in sources {
         for dependency in &build.dependencies {
-            let (package, _, recipe) =
-                rootbeer_package::graph::find_recipe(catalog, dependency.package())?;
+            let (package, _, recipe) = rootbeer_package::graph::find_recipe_for_system(
+                catalog,
+                dependency.package(),
+                system,
+            )?;
             if recipe.build.is_none() || groups[name] == groups[&package.name] {
                 continue;
             }
@@ -264,6 +268,7 @@ pub fn export_catalog_with_workers(
     let mut failures = BTreeMap::new();
     for package in catalog.packages.values() {
         for (version, recipe) in &package.versions {
+            let recipe = recipe.for_system(&context.system);
             let key = format!("{}@{version}", package.name);
             if !recipe.systems.contains(&context.system)
                 || shard.is_some_and(|shard| !shard.contains(&groups[&package.name]))
@@ -455,6 +460,7 @@ pub(crate) fn export_inputs<'a>(
                     .ok_or("export dependencies must use exact versions")?,
             )
             .ok_or_else(|| format!("unknown recipe {key}"))?;
+        let recipe = recipe.for_system(&ResolveContext::current().system);
         needs_aqua |= recipe.build.is_none()
             && recipe
                 .source

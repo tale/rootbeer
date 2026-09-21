@@ -476,7 +476,8 @@ fn engine_identity(catalog: &PackageCatalog, key: &str, system: &str) -> Result<
         .order
         .iter()
         .map(|key| {
-            let (_, _, recipe) = rootbeer_package::graph::find_recipe(catalog, key)?;
+            let (_, _, recipe) =
+                rootbeer_package::graph::find_recipe_for_system(catalog, key, system)?;
             Ok(rootbeer_build::engine_identity(
                 recipe.build.as_ref().map(|build| &build.backend),
             ))
@@ -506,7 +507,8 @@ fn inputs(
         .order
         .iter()
         .map(|key| {
-            let (_, _, recipe) = rootbeer_package::graph::find_recipe(catalog, key)?;
+            let (_, _, recipe) =
+                rootbeer_package::graph::find_recipe_for_system(catalog, key, system)?;
             Ok((key.clone(), recipe.clone()))
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;

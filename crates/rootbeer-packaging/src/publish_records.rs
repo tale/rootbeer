@@ -47,8 +47,9 @@ pub fn publish_records(
                 .sequence
                 .checked_add(1)
                 .ok_or("discovery sequence overflow")?;
-            for (id, platforms) in previous.records {
-                if can_retain(catalog, &previous.catalog, &id) {
+            for (id, mut platforms) in previous.records {
+                platforms.retain(|system, _| can_retain(catalog, &previous.catalog, &id, system));
+                if !platforms.is_empty() {
                     manifest.records.insert(id, platforms);
                 }
             }
@@ -88,11 +89,15 @@ pub fn publish_records(
             index.validate()?;
             previous_catalog = Some(index.catalog.clone());
             for (id, platforms) in &index.artifacts {
-                let (_, _, approved) = rootbeer_package::graph::find_recipe(&index.catalog, id)?;
-                if !can_retain(catalog, &index.catalog, id) {
-                    continue;
-                }
                 for (system, artifact) in platforms {
+                    if !can_retain(catalog, &index.catalog, id, system) {
+                        continue;
+                    }
+                    let (_, _, approved) = rootbeer_package::graph::find_recipe_for_system(
+                        &index.catalog,
+                        id,
+                        system,
+                    )?;
                     let record = PackageRecord {
                         schema: 1,
                         system: system.clone(),
@@ -143,8 +148,9 @@ pub fn publish_records(
             &identity.system,
         )?;
         let id = record.artifact.package.id();
-        let (_, _, recipe) = rootbeer_package::graph::find_recipe(catalog, &id)?;
-        if recipe != &record.recipe {
+        let (_, _, recipe) =
+            rootbeer_package::graph::find_recipe_for_system(catalog, &id, &record.system)?;
+        if recipe != record.recipe {
             return Err(format!(
                 "{id}: signed record differs from the approved recipe"
             ));
@@ -235,17 +241,19 @@ pub fn publish_records(
         .sum())
 }
 
-fn can_retain(current: &PackageCatalog, approved: &PackageCatalog, id: &str) -> bool {
+fn can_retain(current: &PackageCatalog, approved: &PackageCatalog, id: &str, system: &str) -> bool {
     let mut pending = vec![id.to_owned()];
     let mut visited = std::collections::BTreeSet::new();
     while let Some(id) = pending.pop() {
         if !visited.insert(id.clone()) {
             continue;
         }
-        let Ok((_, _, previous)) = rootbeer_package::graph::find_recipe(approved, &id) else {
+        let Ok((_, _, previous)) =
+            rootbeer_package::graph::find_recipe_for_system(approved, &id, system)
+        else {
             return false;
         };
-        if !rootbeer_package::graph::find_recipe(current, &id)
+        if !rootbeer_package::graph::find_recipe_for_system(current, &id, system)
             .is_ok_and(|(_, _, recipe)| recipe == previous)
         {
             return false;
@@ -267,6 +275,51 @@ mod tests {
     use super::*;
     use rootbeer_package::discovery::{DiscoveryPin, DiscoveryResolver};
     use rootbeer_package::{PackageRequest, PackageResolver, ResolveContext};
+
+    #[test]
+    fn platform_changes_retain_only_unchanged_approvals() {
+        let root = tempfile::tempdir().unwrap();
+        let (catalog, _) = crate::bundle::tests::fixture(root.path());
+        let package = catalog.packages.values().next().unwrap();
+        let id = format!("{}@{}", package.name, package.default_version);
+        let system = rootbeer_package::ResolveContext::current().system;
+        let other = if system == "aarch64-macos" {
+            "x86_64-linux"
+        } else {
+            "aarch64-macos"
+        };
+        let mut changed = catalog.clone();
+        let recipe = changed
+            .packages
+            .get_mut(&package.name)
+            .unwrap()
+            .versions
+            .get_mut(&package.default_version)
+            .unwrap();
+        let mut variant = recipe.clone();
+        variant.systems = vec![other.into()];
+        variant.revision += 1;
+        recipe.platforms.insert(other.into(), variant);
+        let original = &package.versions[&package.default_version];
+        assert_eq!(
+            rootbeer_package::distribution::input_key(
+                &id,
+                &system,
+                original,
+                "engine",
+                "environment"
+            ),
+            rootbeer_package::distribution::input_key(
+                &id,
+                &system,
+                recipe,
+                "engine",
+                "environment"
+            )
+        );
+        assert!(can_retain(&changed, &catalog, &id, &system));
+        assert!(!can_retain(&changed, &catalog, &id, other));
+    }
 
     #[test]
     fn promotes_existing_approved_artifacts_without_builds_and_resolves_each_record_offline() {

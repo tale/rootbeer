@@ -26,6 +26,10 @@ pub struct CatalogPackage {
 #[serde(deny_unknown_fields)]
 pub struct CatalogRecipe {
     pub revision: u32,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub platforms: BTreeMap<String, CatalogRecipe>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install: Option<crate::LockedInstall>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -60,6 +64,18 @@ impl CatalogPackage {
 }
 
 impl CatalogRecipe {
+    /// Selects one platform contract without including unrelated platform overrides.
+    pub fn for_system(&self, system: &str) -> Self {
+        let mut recipe = self.platforms.get(system).unwrap_or(self).clone();
+        recipe.platforms.clear();
+        recipe
+    }
+
+    /// All platforms supported by the base recipe and explicit overrides.
+    pub fn supported_systems(&self) -> BTreeSet<&String> {
+        self.systems.iter().chain(self.platforms.keys()).collect()
+    }
+
     /// Identifies all evaluated recipe inputs, including the checks required for approval.
     pub fn sha256(&self) -> String {
         crate::store::hash_bytes(
@@ -69,14 +85,24 @@ impl CatalogRecipe {
 
     /// Whether the recipe declares an upstream binary for this platform.
     pub fn has_prebuilt(&self, system: &str) -> bool {
-        self.source.as_ref().is_some_and(|source| {
-            self.build.is_none()
-                || !source.starts_with("github:")
-                || self.assets.contains_key(system)
-        })
+        let recipe = self.platforms.get(system).unwrap_or(self);
+        recipe.systems.iter().any(|value| value == system)
+            && recipe.source.as_ref().is_some_and(|source| {
+                recipe.build.is_none()
+                    || !source.starts_with("github:")
+                    || recipe.assets.contains_key(system)
+            })
     }
 
     pub(crate) fn validate(&self) -> Result<(), String> {
+        for (system, recipe) in &self.platforms {
+            if !recipe.platforms.is_empty() || recipe.systems != [system.clone()] {
+                return Err(
+                    "platform overrides must declare only their own system and cannot nest".into(),
+                );
+            }
+            recipe.validate()?;
+        }
         if self.revision == 0 || (self.source.is_none() && self.build.is_none()) {
             return Err(
                 "recipe needs a revision and at least one of prebuilt source or build".into(),
@@ -95,7 +121,40 @@ impl CatalogRecipe {
                 }
             }
         }
-        if let Some(source) = &self.source {
+        let is_download = self
+            .source
+            .as_deref()
+            .is_some_and(|source| source.starts_with("https://"));
+        if is_download {
+            crate::index::validate_https(self.source.as_deref().unwrap())?;
+            if self.build.is_some()
+                || self.checksums.len() != self.systems.len()
+                || self.install.is_none()
+                || !self.assets.is_empty()
+            {
+                return Err("direct downloads require an install format, complete checksums, and no build or release assets".into());
+            }
+            match self.install.as_ref().unwrap() {
+                crate::LockedInstall::Dmg if !self.apps.is_empty() => {}
+                crate::LockedInstall::Archive { strip_prefix, .. } => {
+                    if let Some(path) = strip_prefix {
+                        crate::realize::validate_relative_path("archive prefix", path)
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+                crate::LockedInstall::Binary { path } => {
+                    crate::realize::validate_relative_path("binary path", path)
+                        .map_err(|error| error.to_string())?;
+                }
+                _ => return Err("unsupported direct download install contract".into()),
+            }
+            if !self.bins.is_empty() && self.bin_paths.len() != self.bins.len() {
+                return Err("direct downloads require explicit command paths".into());
+            }
+        } else if self.install.is_some() {
+            return Err("explicit install formats require a direct HTTPS download".into());
+        }
+        if let Some(source) = self.source.as_ref().filter(|_| !is_download) {
             let request = PackageRequest::parse(source);
             if !matches!(request.resolver.as_deref(), Some("aqua" | "github"))
                 || request
@@ -136,10 +195,12 @@ impl CatalogRecipe {
             .build
             .as_ref()
             .is_some_and(|build| !build.libraries.is_empty());
-        if !is_library || !self.bins.is_empty() || !self.checks.is_empty() {
+        if (!is_library && self.apps.is_empty()) || !self.bins.is_empty() || !self.checks.is_empty()
+        {
             validate_commands(&self.bins, &self.checks)?;
         }
-        if (!self.bin_paths.is_empty() || !self.checksums.is_empty() || self.mirror)
+        if !is_download
+            && (!self.bin_paths.is_empty() || !self.checksums.is_empty() || self.mirror)
             && self
                 .source
                 .as_deref()
@@ -257,6 +318,8 @@ mod tests {
 
     fn recipe() -> CatalogRecipe {
         CatalogRecipe {
+            platforms: BTreeMap::new(),
+            install: None,
             revision: 1,
             source: Some("github:owner/tool@v1".into()),
             build: None,

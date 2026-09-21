@@ -502,7 +502,12 @@ fn execute(args: Args) -> Result<(), String> {
                         .source
                         .as_deref()
                         .unwrap_or("source build (binary not published)"),
-                    recipe.systems.join(", "),
+                    recipe
+                        .supported_systems()
+                        .into_iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     recipe.bins.join(", ")
                 )
                 .map_err(|e| e.to_string())?;

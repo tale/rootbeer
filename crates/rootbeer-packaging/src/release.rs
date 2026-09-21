@@ -24,13 +24,15 @@ pub fn release_package(
     #[derive(serde::Deserialize)]
     struct Identity {
         package: rootbeer_package::LockedPackage,
+        system: String,
     }
     let identity: Identity =
         serde_json::from_slice(&receipt_bytes).map_err(|error| error.to_string())?;
     let recipe = definition
         .versions
         .get(&identity.package.version)
-        .ok_or("no matching package recipe")?;
+        .ok_or("no matching package recipe")?
+        .for_system(&identity.system);
     if definition.name != identity.package.name {
         return Err("receipt belongs to a different package".into());
     }
@@ -45,7 +47,7 @@ pub fn release_package(
     let record = if recipe.build.is_some() {
         prepare_source(
             definition,
-            recipe,
+            &recipe,
             receipt,
             &receipt_bytes,
             registry,
@@ -54,7 +56,7 @@ pub fn release_package(
         )?
     } else {
         prepare_binary(
-            recipe,
+            &recipe,
             receipt,
             &receipt_bytes,
             registry,

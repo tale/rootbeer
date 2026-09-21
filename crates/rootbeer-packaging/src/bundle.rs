@@ -235,7 +235,8 @@ fn validate_receipt(catalog: &PackageCatalog, receipt: &BuildArtifact) -> Result
         .packages
         .get(&package.name)
         .and_then(|entry| entry.versions.get(&package.version))
-        .ok_or_else(|| format!("{}: no matching catalog recipe", package.id()))?;
+        .ok_or_else(|| format!("{}: no matching catalog recipe", package.id()))?
+        .for_system(&receipt.system);
     let Some(build) = &recipe.build else {
         return Err(format!("{}: not a source recipe", package.id()));
     };

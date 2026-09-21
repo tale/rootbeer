@@ -116,7 +116,7 @@ impl BuildOptions {
                 .map_err(|error| error.to_string())?;
             return Ok(rootbeer_store::hash_bytes(&bytes));
         }
-        self.resolve_environment(recipes.into_iter())?
+        self.resolve_environment(recipes.iter())?
             .identity(&format!("{context}\0{}", self.isolation()?))
     }
 
