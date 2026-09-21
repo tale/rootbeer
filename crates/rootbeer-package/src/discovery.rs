@@ -45,18 +45,55 @@ pub struct PackageRecordProof {
     pub system: String,
 }
 
-impl DiscoveryManifest {
-    /// Canonical JSON values sort object keys before signing; arrays retain their order.
-    pub fn signing_message(&self) -> Result<Vec<u8>, String> {
-        let mut value = serde_json::to_value((
-            "rootbeer-discovery-v1",
-            self.sequence,
-            &self.catalog,
-            &self.records,
-        ))
+/// Canonical JSON values sort object keys before signing; arrays retain their order.
+pub(crate) fn signing_message<C: Serialize, R: Serialize>(
+    sequence: u64,
+    catalog: &C,
+    records: &R,
+) -> Result<Vec<u8>, String> {
+    let mut value = serde_json::to_value(("rootbeer-discovery-v1", sequence, catalog, records))
         .map_err(|error| error.to_string())?;
-        value.sort_all_objects();
-        serde_json::to_vec(&value).map_err(|error| error.to_string())
+    value.sort_all_objects();
+    serde_json::to_vec(&value).map_err(|error| error.to_string())
+}
+
+fn signed_sequence(value: &serde_json::Value) -> Result<u64, String> {
+    let sequence = value["sequence"].as_u64().unwrap_or_default();
+    if value["schema"].as_u64() != Some(2) || sequence == 0 || sequence > 9_007_199_254_740_991 {
+        return Err("unsupported discovery schema or sequence".into());
+    }
+    Ok(sequence)
+}
+
+/// Verifies the publisher signature over the whole document without decoding any recipe.
+pub fn verify_signed(bytes: &[u8], public_key: &str) -> Result<u64, String> {
+    verify_value(&parse_manifest(bytes)?, public_key)
+}
+
+pub(crate) fn parse_manifest(bytes: &[u8]) -> Result<serde_json::Value, String> {
+    if bytes.len() > MANIFEST_LIMIT {
+        return Err("discovery manifest exceeds 16 MiB".into());
+    }
+    serde_json::from_slice(bytes).map_err(|error| error.to_string())
+}
+
+fn verify_value(value: &serde_json::Value, public_key: &str) -> Result<u64, String> {
+    let sequence = signed_sequence(value)?;
+    let signature = value["signature"]
+        .as_str()
+        .ok_or("discovery manifest has no signature")?;
+    UnparsedPublicKey::new(&ED25519, decode_hex::<32>(public_key)?)
+        .verify(
+            &signing_message(sequence, &value["catalog"], &value["records"])?,
+            &decode_hex::<64>(signature)?,
+        )
+        .map_err(|_| "discovery signature verification failed".to_string())?;
+    Ok(sequence)
+}
+
+impl DiscoveryManifest {
+    pub fn signing_message(&self) -> Result<Vec<u8>, String> {
+        signing_message(self.sequence, &self.catalog, &self.records)
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -112,7 +149,7 @@ pub(crate) fn cached(
 ) -> Result<Option<Vec<u8>>, String> {
     match fs::read(cache_path(source, state)) {
         Ok(bytes) => {
-            DiscoveryManifest::from_bytes(&bytes, &source.public_key)?;
+            verify_signed(&bytes, &source.public_key)?;
             Ok(Some(bytes))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -125,7 +162,7 @@ pub(crate) fn select(
     state: &Path,
     bytes: &[u8],
 ) -> Result<crate::IndexSelection, String> {
-    let manifest = DiscoveryManifest::from_bytes(bytes, &source.public_key)?;
+    let sequence = verify_signed(bytes, &source.public_key)?;
     let cache = cache_path(source, state);
     fs::create_dir_all(cache.parent().unwrap()).map_err(|error| error.to_string())?;
     let guard = fs::OpenOptions::new()
@@ -136,10 +173,8 @@ pub(crate) fn select(
         .map_err(|error| error.to_string())?;
     guard.lock().map_err(|error| error.to_string())?;
     if let Some(previous) = cached(source, state)? {
-        let previous_manifest = DiscoveryManifest::from_bytes(&previous, &source.public_key)?;
-        if manifest.sequence < previous_manifest.sequence
-            || (manifest.sequence == previous_manifest.sequence && bytes != previous)
-        {
+        let previous_sequence = verify_signed(&previous, &source.public_key)?;
+        if sequence < previous_sequence || (sequence == previous_sequence && bytes != previous) {
             return Err("discovery rollback or conflicting sequence detected".into());
         }
     }

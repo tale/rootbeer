@@ -6,6 +6,18 @@ use rootbeer_package::index::IndexResolver;
 use rootbeer_package::*;
 use rootbeer_store::{hash_bytes, hash_file};
 
+/// Resolves Rootbeer itself and nothing else; see [`rootbeer_package::self_update`].
+pub fn self_update_resolver_stack(inputs: &PackageResolverInputs) -> ResolverStack {
+    let mut stack = ResolverStack::new().with_implicit_resolver("rootbeer");
+    if let Some(pin) = inputs.discovery() {
+        stack.push(rootbeer_package::self_update::Resolver::new(
+            pin,
+            rootbeer_store::state_dir().join("downloads"),
+        ));
+    }
+    stack
+}
+
 /// Builds an installation resolver that prefers published artifacts and can execute source recipes.
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
     let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");

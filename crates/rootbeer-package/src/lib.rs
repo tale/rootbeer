@@ -22,6 +22,7 @@ mod intent;
 pub mod official;
 pub mod realize;
 mod resolve;
+pub mod self_update;
 mod source;
 mod spec;
 pub use source::{GitSource, SourceBuildProof, SourceSelection};

@@ -43,18 +43,13 @@ fn update() -> Result<(), String> {
     } else {
         PackageRequest::parse("rootbeer")
     };
-    let environment = if is_persistent {
-        standalone::prepare_with_resolver(
-            &[request],
-            true,
-            false,
-            true,
-            rootbeer_build::consumer::resolver_stack_for_inputs,
-        )?
-    } else {
-        // Standalone updates require a published artifact from the signed index.
-        standalone::prepare(&[request], false, false, true)?
-    };
+    let environment = standalone::prepare_with_resolver(
+        &[request],
+        is_persistent,
+        false,
+        true,
+        rootbeer_build::consumer::self_update_resolver_stack,
+    )?;
     let package = &environment.packages[0];
     if !is_persistent {
         let binary = package
