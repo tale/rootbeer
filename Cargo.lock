@@ -1994,6 +1994,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rootbeer-catalog"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "rootbeer-cli"
 version = "0.1.0"
 dependencies = [
@@ -2046,6 +2057,7 @@ dependencies = [
  "lzma-rust2",
  "mlua",
  "ring",
+ "rootbeer-catalog",
  "rootbeer-store",
  "serde",
  "serde_json",
