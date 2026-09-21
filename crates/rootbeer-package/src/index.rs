@@ -2,6 +2,8 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
+pub use rootbeer_catalog::{is_sha256, validate_https, PackageIndexPin};
+
 use super::download::DownloadCache;
 use super::{
     ArtifactIndex, LockedInstall, LockedSource, PackageRequest, PackageResolution, PackageResolver,
@@ -9,26 +11,6 @@ use super::{
 };
 
 /// An explicitly trusted index URL and SHA-256 of its exact JSON bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageIndexPin {
-    pub url: String,
-    pub sha256: String,
-}
-
-impl PackageIndexPin {
-    /// Validates an HTTPS index or an explicitly selected absolute local file URL.
-    pub fn validate(&self) -> Result<(), String> {
-        if !is_sha256(&self.sha256) {
-            return Err("package index requires a lowercase SHA-256".into());
-        }
-        if self.url.starts_with("file:///") && !self.url.contains(['?', '#', '\0']) {
-            return Ok(());
-        }
-        validate_https(&self.url)
-    }
-}
-
 /// Records which pinned index authorized the selected platform artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishedIndexProof {
@@ -37,28 +19,6 @@ pub struct PublishedIndexProof {
     pub revision: u32,
     pub system: String,
     pub receipt_sha256: String,
-}
-
-pub fn is_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-}
-
-pub fn validate_https(url: &str) -> Result<(), String> {
-    let uri: ureq::http::Uri = url.parse().map_err(|e| format!("invalid index URL: {e}"))?;
-    if uri.scheme_str() != Some("https")
-        || uri.host().is_none_or(str::is_empty)
-        || url
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '@' | '#' | '\\'))
-    {
-        return Err(
-            "index and artifact URLs must use HTTPS without credentials or fragments".into(),
-        );
-    }
-    Ok(())
 }
 
 impl ArtifactIndex {
