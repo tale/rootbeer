@@ -12,14 +12,20 @@ use crate::store::hash_bytes;
 mod recipe;
 
 pub(crate) use recipe::{validate_apps, validate_bin_paths, validate_commands, validate_systems};
-pub use recipe::{CatalogPackage, CatalogRecipe};
+pub use recipe::{CatalogPackage, CatalogRecipe, ExtraFields};
 
 /// A versioned snapshot of Rootbeer's canonical package definitions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PackageCatalog {
     pub schema: u32,
     pub packages: BTreeMap<String, CatalogPackage>,
+    /// Fields published by a newer engine, retained so they survive a round trip.
+    #[serde(
+        flatten,
+        default,
+        skip_serializing_if = "recipe::ExtraFields::is_empty"
+    )]
+    pub extra: recipe::ExtraFields,
 }
 
 /// Connects canonical identity to the exact backend resolution used to install it.
@@ -64,6 +70,7 @@ impl PackageCatalog {
             packages.insert(name.clone(), definition.package.clone());
         }
         let catalog = Self {
+            extra: Default::default(),
             schema: 1,
             packages,
         };
@@ -78,6 +85,7 @@ impl PackageCatalog {
     pub fn from_local_directory(directory: &Path) -> Result<Self, String> {
         let definitions = super::PackageDefinition::from_directory(directory)?;
         let catalog = Self {
+            extra: Default::default(),
             schema: 1,
             packages: definitions
                 .into_iter()

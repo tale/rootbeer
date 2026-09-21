@@ -287,6 +287,7 @@ mod tests {
     fn runtime_edges_are_separate_from_build_and_link_exports() {
         let template = crate::test_catalog::catalog().packages["xz"].clone();
         let mut catalog = PackageCatalog {
+            extra: Default::default(),
             schema: 1,
             packages: BTreeMap::new(),
         };
@@ -350,6 +351,7 @@ mod tests {
         let template = crate::test_catalog::catalog().packages["xz"].clone();
         let version = template.default_version.clone();
         let mut catalog = PackageCatalog {
+            extra: Default::default(),
             schema: 1,
             packages: Default::default(),
         };

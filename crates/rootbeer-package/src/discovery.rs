@@ -323,6 +323,7 @@ mod tests {
             schema: 2,
             sequence: 1,
             catalog: PackageCatalog {
+                extra: Default::default(),
                 schema: 1,
                 packages: BTreeMap::new(),
             },

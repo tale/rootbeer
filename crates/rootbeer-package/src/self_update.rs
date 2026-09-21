@@ -163,7 +163,7 @@ mod tests {
         let mut entry = catalog["packages"]["age"].clone();
         entry["name"] = json!(PACKAGE);
         catalog["packages"][PACKAGE] = entry;
-        catalog["packages"]["fd"]["versions"]["10.5.0"]["packaging_format"] = json!("Dmg");
+        catalog["packages"]["fd"]["versions"]["10.5.0"]["install"] = json!("Pkg");
 
         let records = json!({
             format!("{PACKAGE}@1.3.1"): {
@@ -190,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_rootbeer_from_a_manifest_carrying_fields_this_build_cannot_decode() {
+    fn reads_rootbeer_from_a_manifest_this_build_cannot_fully_decode() {
         let key = Ed25519KeyPair::from_seed_unchecked(&[11; 32]).unwrap();
         let public_key: String = key
             .public_key()
@@ -204,7 +204,7 @@ mod tests {
         assert!(
             crate::discovery::DiscoveryManifest::from_bytes(&bytes, &public_key)
                 .unwrap_err()
-                .contains("unknown field `packaging_format`")
+                .contains("unknown variant `Pkg`")
         );
 
         let entry = Entry::read(&bytes, &public_key, None, &system).unwrap();

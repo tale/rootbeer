@@ -11,13 +11,14 @@ pub const RECORD_LIMIT: usize = 1024 * 1024;
 
 /// Publisher-approved qualification evidence for one package, independent of a catalog or CI run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PackageRecord {
     pub schema: u32,
     pub system: String,
     pub recipe: CatalogRecipe,
     pub artifact: PublishedArtifact,
     pub provenance: PackageProvenance,
+    #[serde(flatten, default, skip_serializing_if = "crate::ExtraFields::is_empty")]
+    pub extra: crate::ExtraFields,
 }
 
 /// Distinguishes compilation evidence from an approved upstream binary.
@@ -328,6 +329,7 @@ mod tests {
         let package = &artifact.package;
         let id = package.id();
         let record = PackageRecord {
+            extra: Default::default(),
             schema: 1,
             system: "aarch64-linux".into(),
             recipe: index.catalog.packages[&package.name].versions[&package.version].clone(),

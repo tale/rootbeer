@@ -7,6 +7,7 @@ use super::*;
 fn source_catalog() -> PackageCatalog {
     let catalog = crate::test_catalog::catalog();
     PackageCatalog {
+        extra: Default::default(),
         schema: 1,
         packages: BTreeMap::from([("xz".into(), catalog.packages["xz"].clone())]),
     }

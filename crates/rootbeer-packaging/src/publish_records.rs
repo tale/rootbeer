@@ -99,6 +99,7 @@ pub fn publish_records(
                         system,
                     )?;
                     let record = PackageRecord {
+                        extra: Default::default(),
                         schema: 1,
                         system: system.clone(),
                         recipe: approved.clone(),

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 fn catalog(system: &str) -> PackageCatalog {
     let mut catalog = PackageCatalog {
+        extra: Default::default(),
         schema: 1,
         packages: BTreeMap::new(),
     };

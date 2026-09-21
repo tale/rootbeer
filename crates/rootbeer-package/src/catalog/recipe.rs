@@ -6,9 +6,24 @@ use serde::{Deserialize, Serialize};
 use super::valid_name;
 use crate::PackageRequest;
 
+/// Fields published by a newer engine, kept verbatim rather than rejected.
+///
+/// Values round trip, but they re-serialize after the known fields, so `sha256` still
+/// differs from the publisher's until hashing is canonical.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ExtraFields(pub BTreeMap<String, serde_json::Value>);
+
+impl Eq for ExtraFields {}
+
+impl ExtraFields {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 /// The upstream identity and approved versions of a canonical package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CatalogPackage {
     pub name: String,
     #[serde(default)]
@@ -19,11 +34,13 @@ pub struct CatalogPackage {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub default_versions: BTreeMap<String, String>,
     pub versions: BTreeMap<String, CatalogRecipe>,
+    /// Fields published by a newer engine, retained so they survive a round trip.
+    #[serde(flatten, default, skip_serializing_if = "ExtraFields::is_empty")]
+    pub extra: ExtraFields,
 }
 
 /// An explicit backend request and its platform and command contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CatalogRecipe {
     pub revision: u32,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -47,6 +64,9 @@ pub struct CatalogRecipe {
     #[serde(default, skip_serializing_if = "is_false")]
     pub mirror: bool,
     pub checks: Vec<Vec<String>>,
+    /// Fields published by a newer engine, retained so they survive a round trip.
+    #[serde(flatten, default, skip_serializing_if = "ExtraFields::is_empty")]
+    pub extra: ExtraFields,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -318,6 +338,7 @@ mod tests {
 
     fn recipe() -> CatalogRecipe {
         CatalogRecipe {
+            extra: Default::default(),
             platforms: BTreeMap::new(),
             install: None,
             revision: 1,
@@ -442,5 +463,65 @@ mod tests {
                 .unwrap_err()
                 .contains("require a GitHub source"));
         }
+    }
+}
+
+#[cfg(test)]
+mod forward_compatibility_tests {
+    use super::*;
+
+    fn published(extra: &str) -> String {
+        format!(
+            r#"{{"revision":1,"source":"github:x/y@v1","systems":["aarch64-macos"],
+                "bins":["y"],"checks":[]{extra}}}"#
+        )
+    }
+
+    #[test]
+    fn a_field_this_build_does_not_know_is_kept_rather_than_rejected() {
+        let recipe: CatalogRecipe =
+            serde_json::from_str(&published(r#","packaging_format":"Dmg""#)).unwrap();
+        assert_eq!(recipe.revision, 1);
+        assert_eq!(
+            recipe
+                .extra
+                .0
+                .get("packaging_format")
+                .and_then(|v| v.as_str()),
+            Some("Dmg")
+        );
+    }
+
+    #[test]
+    fn unknown_fields_survive_a_round_trip_so_signatures_stay_valid() {
+        let source = published(r#","packaging_format":"Dmg","future":{"nested":[1,2]}"#);
+        let recipe: CatalogRecipe = serde_json::from_str(&source).unwrap();
+        let reserialized = serde_json::to_value(&recipe).unwrap();
+        let original: serde_json::Value = serde_json::from_str(&source).unwrap();
+        assert_eq!(
+            reserialized["packaging_format"],
+            original["packaging_format"]
+        );
+        assert_eq!(reserialized["future"], original["future"]);
+    }
+
+    #[test]
+    fn extras_reorder_and_still_shift_the_hash_until_hashing_is_canonical() {
+        let source = concat!(
+            r#"{"revision":1,"packaging_format":"Pkg","source":"github:x/y@v1","#,
+            r#""systems":["aarch64-macos"],"bins":["y"],"checks":[]}"#
+        );
+        let recipe: CatalogRecipe = serde_json::from_str(source).unwrap();
+        let reserialized = serde_json::to_string(&recipe).unwrap();
+
+        assert!(reserialized.ends_with(r#""packaging_format":"Pkg"}"#));
+        assert_ne!(recipe.sha256(), crate::store::hash_bytes(source.as_bytes()));
+    }
+
+    #[test]
+    fn a_recipe_without_extras_hashes_exactly_as_before() {
+        let recipe: CatalogRecipe = serde_json::from_str(&published("")).unwrap();
+        assert!(recipe.extra.is_empty());
+        assert!(!serde_json::to_string(&recipe).unwrap().contains("extra"));
     }
 }
