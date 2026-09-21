@@ -40,6 +40,7 @@ pub(crate) fn extract(
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
+    use std::ffi::CString;
     use std::fs;
     use std::os::unix::fs::{symlink, MetadataExt};
     use std::process::{Command, Stdio};
@@ -152,6 +153,7 @@ mod macos {
             }
             return symlink(target, destination);
         }
+        reject_external_signature(source)?;
         if metadata.is_file() {
             fs::copy(source, destination)?;
             return Ok(());
@@ -171,9 +173,54 @@ mod macos {
         fs::set_permissions(destination, metadata.permissions())
     }
 
+    fn reject_external_signature(path: &Path) -> io::Result<()> {
+        let name = CString::new(path.as_os_str().as_encoded_bytes())?;
+        let size = unsafe {
+            libc::getxattr(
+                name.as_ptr(),
+                c"com.apple.cs.CodeDirectory".as_ptr(),
+                std::ptr::null_mut(),
+                0,
+                0,
+                libc::XATTR_NOFOLLOW,
+            )
+        };
+        if size >= 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("DMG bundle uses extended-attribute code signatures, which package archives cannot preserve: {}", path.display()),
+            ));
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ENOATTR) {
+            return Ok(());
+        }
+        Err(error)
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn rejects_external_code_signatures_before_copying() {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("signed.dll");
+            let destination = root.path().join("copied.dll");
+            fs::write(&source, "fixture").unwrap();
+            let output = Command::new("/usr/bin/xattr")
+                .args(["-w", "com.apple.cs.CodeDirectory", "fixture"])
+                .arg(&source)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            let error = copy_bundle(&source, &destination, root.path()).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+            assert!(error
+                .to_string()
+                .contains("extended-attribute code signatures"));
+            assert!(!destination.exists());
+        }
 
         #[test]
         fn rejects_bundle_links_outside_the_bundle() {

@@ -395,6 +395,8 @@ bundles at their relative paths, and detaches the image even when copying fails.
 Finder backgrounds and the image's `/Applications` shortcut are not included.
 Internal relative bundle symlinks are preserved; links outside a bundle are rejected.
 The published artifact is a normal archive, so installation needs no disk-image mount.
+Bundles with extended-attribute code signatures are rejected because the package
+archive cannot preserve those attributes. Embedded signatures remain intact.
 PKG installers and installer scripts are unsupported.
 
 For a locked DMG in a Lua configuration, use `install = { dmg = true }` and declare
