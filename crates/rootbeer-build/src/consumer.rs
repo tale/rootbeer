@@ -157,7 +157,7 @@ impl PackageResolver for SourceResolver {
             && package
                 .versions
                 .get(version)
-                .is_some_and(|recipe| recipe.build.is_none())
+                .is_some_and(|recipe| recipe.for_system(&context.system).build.is_none())
         {
             return catalog::CatalogResolver::new(
                 &catalog,
@@ -172,7 +172,8 @@ impl PackageResolver for SourceResolver {
         let original = package
             .versions
             .get(version)
-            .ok_or_else(|| format!("{key}: no approved recipe"))?;
+            .ok_or_else(|| format!("{key}: no approved recipe"))?
+            .for_system(&context.system);
         if !original.systems.contains(&context.system) {
             return Err(format!("{key}: no source recipe for {}", context.system));
         }
@@ -182,7 +183,7 @@ impl PackageResolver for SourceResolver {
             .as_mut()
             .ok_or_else(|| format!("{key} is prebuilt-only; no source build is declared"))?;
         let recipe_sha256 =
-            hash_bytes(&serde_json::to_vec(original).map_err(|error| error.to_string())?);
+            hash_bytes(&serde_json::to_vec(&original).map_err(|error| error.to_string())?);
         let state = &self.state;
         let downloads = state.join("downloads");
         let mut version = version.to_string();

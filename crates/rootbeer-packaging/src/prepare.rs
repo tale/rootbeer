@@ -185,8 +185,8 @@ mod tests {
                 "default_version": "1", "versions": {"1": {
                     "revision": 1, "source": "github:example/demo@v1", "systems": [system],
                     "assets": {system.clone(): "demo.dmg"}, "checksums": {system.clone(): cached.sha256},
-                    "bins": ["demo"], "bin_paths": {"demo": "Demo.app/Contents/MacOS/demo"},
-                    "apps": {"Demo.app": "Demo.app"}, "checks": [["demo", "--version"]]
+                    "bins": [],
+                    "apps": {"Demo.app": "Demo.app"}, "checks": []
                 }}
             }}
         })).unwrap();
@@ -200,7 +200,7 @@ mod tests {
             },
             install: LockedInstall::Dmg,
             provides: Provides {
-                bins: BTreeMap::from([("demo".into(), "Demo.app/Contents/MacOS/demo".into())]),
+                bins: BTreeMap::new(),
                 apps: BTreeMap::from([("Demo.app".into(), "Demo.app".into())]),
             },
             output_sha256: None,
@@ -251,9 +251,21 @@ mod tests {
             package.output_sha256.as_ref(),
             Some(&installed.store_entry.output_sha256)
         );
-        let command = root.path().join("demo");
-        symlink(&installed.bins["demo"], &command).unwrap();
-        run(&mut Command::new(command));
+        assert!(installed.bins.is_empty());
+        fs::write(
+            installed.apps["Demo.app"].join("Contents/Resources/message"),
+            "tampered",
+        )
+        .unwrap();
+        assert!(crate::checks::check_package(
+            &package,
+            &installed,
+            &PackageRealizer::new(Store::new(root.path().join("unused"))),
+            &[],
+            root.path(),
+            &options
+        )
+        .is_err());
     }
 
     #[test]

@@ -121,7 +121,7 @@ impl PackageRecord {
     /// Validates the dependency-free package contract supported by this schema.
     pub fn validate(&self) -> Result<(), String> {
         let package = &self.artifact.package;
-        if self.schema != 1 {
+        if self.schema != 1 || !self.recipe.platforms.is_empty() {
             return Err("unsupported package record schema".into());
         }
         if !crate::catalog::valid_name(&package.name)
@@ -241,7 +241,7 @@ pub fn input_key(
             "rootbeer-package-inputs-v1",
             package,
             system,
-            recipe,
+            &recipe.for_system(system),
             engine,
             environment,
         ))

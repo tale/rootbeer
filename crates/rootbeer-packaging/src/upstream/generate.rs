@@ -193,6 +193,8 @@ pub(super) fn package(
         let recipe = generated
             .entry(version.to_string())
             .or_insert_with(|| CatalogRecipe {
+                platforms: BTreeMap::new(),
+                install: None,
                 revision: 1,
                 source: Some(format!(
                     "github:{}@{}",
@@ -363,6 +365,8 @@ pub(super) fn source_package(
         package.versions.insert(
             (*version).into(),
             CatalogRecipe {
+                platforms: BTreeMap::new(),
+                install: None,
                 revision: 1,
                 source,
                 build: Some(build),

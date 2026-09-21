@@ -195,6 +195,7 @@ impl PackageResolution {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResolutionProof {
+    Download { url: String, sha256: String },
     Catalog(super::CatalogProof),
     SourceBuild(crate::SourceBuildProof),
     PublishedIndex(super::PublishedIndexProof),

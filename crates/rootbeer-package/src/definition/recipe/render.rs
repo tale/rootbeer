@@ -91,6 +91,23 @@ impl RecipeDefinition {
             }
             let (inputs, build, outputs) = split(recipe)?;
             let mut entry = Version {
+                platforms: recipe
+                    .platforms
+                    .iter()
+                    .map(|(system, recipe)| {
+                        let (inputs, build, outputs) = split(recipe)?;
+                        Ok((
+                            system.clone(),
+                            Version {
+                                revision: recipe.revision,
+                                inputs: Some(inputs),
+                                build,
+                                outputs: Some(outputs),
+                                ..Version::default()
+                            },
+                        ))
+                    })
+                    .collect::<Result<_, String>>()?,
                 revision: recipe.revision,
                 inputs: Some(inputs),
                 build,
@@ -187,11 +204,22 @@ fn prebuilt(recipe: &CatalogRecipe) -> Result<Option<Prebuilt>, String> {
     let Some(source) = &recipe.source else {
         return Ok(None);
     };
+    if source.starts_with("https://") {
+        return Ok(Some(Prebuilt {
+            url: Some(source.clone()),
+            install: recipe.install.clone(),
+            checksums: Some(recipe.checksums.clone()),
+            mirror: recipe.mirror.then_some(true),
+            ..Prebuilt::default()
+        }));
+    }
     let request = PackageRequest::parse(source);
     if !matches!(request.resolver.as_deref(), Some("github" | "aqua")) {
         return Err("unsupported prebuilt input provider".into());
     }
     Ok(Some(Prebuilt {
+        url: None,
+        install: None,
         enabled: None,
         systems: recipe
             .build

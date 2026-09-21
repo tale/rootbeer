@@ -132,10 +132,12 @@ impl GitHubUpstream {
             }
         }
         if !self.bins.is_empty()
-            || self
-                .build
-                .as_ref()
-                .is_none_or(|build| build.libraries.is_empty())
+            || !self.checks.is_empty()
+            || self.apps.is_empty()
+                && self
+                    .build
+                    .as_ref()
+                    .is_none_or(|build| build.libraries.is_empty())
         {
             super::catalog::validate_commands(&self.bins, &self.checks)?;
         }

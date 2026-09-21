@@ -58,7 +58,7 @@ pub fn plan_export(
     for package in catalog.packages.values() {
         for (version, recipe) in &package.versions {
             let key = format!("{}@{version}", package.name);
-            if !recipe.systems.contains(&system)
+            if !recipe.supported_systems().contains(&system)
                 || shard.is_some_and(|shard| !shard.contains(&groups[&package.name]))
             {
                 continue;
@@ -265,7 +265,7 @@ pub fn export_catalog_with_workers(
     for package in catalog.packages.values() {
         for (version, recipe) in &package.versions {
             let key = format!("{}@{version}", package.name);
-            if !recipe.systems.contains(&context.system)
+            if !recipe.supported_systems().contains(&context.system)
                 || shard.is_some_and(|shard| !shard.contains(&groups[&package.name]))
             {
                 continue;
@@ -455,6 +455,7 @@ pub(crate) fn export_inputs<'a>(
                     .ok_or("export dependencies must use exact versions")?,
             )
             .ok_or_else(|| format!("unknown recipe {key}"))?;
+        let recipe = recipe.for_system(&ResolveContext::current().system);
         needs_aqua |= recipe.build.is_none()
             && recipe
                 .source

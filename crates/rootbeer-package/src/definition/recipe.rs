@@ -58,6 +58,10 @@ struct Inputs {
 #[serde(deny_unknown_fields)]
 struct Prebuilt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    install: Option<crate::LockedInstall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     systems: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     enabled: Option<bool>,
@@ -128,6 +132,8 @@ struct Outputs {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Version {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    platforms: BTreeMap<String, Version>,
     #[serde(default = "one", skip_serializing_if = "is_one")]
     revision: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -335,6 +341,8 @@ impl RecipeDefinition {
             .outputs
             .overlay(&entry.outputs.clone().unwrap_or_default());
         let mut recipe = CatalogRecipe {
+            platforms: BTreeMap::new(),
+            install: None,
             revision: entry.revision,
             source: None,
             build: None,
@@ -374,24 +382,41 @@ impl RecipeDefinition {
                 );
             }
             let input = inputs.prebuilt.clone().unwrap_or_default();
-            let github = field(&shared.github, &input.github);
-            let aqua = field(&shared.aqua, &input.aqua);
-            let (provider, repository) = match (github, aqua) {
-                (Some(repository), None) => ("github", repository),
-                (None, Some(repository)) => ("aqua", repository),
+            let provider = if input.github.is_some() || input.aqua.is_some() || input.url.is_some()
+            {
+                &input
+            } else {
+                shared
+            };
+            let github = provider.github.clone();
+            let aqua = provider.aqua.clone();
+            let url = provider.url.clone();
+            let (provider, repository) = match (github, aqua, url) {
+                (Some(repository), None, None) => ("github", repository),
+                (None, Some(repository), None) => ("aqua", repository),
+                (None, None, Some(url)) => ("url", url),
                 _ => {
                     return Err(
-                        "prebuilt input requires exactly one provider: github or aqua".into(),
+                        "prebuilt input requires exactly one provider: github, aqua, or url".into(),
                     )
                 }
             };
-            crate::github::repository(&repository)?;
+            if provider != "url" {
+                crate::github::repository(&repository)?;
+            }
             let tag = expand(
-                &field(&shared.tag, &input.tag).ok_or("prebuilt input requires a tag")?,
+                &field(&shared.tag, &input.tag)
+                    .or_else(|| (provider == "url").then(|| version.into()))
+                    .ok_or("prebuilt input requires a tag")?,
                 version,
                 None,
             )?;
-            recipe.source = Some(format!("{provider}:{repository}@{tag}"));
+            recipe.source = Some(if provider == "url" {
+                expand(&repository, version, Some(&tag))?
+            } else {
+                format!("{provider}:{repository}@{tag}")
+            });
+            recipe.install = field(&shared.install, &input.install);
             let mut assets = shared.assets.clone().unwrap_or_default();
             for (system, pattern) in &assets {
                 if !matches!(
@@ -489,6 +514,18 @@ impl RecipeDefinition {
             recipe.build = Some(serde_json::from_value(value).map_err(|error| error.to_string())?);
         }
         recipe.validate()?;
+        for (system, variant) in &entry.platforms {
+            if !variant.platforms.is_empty() {
+                return Err("platform overrides cannot nest".into());
+            }
+            let mut shared = self.clone();
+            shared.systems = vec![system.clone()];
+            let mut variant = variant.clone();
+            variant.systems = Some(vec![system.clone()]);
+            recipe
+                .platforms
+                .insert(system.clone(), shared.expand_version(version, &variant)?);
+        }
         Ok(recipe)
     }
 }

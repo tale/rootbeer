@@ -232,7 +232,7 @@ fn package_systems(package: &CatalogPackage) -> BTreeSet<String> {
     package
         .versions
         .values()
-        .flat_map(|recipe| recipe.systems.iter().cloned())
+        .flat_map(|recipe| recipe.supported_systems().into_iter().cloned())
         .collect()
 }
 

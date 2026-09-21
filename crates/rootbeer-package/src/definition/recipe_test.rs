@@ -356,3 +356,104 @@ fn go_settings_expand_versions_roundtrip_and_reject_escaping_entry_points() {
             .is_err()
     );
 }
+
+#[test]
+fn platform_contracts_preserve_other_platforms_and_roundtrip() {
+    let original = PackageDefinition::from_lua(BINARY).unwrap();
+    let source = BINARY.replace(
+        "[\"1\"] = { revision = 2,",
+        r#"["1"] = { platforms = { ["aarch64-macos"] = {
+            inputs = { prebuilt = { github = "owner/macos", tag = "v1", assets = { ["aarch64-macos"] = "App.dmg" } } },
+            outputs = { bins = {}, checks = {}, apps = { ["App.app"] = "App.app" } },
+        } }, revision = 2,"#,
+    );
+    let definition = PackageDefinition::from_lua(&source).unwrap();
+    let recipe = &definition.package.versions["1"];
+    recipe.validate().unwrap();
+    let linux = recipe.for_system("x86_64-linux");
+    assert_eq!(linux, original.package.versions["1"]);
+    assert_eq!(linux.sha256(), original.package.versions["1"].sha256());
+    let mac = recipe.for_system("aarch64-macos");
+    assert_eq!(mac.source.as_deref(), Some("github:owner/macos@v1"));
+    assert!(mac.bins.is_empty());
+    assert!(mac.checks.is_empty());
+    assert_eq!(mac.systems, ["aarch64-macos"]);
+    assert_eq!(mac.apps["App.app"], std::path::PathBuf::from("App.app"));
+    roundtrip(&definition);
+    let mut changed = definition.clone();
+    changed
+        .package
+        .versions
+        .get_mut("1")
+        .unwrap()
+        .platforms
+        .get_mut("aarch64-macos")
+        .unwrap()
+        .revision = 2;
+    roundtrip(&changed);
+    let mut invalid = recipe.clone();
+    invalid
+        .platforms
+        .get_mut("aarch64-macos")
+        .unwrap()
+        .systems
+        .push("x86_64-linux".into());
+    assert!(invalid.validate().is_err());
+}
+
+#[test]
+fn direct_downloads_require_pinned_safe_inputs_and_resolve_without_metadata() {
+    use crate::{PackageCatalog, PackageRequest, PackageResolver, ResolveContext};
+    let source = format!(
+        r#"return {{
+        schema = 2, name = "app", description = "Application", homepage = "https://example.com",
+        default_version = "1", systems = {{ "aarch64-macos" }},
+        inputs = {{ prebuilt = {{ url = "https://example.com/App-{{version}}.dmg", install = "Dmg" }} }},
+        outputs = {{ apps = {{ ["App.app"] = "App.app" }} }},
+        versions = {{ ["1"] = {{ inputs = {{ prebuilt = {{ checksums = {{ ["aarch64-macos"] = "{}" }} }} }} }} }},
+    }}"#,
+        "a".repeat(64)
+    );
+    let definition = PackageDefinition::from_lua(&source).unwrap();
+    roundtrip(&definition);
+    let catalog = PackageCatalog::from_definitions(&std::collections::BTreeMap::from([(
+        "app".into(),
+        definition,
+    )]))
+    .unwrap();
+    let resolver = crate::catalog::CatalogResolver::new(
+        &catalog,
+        &Default::default(),
+        crate::ResolverStack::new(),
+    );
+    let resolution = resolver
+        .resolve(
+            &PackageRequest::parse("app"),
+            &ResolveContext::new("aarch64-macos"),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(resolution.package.install, crate::LockedInstall::Dmg);
+    assert_eq!(
+        resolution.package.source,
+        crate::LockedSource::Url {
+            url: "https://example.com/App-1.dmg".into(),
+            sha256: "a".repeat(64)
+        }
+    );
+    assert!(matches!(
+        resolution.proof,
+        crate::ResolutionProof::Download { .. }
+    ));
+    for invalid in [
+        source.replace(&"a".repeat(64), "bad"),
+        source.replace("https://example.com/App-", "http://example.com/App-"),
+        source.replace("install = \"Dmg\"", "install = \"Directory\""),
+    ] {
+        assert!(PackageDefinition::from_lua(&invalid)
+            .and_then(|definition| PackageCatalog::from_definitions(
+                &std::collections::BTreeMap::from([("app".into(), definition)])
+            ))
+            .is_err());
+    }
+}

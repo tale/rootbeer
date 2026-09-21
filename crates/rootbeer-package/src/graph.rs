@@ -2,7 +2,7 @@ use crate::{BuildDependency, DependencyKind};
 use crate::{CatalogPackage, CatalogRecipe, PackageCatalog, PackageRequest, ResolveContext};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub fn find_recipe<'a>(
+pub fn find_recipe_definition<'a>(
     catalog: &'a PackageCatalog,
     request: &str,
 ) -> Result<(&'a CatalogPackage, &'a str, &'a CatalogRecipe), String> {
@@ -31,14 +31,42 @@ pub fn find_recipe<'a>(
     Ok((package, version, recipe))
 }
 
+/// Selects the package recipe for the host platform.
+pub fn find_recipe<'a>(
+    catalog: &'a PackageCatalog,
+    request: &str,
+) -> Result<(&'a CatalogPackage, &'a str, CatalogRecipe), String> {
+    find_recipe_for_system(catalog, request, &ResolveContext::current().system)
+}
+
+/// Selects a platform's exact recipe without unrelated platform contracts.
+pub fn find_recipe_for_system<'a>(
+    catalog: &'a PackageCatalog,
+    request: &str,
+    system: &str,
+) -> Result<(&'a CatalogPackage, &'a str, CatalogRecipe), String> {
+    let parsed = PackageRequest::parse(request);
+    let package = catalog
+        .find(&parsed.name)
+        .ok_or_else(|| format!("unknown package `{}`", parsed.name))?;
+    let exact = if parsed.version.is_none() {
+        format!("{request}@{}", package.default_version_for(system))
+    } else {
+        request.into()
+    };
+    let (package, version, recipe) = find_recipe_definition(catalog, &exact)?;
+    Ok((package, version, recipe.for_system(system)))
+}
+
 fn visit(
     catalog: &PackageCatalog,
     request: &str,
+    system: &str,
     active: &mut BTreeSet<String>,
     done: &mut BTreeSet<String>,
     order: &mut Vec<String>,
 ) -> Result<(), String> {
-    let (package, version, recipe) = find_recipe(catalog, request)?;
+    let (package, version, recipe) = find_recipe_for_system(catalog, request, system)?;
     recipe.validate()?;
     let key = format!("{}@{version}", package.name);
     if done.contains(&key) {
@@ -58,7 +86,7 @@ fn visit(
                     "build dependency `{dependency}` must use a canonical package name"
                 ));
             }
-            visit(catalog, dependency, active, done, order)?;
+            visit(catalog, dependency, system, active, done, order)?;
         }
     }
     active.remove(&key);
@@ -68,16 +96,26 @@ fn visit(
 }
 
 pub(crate) fn validate_dependencies(catalog: &PackageCatalog) -> Result<(), String> {
-    let mut done = BTreeSet::new();
-    for package in catalog.packages.values() {
-        for version in package.versions.keys() {
-            visit(
-                catalog,
-                &format!("{}@{version}", package.name),
-                &mut BTreeSet::new(),
-                &mut done,
-                &mut Vec::new(),
-            )?;
+    for system in ["aarch64-macos", "aarch64-linux", "x86_64-linux"] {
+        let mut done = BTreeSet::new();
+        for package in catalog.packages.values() {
+            for (version, recipe) in &package.versions {
+                if !recipe
+                    .supported_systems()
+                    .iter()
+                    .any(|value| value.as_str() == system)
+                {
+                    continue;
+                }
+                visit(
+                    catalog,
+                    &format!("{}@{version}", package.name),
+                    system,
+                    &mut BTreeSet::new(),
+                    &mut done,
+                    &mut Vec::new(),
+                )?;
+            }
         }
     }
     Ok(())
@@ -168,6 +206,7 @@ impl DependencyGraph {
             visit(
                 catalog,
                 &format!("{}@{version}", package.name),
+                system,
                 &mut BTreeSet::new(),
                 &mut done,
                 &mut order,
@@ -175,7 +214,7 @@ impl DependencyGraph {
         }
         let mut nodes = std::collections::BTreeMap::<String, DependencyNode>::new();
         for key in &order {
-            let (_, _, recipe) = find_recipe(catalog, key)?;
+            let (_, _, recipe) = find_recipe_for_system(catalog, key, system)?;
             if !recipe.systems.iter().any(|value| value == system) {
                 return Err(format!("{key} has no recipe for {system}"));
             }
@@ -206,7 +245,7 @@ impl DependencyGraph {
             }
             for (name, exports) in &mut visible {
                 if exports.has_libraries {
-                    exports.libraries = find_recipe(catalog, name)?
+                    exports.libraries = find_recipe_for_system(catalog, name, system)?
                         .2
                         .build
                         .as_ref()

@@ -76,6 +76,59 @@ pub(crate) fn check_package(
             &build_options.execution,
         )?;
     }
+    for (name, app) in &realized.apps {
+        let plist = app.join("Contents/Info.plist");
+        let output = std::process::Command::new("/usr/bin/plutil")
+            .args(["-extract", "CFBundleExecutable", "raw", "-o", "-"])
+            .arg(&plist)
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(format!(
+                "{name}: missing application executable in Info.plist"
+            ));
+        }
+        let executable = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        let executable = executable.trim();
+        if executable.is_empty() || executable.contains(['/', '\\']) {
+            return Err(format!("{name}: invalid application executable"));
+        }
+        let executable = app
+            .join("Contents/MacOS")
+            .join(executable)
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        use std::os::unix::fs::PermissionsExt;
+        if !executable.starts_with(app)
+            || !executable.is_file()
+            || executable
+                .metadata()
+                .map_err(|error| error.to_string())?
+                .permissions()
+                .mode()
+                & 0o111
+                == 0
+        {
+            return Err(format!(
+                "{name}: application executable is missing, unsafe, or not executable"
+            ));
+        }
+        rootbeer_build::run_with_execution(
+            &[
+                "/usr/bin/codesign".into(),
+                "--verify".into(),
+                "--deep".into(),
+                "--strict".into(),
+                app.to_string_lossy().into_owned(),
+            ],
+            check_workspace.path(),
+            &environment,
+            &root.join("checks.log"),
+            Duration::from_secs(60),
+            sandbox.as_ref(),
+            &build_options.execution,
+        )?;
+    }
     if let Some(environment) = &build_options.environment {
         rootbeer_build::verify_environment(environment)?;
     }

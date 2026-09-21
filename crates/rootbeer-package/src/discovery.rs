@@ -65,12 +65,13 @@ impl DiscoveryManifest {
         }
         self.catalog.validate()?;
         for (id, platforms) in &self.records {
-            let (package, version, recipe) = crate::graph::find_recipe(&self.catalog, id)?;
+            let (package, version, recipe) =
+                crate::graph::find_recipe_definition(&self.catalog, id)?;
             if id != &format!("{}@{version}", package.name) || platforms.is_empty() {
                 return Err("invalid discovery package identity".into());
             }
             for (system, pin) in platforms {
-                if !recipe.systems.contains(system) {
+                if !recipe.supported_systems().contains(system) {
                     return Err(format!("{id}: unapproved discovery platform {system}"));
                 }
                 crate::index::validate_https(&pin.url)?;
@@ -236,7 +237,13 @@ impl DiscoveryResolver {
             .ok_or_else(|| format!("{id} has no published package for {}", context.system))?;
         let bytes = self.read(pin, crate::distribution::RECORD_LIMIT)?;
         let record = verify_record(&bytes, &self.pin.public_key, &id, &context.system)?;
-        if package.versions.get(version) != Some(&record.recipe) {
+        if package
+            .versions
+            .get(version)
+            .map(|recipe| recipe.for_system(&context.system))
+            .as_ref()
+            != Some(&record.recipe)
+        {
             return Err("package record differs from the discovered recipe".into());
         }
         Ok((record, pin.clone()))

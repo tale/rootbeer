@@ -59,7 +59,7 @@ pub fn plan_packages(
         tasks.insert(
             id.clone(),
             PackageTask {
-                key: input_key(&id, &system, recipe, &engine, environment),
+                key: input_key(&id, &system, &recipe, &engine, environment),
                 package: id,
                 name: package.name.clone(),
                 system: system.clone(),

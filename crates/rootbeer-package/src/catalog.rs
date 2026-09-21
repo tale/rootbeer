@@ -135,7 +135,7 @@ impl PackageCatalog {
                 if !package
                     .versions
                     .get(version)
-                    .is_some_and(|recipe| recipe.systems.contains(system))
+                    .is_some_and(|recipe| recipe.supported_systems().contains(system))
                 {
                     return Err(format!(
                         "{name}: default for {system} must reference a supported recipe"
@@ -269,6 +269,7 @@ impl PackageResolver for CatalogResolver {
                     .join(", ")
             )
         })?;
+        let recipe = recipe.for_system(&context.system);
         if !recipe.systems.contains(&context.system) {
             return Err(format!(
                 "{}@{version} has no recipe for {}",
@@ -284,6 +285,37 @@ impl PackageResolver for CatalogResolver {
             && !recipe.assets.contains_key(&context.system)
         {
             return Err("no matching upstream prebuilt; build this package from source".into());
+        }
+        if source.starts_with("https://") {
+            let sha256 = recipe
+                .checksums
+                .get(&context.system)
+                .ok_or("direct download requires a checksum")?
+                .clone();
+            return Ok(Some(PackageResolution::new(
+                super::LockedPackage {
+                    name: package.name.clone(),
+                    version: version.into(),
+                    source: super::LockedSource::Url {
+                        url: source.into(),
+                        sha256: sha256.clone(),
+                    },
+                    install: recipe
+                        .install
+                        .clone()
+                        .ok_or("direct download requires an install format")?,
+                    provides: super::Provides {
+                        bins: recipe.bin_paths.clone(),
+                        apps: recipe.apps.clone(),
+                    },
+                    runtime_dependencies: BTreeMap::new(),
+                    output_sha256: None,
+                },
+                ResolutionProof::Download {
+                    url: source.into(),
+                    sha256,
+                },
+            )));
         }
         let mut source = PackageRequest::parse(source);
         source.asset = recipe.assets.get(&context.system).cloned();
