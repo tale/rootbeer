@@ -533,22 +533,27 @@ mod tests {
         bin_paths: BTreeMap<String, PathBuf>,
         checksums: BTreeMap<String, String>,
     ) -> super::super::catalog::CatalogResolver {
+        let bins = if bin_paths.is_empty() {
+            serde_json::json!(commands)
+        } else {
+            serde_json::json!(bin_paths)
+        };
         let catalog: crate::PackageCatalog = serde_json::from_value(serde_json::json!({
-            "schema": 1,
             "packages": { name: {
                 "name": name,
                 "description": "Command contract test",
                 "homepage": format!("https://github.com/{repository}"),
-                "default_version": "1",
+                "default_versions": { "aarch64-macos": "1" },
                 "versions": { "1": {
+                    "license": "MIT",
                     "revision": 1,
-                    "source": format!("github:{repository}@v1"),
-                    "assets": { "aarch64-macos": asset_name },
-                    "systems": ["aarch64-macos"],
-                    "bins": commands,
-                    "bin_paths": bin_paths,
-                    "checksums": checksums,
-                    "checks": [[commands[0], "--version"]]
+                    "platforms": { "aarch64-macos": {
+                        "source": format!("github:{repository}@v1"),
+                        "asset": asset_name,
+                        "bins": bins,
+                        "sha256": checksums.get("aarch64-macos"),
+                        "checks": [[commands[0], "--version"]]
+                    }}
                 }}
             }}
         }))

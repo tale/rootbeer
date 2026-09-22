@@ -36,7 +36,7 @@ pub use build_spec::{
     BuildSteps, DependencyKind, GoBuild, RustBuild, SourceBuild,
 };
 pub use catalog::{
-    CatalogPackage, CatalogProof, CatalogRecipe, CatalogVersion, ExtraFields, PackageCatalog,
+    Bins, CatalogPackage, CatalogProof, CatalogRecipe, CatalogVersion, ExtraFields, PackageCatalog,
 };
 pub use definition::{PackageDefinition, PackageUpstream};
 pub use github::GitHubResolver;

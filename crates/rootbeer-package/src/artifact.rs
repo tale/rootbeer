@@ -41,7 +41,7 @@ pub(crate) fn fixture() -> ArtifactIndex {
             strip_prefix: None,
         },
         provides: Provides {
-            bins: recipe.bins.clone(),
+            bins: recipe.bins.paths().cloned().unwrap_or_default(),
             apps: Default::default(),
         },
         runtime_dependencies: Default::default(),

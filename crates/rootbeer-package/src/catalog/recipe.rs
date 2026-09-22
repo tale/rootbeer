@@ -22,6 +22,41 @@ impl ExtraFields {
     }
 }
 
+/// Exported commands: names alone when the artifact's layout decides their paths,
+/// or exact paths when the recipe does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Bins {
+    Names(Vec<String>),
+    Paths(BTreeMap<String, PathBuf>),
+}
+
+impl Default for Bins {
+    fn default() -> Self {
+        Self::Names(Vec::new())
+    }
+}
+
+impl Bins {
+    pub fn names(&self) -> BTreeSet<&String> {
+        match self {
+            Self::Names(names) => names.iter().collect(),
+            Self::Paths(paths) => paths.keys().collect(),
+        }
+    }
+
+    pub fn paths(&self) -> Option<&BTreeMap<String, PathBuf>> {
+        match self {
+            Self::Names(_) => None,
+            Self::Paths(paths) => Some(paths),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names().is_empty()
+    }
+}
+
 /// A package's identity and the versions a PDR publishes for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogPackage {
@@ -66,9 +101,8 @@ pub struct CatalogRecipe {
     pub asset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
-    /// Exported commands, each resolved to its path in the installed tree.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub bins: BTreeMap<String, PathBuf>,
+    #[serde(default, skip_serializing_if = "Bins::is_empty")]
+    pub bins: Bins,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub apps: BTreeMap<String, PathBuf>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -157,7 +191,7 @@ impl CatalogRecipe {
         if let Some(build) = &self.build {
             build.validate()?;
             if let Some(go) = &build.go {
-                if go.binaries.keys().collect::<BTreeSet<_>>() != self.bins.keys().collect() {
+                if go.binaries.keys().collect::<BTreeSet<_>>() != self.bins.names() {
                     return Err("Go entry points must match exported binaries".into());
                 }
             }
@@ -175,7 +209,11 @@ impl CatalogRecipe {
                         .into(),
                 );
             }
-            match self.install.as_ref().ok_or("direct downloads require an install format")? {
+            match self
+                .install
+                .as_ref()
+                .ok_or("direct downloads require an install format")?
+            {
                 crate::LockedInstall::Dmg if !self.apps.is_empty() => {}
                 crate::LockedInstall::Archive { strip_prefix, .. } => {
                     if let Some(path) = strip_prefix {
@@ -207,7 +245,11 @@ impl CatalogRecipe {
             {
                 return Err("prebuilt platforms need an exact github: source".into());
             }
-            if self.asset.as_ref().is_none_or(|asset| asset.trim().is_empty()) {
+            if self
+                .asset
+                .as_ref()
+                .is_none_or(|asset| asset.trim().is_empty())
+            {
                 return Err("a prebuilt platform needs one release asset".into());
             }
         }
@@ -216,8 +258,14 @@ impl CatalogRecipe {
         if !self.apps.is_empty() && !system.ends_with("-macos") {
             return Err("application exports are macOS only".into());
         }
-        super::validate_commands(self.bins.keys(), &self.checks)?;
-        for path in self.bins.values().chain(self.apps.values()) {
+        super::validate_commands(self.bins.names(), &self.checks)?;
+        for path in self
+            .bins
+            .paths()
+            .into_iter()
+            .flat_map(BTreeMap::values)
+            .chain(self.apps.values())
+        {
             crate::realize::validate_relative_path("output path", path)
                 .map_err(|error| error.to_string())?;
         }

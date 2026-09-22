@@ -159,7 +159,8 @@ mod tests {
         let mut entry = catalog["packages"]["age"].clone();
         entry["name"] = json!(PACKAGE);
         catalog["packages"][PACKAGE] = entry;
-        catalog["packages"]["fd"]["versions"]["10.5.0"]["install"] = json!("Pkg");
+        catalog["packages"]["fd"]["versions"]["10.5.0"]["platforms"][&system]["install"] =
+            json!("Pkg");
 
         let records = json!({
             format!("{PACKAGE}@1.3.1"): {

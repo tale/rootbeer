@@ -424,10 +424,7 @@ mod tests {
             .platforms
             .values_mut()
             .flat_map(|platform| platform.build.as_mut())
-            .next()
-            .unwrap()
-            .dependencies
-            .push(keys[3].clone().into());
+            .for_each(|build| build.dependencies.push(keys[3].clone().into()));
         assert!(DependencyGraph::new(
             &catalog,
             &["root".into()],

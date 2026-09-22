@@ -332,7 +332,7 @@ mod tests {
         };
         assert_eq!(
             manifest.signing_message().unwrap(),
-            br#"["rootbeer-discovery-v1",1,{"packages":{},"schema":1},{}]"#
+            br#"["rootbeer-discovery-v1",1,{"packages":{}},{}]"#
         );
     }
 

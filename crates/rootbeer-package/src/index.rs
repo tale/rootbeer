@@ -89,21 +89,24 @@ impl ArtifactIndex {
                 let platform = recipe
                     .for_system(system)
                     .ok_or_else(|| format!("{key}: {system} has no recipe"))?;
-                artifact.validate(key, system, platform)?;
+                artifact.validate(key, system, recipe.revision, platform)?;
                 for dependency in super::runtime::closure(&artifact.package)? {
-                    let (_, _, entry) = super::graph::find_recipe_definition(
-                        &self.catalog,
-                        &dependency.id(),
-                    )?;
-                    let dependency_recipe = entry.for_system(system).ok_or_else(|| {
-                        format!("{}: {system} has no recipe", dependency.id())
-                    })?;
+                    let (_, _, entry) =
+                        super::graph::find_recipe_definition(&self.catalog, &dependency.id())?;
+                    let dependency_recipe = entry
+                        .for_system(system)
+                        .ok_or_else(|| format!("{}: {system} has no recipe", dependency.id()))?;
                     super::PublishedArtifact {
                         revision: entry.revision,
                         receipt_sha256: artifact.receipt_sha256.clone(),
                         package: dependency.clone(),
                     }
-                    .validate(&dependency.id(), system, dependency_recipe)?;
+                    .validate(
+                        &dependency.id(),
+                        system,
+                        entry.revision,
+                        dependency_recipe,
+                    )?;
                 }
             }
         }
@@ -116,6 +119,7 @@ impl super::PublishedArtifact {
         &self,
         key: &str,
         system: &str,
+        revision: u32,
         recipe: &super::CatalogRecipe,
     ) -> Result<(), String> {
         let package = &self.package;
@@ -136,16 +140,18 @@ impl super::PublishedArtifact {
             return Err(format!("{key}: runtime dependencies differ from recipe"));
         }
         if package.id() != key
+            || self.revision != revision
             || !is_sha256(&self.receipt_sha256)
             || package
                 .output_sha256
                 .as_deref()
                 .is_none_or(|hash| !is_sha256(hash))
-            || package.provides.bins.len() != recipe.bins.len()
+            || package.provides.bins.len() != recipe.bins.names().len()
             || recipe
                 .bins
-                .keys()
-                .any(|bin| !package.provides.bins.contains_key(bin))
+                .names()
+                .iter()
+                .any(|bin| !package.provides.bins.contains_key(*bin))
         {
             return Err(format!("{key}: invalid platform artifact contract"));
         }
@@ -155,7 +161,11 @@ impl super::PublishedArtifact {
             ));
         }
         super::catalog::validate_apps(&package.provides.apps)?;
-        if package.provides.bins != recipe.bins {
+        if recipe
+            .bins
+            .paths()
+            .is_some_and(|paths| &package.provides.bins != paths)
+        {
             return Err(format!(
                 "{key}: artifact command paths differ from the recipe"
             ));
@@ -348,14 +358,21 @@ mod tests {
         entry.aliases = vec!["new-alias".into()];
         let mut platforms = index
             .artifacts
-            .remove(&format!("xz@{}", entry.default_version_for("aarch64-linux").unwrap()))
+            .remove(&format!(
+                "xz@{}",
+                entry.default_version_for("aarch64-linux").unwrap()
+            ))
             .unwrap();
         for artifact in platforms.values_mut() {
             artifact.package.name = entry.name.clone();
         }
-        index
-            .artifacts
-            .insert(format!("new-tool@{}", entry.default_version_for("aarch64-linux").unwrap()), platforms);
+        index.artifacts.insert(
+            format!(
+                "new-tool@{}",
+                entry.default_version_for("aarch64-linux").unwrap()
+            ),
+            platforms,
+        );
         index.catalog.packages.insert(entry.name.clone(), entry);
         index.catalog_sha256 = index.catalog.sha256();
         let bytes = serde_json::to_vec(&index).unwrap();
@@ -377,7 +394,6 @@ mod tests {
             index: OnceLock::new(),
         }
     }
-
 
     #[test]
     fn published_index_uses_platform_default_without_changing_exact_pins() {
@@ -511,24 +527,24 @@ mod tests {
         let (key, platforms) = index.artifacts.iter().next().unwrap();
         let mut artifact = platforms["aarch64-linux"].clone();
         let package = &index.catalog.packages["new-tool"];
-        let mut recipe = package.versions
-            [package.default_version_for("aarch64-linux").unwrap()]
-        .for_system("aarch64-linux")
-        .unwrap()
-        .clone();
+        let mut recipe = package.versions[package.default_version_for("aarch64-linux").unwrap()]
+            .for_system("aarch64-linux")
+            .unwrap()
+            .clone();
         recipe.build = None;
         recipe.source = Some("github:owner/tool@v1".into());
-        recipe.bins = artifact.package.provides.bins.clone();
+        recipe.bins = crate::Bins::Paths(artifact.package.provides.bins.clone());
         recipe.asset = Some("tool-v1-linux.tar.gz".into());
         recipe.validate("aarch64-linux").unwrap();
-        artifact.validate(key, "aarch64-linux", &recipe).unwrap();
+        artifact
+            .validate(key, "aarch64-linux", artifact.revision, &recipe)
+            .unwrap();
 
         *artifact.package.provides.bins.values_mut().next().unwrap() = "bin/other".into();
         assert!(artifact
-            .validate(key, "aarch64-linux", &recipe)
+            .validate(key, "aarch64-linux", artifact.revision, &recipe)
             .unwrap_err()
             .contains("command paths differ"));
-
     }
 
     #[test]
@@ -538,11 +554,10 @@ mod tests {
         let (key, platforms) = index.artifacts.iter().next().unwrap();
         let mut artifact = platforms["aarch64-linux"].clone();
         let package = &index.catalog.packages["new-tool"];
-        let mut recipe = package.versions
-            [package.default_version_for("aarch64-linux").unwrap()]
-        .for_system("aarch64-linux")
-        .unwrap()
-        .clone();
+        let mut recipe = package.versions[package.default_version_for("aarch64-linux").unwrap()]
+            .for_system("aarch64-linux")
+            .unwrap()
+            .clone();
         recipe.build = None;
         recipe.source = Some("github:owner/tool@v1".into());
         let LockedSource::Url { sha256, .. } = &artifact.package.source else {
@@ -551,30 +566,33 @@ mod tests {
         recipe.sha256 = Some(sha256.clone());
         recipe.asset = Some("tool-v1-linux.tar.gz".into());
         recipe.validate("aarch64-linux").unwrap();
-        artifact.validate(key, "aarch64-linux", &recipe).unwrap();
+        artifact
+            .validate(key, "aarch64-linux", artifact.revision, &recipe)
+            .unwrap();
 
         recipe.sha256 = Some("b".repeat(64));
         assert!(artifact
-            .validate(key, "aarch64-linux", &recipe)
+            .validate(key, "aarch64-linux", artifact.revision, &recipe)
             .unwrap_err()
             .contains("checksum differs"));
         recipe.sha256 = Some(sha256.clone());
 
         recipe.mirror = true;
         assert!(artifact
-            .validate(key, "aarch64-linux", &recipe)
+            .validate(key, "aarch64-linux", artifact.revision, &recipe)
             .unwrap_err()
             .contains("mirrored artifacts must use GHCR"));
         artifact.package.source = LockedSource::Url {
             url: format!("ghcr://owner/tool@sha256:{}", "c".repeat(64)),
             sha256: "c".repeat(64),
         };
-        artifact.validate(key, "aarch64-linux", &recipe).unwrap();
+        artifact
+            .validate(key, "aarch64-linux", artifact.revision, &recipe)
+            .unwrap();
         recipe.mirror = false;
         assert!(artifact
-            .validate(key, "aarch64-linux", &recipe)
+            .validate(key, "aarch64-linux", artifact.revision, &recipe)
             .unwrap_err()
             .contains("checksum differs"));
     }
-
 }

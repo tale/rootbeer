@@ -12,7 +12,7 @@ use crate::store::hash_bytes;
 mod recipe;
 
 pub(crate) use recipe::{validate_apps, validate_commands, validate_systems};
-pub use recipe::{CatalogPackage, CatalogRecipe, CatalogVersion, ExtraFields};
+pub use recipe::{Bins, CatalogPackage, CatalogRecipe, CatalogVersion, ExtraFields};
 
 /// A versioned snapshot of Rootbeer's canonical package definitions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,7 +298,7 @@ impl PackageResolver for CatalogResolver {
                         .clone()
                         .ok_or("direct download requires an install format")?,
                     provides: super::Provides {
-                        bins: recipe.bins.clone(),
+                        bins: recipe.bins.paths().cloned().unwrap_or_default(),
                         apps: recipe.apps.clone(),
                     },
                     runtime_dependencies: BTreeMap::new(),
@@ -312,7 +312,7 @@ impl PackageResolver for CatalogResolver {
         }
         let mut source = PackageRequest::parse(source);
         source.asset = recipe.asset.clone();
-        source.bins = recipe.bins.clone();
+        source.bins = recipe.bins.paths().cloned().unwrap_or_default();
         let resolution = self
             .backends
             .resolve_package(&source, context)
@@ -325,9 +325,9 @@ impl PackageResolver for CatalogResolver {
         if let (Some("github"), super::LockedInstall::Binary { path }, true) = (
             source.resolver.as_deref(),
             &mut locked.install,
-            recipe.bins.len() == 1,
+            recipe.bins.paths().is_none(),
         ) {
-            let Some(command) = recipe.bins.keys().next().cloned() else {
+            let [command] = recipe.bins.names().into_iter().collect::<Vec<_>>()[..] else {
                 return Err(format!(
                     "{}: raw GitHub assets must declare exactly one command",
                     package.name
@@ -335,7 +335,7 @@ impl PackageResolver for CatalogResolver {
             };
             // Raw assets have no internal filename; the recipe owns their installed command.
             *path = command.clone().into();
-            locked.provides.bins = BTreeMap::from([(command, path.clone())]);
+            locked.provides.bins = BTreeMap::from([(command.clone(), path.clone())]);
         }
         if let Some(expected) = recipe.sha256.as_ref() {
             if !matches!(&locked.source, super::LockedSource::Url { sha256, .. } if sha256 == expected)
@@ -346,7 +346,7 @@ impl PackageResolver for CatalogResolver {
                 ));
             }
         }
-        for bin in recipe.bins.keys() {
+        for bin in recipe.bins.names() {
             if !locked.provides.bins.contains_key(bin) {
                 return Err(format!(
                     "{}: backend did not provide declared command `{bin}`",
@@ -357,7 +357,7 @@ impl PackageResolver for CatalogResolver {
         locked
             .provides
             .bins
-            .retain(|name, _| recipe.bins.contains_key(name));
+            .retain(|name, _| recipe.bins.names().contains(name));
         locked.name = package.name.clone();
         locked.version = version.to_string();
         Ok(Some(PackageResolution::new(
@@ -514,25 +514,31 @@ mod tests {
         package
             .default_versions
             .insert("x86_64-linux".into(), "missing".into());
-        assert!(catalog.validate().unwrap_err().contains("supported recipe"));
+        assert!(catalog.validate().unwrap_err().contains("has no recipe"));
         let package = catalog.packages.get_mut("ripgrep").unwrap();
         package.default_versions.clear();
         package
             .default_versions
             .insert("unsupported-platform".into(), "15.2.0".into());
-        assert!(catalog.validate().unwrap_err().contains("supported recipe"));
+        assert!(catalog
+            .validate()
+            .unwrap_err()
+            .contains("unique supported systems"));
     }
 
     #[test]
     fn recipe_evaluation_has_no_host_access_and_rejects_unknown_fields() {
         assert!(PackageCatalog::from_lua(&[("bad", "return os.getenv('HOME')")]).is_err());
         assert!(PackageCatalog::from_lua(&[("bad", "return require('rootbeer')")]).is_err());
-        let source =
-            crate::PackageDefinition::new(crate::test_catalog::catalog().packages["age"].clone())
-                .to_lua()
-                .unwrap()
-                .replacen("return {", "return { typo = true,", 1);
-        assert!(PackageCatalog::from_lua(&[("age", &source)])
+        let source = r#"return {
+            typo = true,
+            name = "age", description = "Encrypt", homepage = "https://example.org",
+            prebuilt = { github = "FiloSottile/age", asset = "age-{version}.tar.gz" },
+            outputs = { bins = { "age" }, checks = { { "age", "--version" } } },
+            platforms = { ["aarch64-macos"] = { default_version = "1.3.1" } },
+            versions = { ["1.3.1"] = { license = "BSD-3-Clause", digests = { ["aarch64-macos"] = "aa" } } },
+        }"#;
+        assert!(PackageCatalog::from_lua(&[("age", source)])
             .unwrap_err()
             .contains("unknown field"));
     }
@@ -657,17 +663,38 @@ mod tests {
     }
 
     #[test]
-    fn loads_directory_recipes_with_the_same_validation_and_digest() {
+    fn loads_directory_recipes_and_rejects_a_hostile_file() {
         let directory = tempfile::tempdir().unwrap();
-        for (name, package) in crate::test_catalog::catalog().packages.iter().rev() {
-            let source = crate::PackageDefinition::new(package.clone())
-                .to_lua()
-                .unwrap();
-            std::fs::write(directory.path().join(format!("{name}.lua")), source).unwrap();
-        }
+        std::fs::write(
+            directory.path().join("age.lua"),
+            r#"return {
+                name = "age", description = "Encrypt", homepage = "https://example.org",
+                prebuilt = { github = "FiloSottile/age", asset = "age-{version}-{target}.tar.gz" },
+                outputs = { bins = { "age" }, checks = { { "age", "--version" } } },
+                platforms = {
+                    ["aarch64-macos"] = { target = "darwin-arm64", default_version = "1.3.1" },
+                    ["x86_64-linux"] = { target = "linux-amd64", default_version = "1.3.1" },
+                },
+                versions = { ["1.3.1"] = { license = "BSD-3-Clause", digests = {
+                    ["aarch64-macos"] = "aa", ["x86_64-linux"] = "bb",
+                } } },
+            }"#,
+        )
+        .unwrap();
         std::fs::write(directory.path().join("README.md"), "ignored").unwrap();
+
         let catalog = PackageCatalog::from_directory(directory.path()).unwrap();
-        assert_eq!(catalog.sha256(), crate::test_catalog::catalog().sha256());
+        let age = &catalog.packages["age"];
+        assert_eq!(age.default_version_for("aarch64-macos"), Some("1.3.1"));
+        assert_eq!(
+            age.versions["1.3.1"]
+                .for_system("x86_64-linux")
+                .unwrap()
+                .asset
+                .as_deref(),
+            Some("age-1.3.1-linux-amd64.tar.gz")
+        );
+
         std::fs::write(
             directory.path().join("invalid.lua"),
             "return os.execute('false')",
@@ -694,7 +721,7 @@ mod tests {
                 &ResolveContext::new("x86_64-windows")
             )
             .unwrap_err()
-            .contains("no recipe"));
+            .contains("does not support"));
         let mut request = PackageRequest::parse("ripgrep");
         request.asset = Some("different.tar.gz".into());
         assert!(resolver
