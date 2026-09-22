@@ -373,8 +373,43 @@ mod tests {
         }"#
         .replace("DIGEST", &"a".repeat(64));
         let definition = PackageDefinition::from_lua(&source).unwrap();
-        let again = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        let rendered = definition.to_lua().unwrap();
+        let again = PackageDefinition::from_lua(&rendered).unwrap();
         assert_eq!(again.package, definition.package);
+
+        let build =
+            &rendered[rendered.find("build = {").unwrap()..rendered.find("outputs").unwrap()];
+        for resolved in [
+            "url",
+            "sha256",
+            "strip_prefix",
+            "archive",
+            "cgo",
+            "generate",
+        ] {
+            assert!(
+                !build.contains(resolved),
+                "`{resolved}` leaked into:\n{build}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_build_cannot_restate_its_source() {
+        for field in [
+            r#"url = "https://example.com/x.tar.gz""#,
+            r#"sha256 = "aa""#,
+            r#"strip_prefix = "x""#,
+            r#"archive = "zip""#,
+            r#"patches = { "fix.patch" }"#,
+        ] {
+            let source = HELIUM.replace(
+                r#"default_license = "GPL-3.0-only","#,
+                &format!(r#"default_license = "GPL-3.0-only", build = {{ backend = "autotools", {field} }},"#),
+            );
+            let error = PackageDefinition::from_lua(&source).unwrap_err();
+            assert!(error.contains("unknown field"), "`{field}`: {error}");
+        }
     }
 
     #[test]

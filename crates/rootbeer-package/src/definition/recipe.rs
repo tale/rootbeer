@@ -44,7 +44,7 @@ pub(super) struct Spec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub build: Option<crate::SourceBuild>,
+    pub build: Option<Build>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outputs: Option<Outputs>,
 }
@@ -97,6 +97,28 @@ pub(super) struct Source {
     pub strip_prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub patches: Vec<String>,
+}
+
+/// How a source platform compiles. The archive it compiles is `source`, and its digest is
+/// the version's, so neither can be restated here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Build {
+    pub backend: crate::BuildBackend,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust: Option<crate::RustBuild>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go: Option<crate::GoBuild>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configure: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<crate::BuildDependency>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub libraries: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<crate::BuildSteps>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -373,40 +395,46 @@ impl Recipe {
                 .build
                 .as_ref()
                 .ok_or("a source platform needs a build")?;
-            let mut build = build.clone();
-            if let Some(go) = build.go.as_mut() {
+            let mut go = build.go.clone();
+            if let Some(go) = go.as_mut() {
                 for value in go.variables.values_mut() {
                     *value = substitute(value, version, &tag, target)?;
                 }
             }
-            build.sha256 = digest.to_string();
-            if let Some(archive) = &source.archive {
-                build.archive = match archive.as_str() {
-                    "tar.gz" => crate::ArchiveFormat::TarGz,
-                    "tar.xz" => crate::ArchiveFormat::TarXz,
-                    "zip" => crate::ArchiveFormat::Zip,
-                    other => return Err(format!("unsupported source archive `{other}`")),
-                };
-            }
-            build.url = substitute(
-                source
-                    .url
-                    .as_deref()
-                    .ok_or("a source platform needs a URL")?,
-                version,
-                &tag,
-                target,
-            )?;
-            build.strip_prefix = source
+            let archive = match source.archive.as_deref() {
+                None => crate::ArchiveFormat::default(),
+                Some("tar.gz") => crate::ArchiveFormat::TarGz,
+                Some("tar.xz") => crate::ArchiveFormat::TarXz,
+                Some("zip") => crate::ArchiveFormat::Zip,
+                Some(other) => return Err(format!("unsupported source archive `{other}`")),
+            };
+            let url = source
+                .url
+                .as_deref()
+                .ok_or("a source platform needs a URL")?;
+            let strip_prefix = source
                 .strip_prefix
                 .as_deref()
                 .map(|prefix| substitute(prefix, version, &tag, target))
                 .transpose()?
                 .map(PathBuf::from)
                 .unwrap_or_default();
-            build.git = source.git.clone();
-            build.patches = source.patches.clone();
-            recipe.build = Some(build);
+            recipe.build = Some(crate::SourceBuild {
+                git: source.git.clone(),
+                backend: build.backend.clone(),
+                rust: build.rust.clone(),
+                go,
+                url: substitute(url, version, &tag, target)?,
+                sha256: digest.to_string(),
+                archive,
+                strip_prefix,
+                configure: build.configure.clone(),
+                args: build.args.clone(),
+                patches: source.patches.clone(),
+                dependencies: build.dependencies.clone(),
+                libraries: build.libraries.clone(),
+                steps: build.steps.clone(),
+            });
         } else {
             return Err("a platform needs a prebuilt or a source".into());
         }
