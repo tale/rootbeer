@@ -434,6 +434,7 @@ pub fn publish_index(opts: &PublishOptions<'_>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_catalog::VersionTestExt;
     use ring::signature::{Ed25519KeyPair, KeyPair};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -447,15 +448,14 @@ mod tests {
             .unwrap();
         let mut index: ArtifactIndex = read_json(&bundle.join("index.json")).unwrap();
         index.catalog.packages.retain(|name, _| name == "xz");
-        for recipe in index
-            .catalog
-            .packages
-            .get_mut("xz")
-            .unwrap()
-            .versions
-            .values_mut()
-        {
-            recipe.systems = vec!["aarch64-linux".into(), "x86_64-linux".into()];
+        let package = index.catalog.packages.get_mut("xz").unwrap();
+        package
+            .default_versions
+            .retain(|system, _| system != "aarch64-macos");
+        for recipe in package.versions.values_mut() {
+            recipe
+                .platforms
+                .retain(|system, _| system != "aarch64-macos");
         }
         index.catalog_sha256 = index.catalog.sha256();
         let artifact = index
@@ -585,15 +585,22 @@ mod tests {
             sha256: sha256.clone(),
         };
         let package = index.catalog.packages.get_mut("xz").unwrap();
-        let recipe = package.versions.get_mut(&package.default_version).unwrap();
-        recipe.build = None;
-        recipe.source = Some("github:owner/xz@v1".into());
-        recipe.mirror = true;
-        recipe.checksums = recipe
-            .systems
-            .iter()
-            .map(|system| (system.clone(), sha256.clone()))
-            .collect();
+        let version = package
+            .default_version_for("aarch64-linux")
+            .unwrap()
+            .to_string();
+        package
+            .versions
+            .get_mut(&version)
+            .unwrap()
+            .all_mut()
+            .for_each(|platform| {
+                platform.build = None;
+                platform.source = Some("github:owner/xz@v1".into());
+                platform.asset = Some("xz-5.8.3.tar.gz".into());
+                platform.mirror = true;
+                platform.sha256 = Some(sha256.clone());
+            });
         index.catalog_sha256 = index.catalog.sha256();
         let original = serde_json::json!({
             "schema": 1,
@@ -693,8 +700,10 @@ mod tests {
         published.validate_complete().unwrap();
         for package in index.catalog.packages.values_mut() {
             for recipe in package.versions.values_mut() {
-                recipe.build = None;
-                recipe.source = Some("github:owner/xz@v1".into());
+                recipe.all_mut().for_each(|platform| {
+                    platform.build = None;
+                    platform.source = Some("github:owner/xz@v1".into());
+                });
             }
         }
         index.catalog_sha256 = index.catalog.sha256();

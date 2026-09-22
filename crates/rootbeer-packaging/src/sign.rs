@@ -114,15 +114,14 @@ mod tests {
         );
         let mut index: ArtifactIndex = serde_json::from_slice(&incomplete).unwrap();
         index.catalog.packages.retain(|name, _| name == "xz");
-        for recipe in index
-            .catalog
-            .packages
-            .get_mut("xz")
-            .unwrap()
-            .versions
-            .values_mut()
-        {
-            recipe.systems = vec!["aarch64-linux".into()];
+        let package = index.catalog.packages.get_mut("xz").unwrap();
+        package
+            .default_versions
+            .retain(|system, _| system == "aarch64-linux");
+        for recipe in package.versions.values_mut() {
+            recipe
+                .platforms
+                .retain(|system, _| system == "aarch64-linux");
         }
         index.catalog_sha256 = index.catalog.sha256();
         let bytes = serde_json::to_vec(&index).unwrap();

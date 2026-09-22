@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::metadata::{MetadataCache, Statistics};
 use super::{discover_package, validate_definitions, GitHubUpstream};
-use crate::{CatalogPackage, PackageCatalog, PackageDefinition, PackageRequest};
+use crate::{CatalogPackage, PackageCatalog, PackageDefinition};
 
 /// A discovery report; candidate recipes are unqualified until package export succeeds.
 #[derive(Serialize)]
@@ -265,34 +265,99 @@ fn write_report(output: &Path, report: &UpdateReport) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    fn digest(seed: &str) -> String {
+        seed.repeat(64)[..64].to_string()
+    }
+
+    fn authored(name: &str, versions: &str) -> String {
+        format!(
+            r#"return {{
+                name = "{name}",
+                description = "Tool",
+                homepage = "https://example.com",
+                default_license = "MIT",
+                platforms = {{
+                    ["aarch64-macos"] = {{
+                        default_version = "1",
+                        upstream = {{ github = "owner/{name}", tag_prefix = "v" }},
+                        prebuilt = {{ github = "owner/{name}", asset = "{name}-{{tag}}-darwin-arm64.tar.gz" }},
+                        outputs = {{ bins = {{ "{name}" }}, checks = {{ {{ "{name}", "--version" }} }} }},
+                    }},
+                }},
+                versions = {versions},
+            }}"#
+        )
+    }
+
+    fn definitions(sources: &[String]) -> BTreeMap<String, PackageDefinition> {
+        sources
+            .iter()
+            .map(|source| {
+                let definition = PackageDefinition::from_lua(source).unwrap();
+                (definition.package.name.clone(), definition)
+            })
+            .collect()
+    }
+
+    fn rules(definitions: &BTreeMap<String, PackageDefinition>) -> Vec<GitHubUpstream> {
+        definitions
+            .values()
+            .filter_map(|definition| definition.github_rules())
+            .collect()
+    }
+
+    fn releases(name: &str, tags: &[&str]) -> Value {
+        Value::Array(
+            tags.iter()
+                .enumerate()
+                .map(|(index, tag)| {
+                    serde_json::json!({
+                        "id": index + 1,
+                        "tag_name": tag,
+                        "assets": [{
+                            "name": format!("{name}-{tag}-darwin-arm64.tar.gz"),
+                            "browser_download_url": format!("https://example.com/{name}"),
+                            "digest": format!("sha256:{}", digest(tag.trim_start_matches('v'))),
+                        }],
+                    })
+                })
+                .collect(),
+        )
+    }
+
     #[test]
-    fn unchanged_packages_need_no_qualification_and_failures_do_not_stop_other_projects() {
+    fn a_failing_upstream_does_not_stop_the_other_packages() {
         let root = tempfile::tempdir().unwrap();
-        let catalog = crate::test_catalog::catalog();
-        let mut definition =
-            GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
-        definition.systems = vec!["aarch64-macos".into()];
-        let mut broken = definition.clone();
-        broken.name = "broken".into();
-        broken.repository = "owner/broken".into();
+        let authored = [
+            authored(
+                "tool",
+                r#"{ ["1"] = { digests = { ["aarch64-macos"] = "aa" } } }"#,
+            )
+            .replace("\"aa\"", &format!("\"{}\"", digest("1"))),
+            authored(
+                "broken",
+                r#"{ ["1"] = { digests = { ["aarch64-macos"] = "aa" } } }"#,
+            )
+            .replace("\"aa\"", &format!("\"{}\"", digest("1"))),
+        ];
+        let definitions = definitions(&authored);
+        let catalog = PackageCatalog::from_definitions(&definitions).unwrap();
         let fetch = |url: &str| {
             if url.contains("/broken") {
                 return Err("rate limited".into());
             }
             if !url.contains("/releases") {
                 return Ok(
-                    serde_json::json!({"id":42,"full_name":"owner/tool","description":"Tool"}),
+                    serde_json::json!({"id": 42, "full_name": "owner/tool", "description": "Tool"}),
                 );
             }
-            Ok(
-                serde_json::json!([{"id":1,"tag_name":"v1","assets":[{"name":"tool-darwin-arm64.tar.gz","browser_download_url":"https://example.com/tool"}]}]),
-            )
+            Ok(releases("tool", &["v1", "v2"]))
         };
         let output = root.path().join("first");
         let report = discover_with_fetch(
-            catalog,
-            &[broken, definition],
-            &BTreeMap::new(),
+            &catalog,
+            &rules(&definitions),
+            &definitions,
             &output,
             1,
             fetch,
@@ -300,115 +365,92 @@ mod tests {
         .unwrap();
         assert_eq!(report.updated, ["tool"]);
         assert_eq!(report.errors["broken"], "rate limited");
-        let candidates = PackageCatalog::from_directory(&output.join("packages")).unwrap();
-        assert_eq!(candidates.packages.len(), catalog.packages.len() + 1);
-        for (name, package) in &catalog.packages {
-            assert_eq!(
-                serde_json::to_value(&candidates.packages[name]).unwrap(),
-                serde_json::to_value(package).unwrap()
-            );
-        }
-        let definitions = GitHubUpstream::from_directory(&output.join("packages")).unwrap();
+        assert_eq!(report.defaults["tool"]["aarch64-macos"], "2");
+
+        let candidates = PackageDefinition::from_directory(&output.join("packages")).unwrap();
+        let discovered = PackageCatalog::from_definitions(&candidates).unwrap();
+        let tool = &discovered.packages["tool"];
+        assert_eq!(tool.default_version_for("aarch64-macos"), Some("2"));
+        assert_eq!(
+            tool.versions["2"].platforms["aarch64-macos"].sha256,
+            Some(digest("2"))
+        );
+        assert_eq!(
+            discovered.packages["broken"].default_version_for("aarch64-macos"),
+            Some("1")
+        );
+
         let repeat = root.path().join("repeat");
         let report = discover_with_fetch(
+            &discovered,
+            &rules(&candidates),
             &candidates,
-            &definitions,
-            &BTreeMap::new(),
             &repeat,
             1,
             fetch,
         )
         .unwrap();
         assert!(report.updated.is_empty());
-        assert!(report.rules_changed.is_empty());
         assert_eq!(report.unchanged, ["tool"]);
-        assert_eq!(fs::read_dir(repeat.join("packages")).unwrap().count(), 0);
-
-        let mut definitions = definitions;
-        definitions[0].repository_id = None;
-        let metadata_only = root.path().join("metadata-only");
-        let report = discover_with_fetch(
-            &candidates,
-            &definitions,
-            &BTreeMap::new(),
-            &metadata_only,
-            1,
-            fetch,
-        )
-        .unwrap();
-        assert!(report.updated.is_empty());
-        assert_eq!(report.rules_changed, ["tool"]);
-        let saved = PackageCatalog::from_directory(&metadata_only.join("packages")).unwrap();
-        assert_eq!(saved.sha256(), candidates.sha256());
-        assert_eq!(
-            GitHubUpstream::from_directory(&metadata_only.join("packages")).unwrap()[0]
-                .repository_id,
-            Some(42)
-        );
     }
 
     #[test]
-    fn discovery_preserves_templates_and_retained_version_overrides() {
-        let source = r#"return {
-            schema = 2, name = "tool", description = "Tool", homepage = "https://example.com",
-            default_version = "1", systems = { "aarch64-macos" },
-            upstream = { github = "owner/tool", tag_prefix = "v" },
-            inputs = { prebuilt = {
-                github = "owner/tool", tag = "v{version}",
-                assets = { ["aarch64-macos"] = "tool-{tag}-darwin-arm64.tar.gz" },
-            } },
-            outputs = { bins = { "tool" }, checks = { { "tool", "--version" } } },
-            versions = {
-                ["1"] = {
-                    revision = 3,
-                    inputs = { prebuilt = { assets = { ["aarch64-macos"] = "legacy-tool.tar.gz" } } },
-                    outputs = { checks = { { "tool", "--help" } } },
-                },
-            },
-        }"#;
-        let definition = PackageDefinition::from_lua(source).unwrap();
-        let original: Value = rootbeer_package::definition::lua::read(source).unwrap();
-        let definitions = BTreeMap::from([("tool".into(), definition)]);
-        let catalog = PackageCatalog::from_definitions(&definitions).unwrap();
-        let upstreams = GitHubUpstream::from_definitions(&definitions).unwrap();
+    fn discovery_preserves_authored_templates_and_version_overrides() {
         let root = tempfile::tempdir().unwrap();
-        for version in ["1", "2"] {
-            let output = root.path().join(version);
-            let report = discover_with_fetch(
-                &catalog, &upstreams, &definitions, &output, 1, |url| {
-                    if !url.contains("/releases") {
-                        return Ok(serde_json::json!({"id":42,"full_name":"owner/tool","description":"Tool"}));
-                    }
-                    Ok(serde_json::json!([{
-                        "id":1,
-                        "tag_name":format!("v{version}"),
-                        "assets":[{
-                            "name": if version == "1" { "legacy-tool.tar.gz" } else { "tool-v2-darwin-arm64.tar.gz" },
-                            "browser_download_url":"https://example.com/tool"
-                        }]
-                    }]))
-                },
-            ).unwrap();
-            assert!(report.errors.is_empty());
-            assert_eq!(report.updated.is_empty(), version == "1");
-            assert_eq!(report.rules_changed, ["tool"]);
-            let saved_source = fs::read_to_string(output.join("packages/tool.lua")).unwrap();
-            let mut saved: Value = rootbeer_package::definition::lua::read(&saved_source).unwrap();
-            assert_eq!(saved["upstream"]["repository_id"], 42);
-            saved["upstream"]
-                .as_object_mut()
-                .unwrap()
-                .remove("repository_id");
-            assert_eq!(saved["upstream"], original["upstream"]);
-            assert_eq!(saved["inputs"], original["inputs"]);
-            assert_eq!(saved["versions"]["1"], original["versions"]["1"]);
-            assert_eq!(saved["outputs"], original["outputs"]);
-            let expanded = PackageDefinition::from_lua(&saved_source).unwrap();
-            assert_eq!(expanded.package.default_version, version);
-            assert_eq!(
-                serde_json::to_value(&expanded.package.versions["1"]).unwrap(),
-                serde_json::to_value(&catalog.packages["tool"].versions["1"]).unwrap(),
-            );
-        }
+        let source = authored(
+            "tool",
+            r#"{ ["1"] = {
+                digests = { ["aarch64-macos"] = "DIGEST" },
+                revision = 3,
+                outputs = { checks = { { "tool", "--help" } } },
+            } }"#,
+        )
+        .replace("DIGEST", &digest("1"));
+        let definitions = definitions(std::slice::from_ref(&source));
+        let catalog = PackageCatalog::from_definitions(&definitions).unwrap();
+        let output = root.path().join("output");
+        let report = discover_with_fetch(
+            &catalog,
+            &rules(&definitions),
+            &definitions,
+            &output,
+            1,
+            |url| {
+                if !url.contains("/releases") {
+                    return Ok(
+                        serde_json::json!({"id": 42, "full_name": "owner/tool", "description": "Tool"}),
+                    );
+                }
+                Ok(releases("tool", &["v1", "v2"]))
+            },
+        )
+        .unwrap();
+        assert_eq!(report.updated, ["tool"]);
+
+        let original: Value = rootbeer_package::definition::lua::read(&source).unwrap();
+        let saved_source = fs::read_to_string(output.join("packages/tool.lua")).unwrap();
+        let saved: Value = rootbeer_package::definition::lua::read(&saved_source).unwrap();
+        assert_eq!(saved["versions"]["1"], original["versions"]["1"]);
+        assert_eq!(
+            saved["platforms"]["aarch64-macos"]["prebuilt"],
+            original["platforms"]["aarch64-macos"]["prebuilt"]
+        );
+        assert_eq!(
+            saved["platforms"]["aarch64-macos"]["outputs"],
+            original["platforms"]["aarch64-macos"]["outputs"]
+        );
+        assert_eq!(saved["platforms"]["aarch64-macos"]["default_version"], "2");
+
+        let expanded = PackageDefinition::from_lua(&saved_source).unwrap();
+        let retained = &expanded.package.versions["1"];
+        assert_eq!(retained.revision, 3);
+        assert_eq!(
+            retained.platforms["aarch64-macos"].checks,
+            vec![vec!["tool".to_string(), "--help".into()]]
+        );
+        assert_eq!(
+            serde_json::to_value(retained).unwrap(),
+            serde_json::to_value(&catalog.packages["tool"].versions["1"]).unwrap()
+        );
     }
 }

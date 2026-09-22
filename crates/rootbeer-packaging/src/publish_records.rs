@@ -280,6 +280,7 @@ fn can_retain(current: &PackageCatalog, approved: &PackageCatalog, id: &str, sys
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_catalog::VersionTestExt;
     use rootbeer_package::discovery::{DiscoveryPin, DiscoveryResolver};
     use rootbeer_package::{PackageRequest, PackageResolver, ResolveContext};
 
@@ -288,8 +289,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (catalog, _) = crate::bundle::tests::fixture(root.path());
         let package = catalog.packages.values().next().unwrap();
-        let id = format!("{}@{}", package.name, package.default_version);
         let system = rootbeer_package::ResolveContext::current().system;
+        let version = package.default_version_for(&system).unwrap().to_string();
+        let id = format!("{}@{version}", package.name);
         let other = if system == "aarch64-macos" {
             "x86_64-linux"
         } else {
@@ -301,25 +303,26 @@ mod tests {
             .get_mut(&package.name)
             .unwrap()
             .versions
-            .get_mut(&package.default_version)
+            .get_mut(&version)
             .unwrap();
-        let mut variant = recipe.clone();
-        variant.systems = vec![other.into()];
-        variant.revision += 1;
+        let mut variant = recipe.platforms[&system].clone();
+        variant.checks.push(vec!["other-platform".into()]);
         recipe.platforms.insert(other.into(), variant);
-        let original = &package.versions[&package.default_version];
+        let original = &package.versions[&version];
         assert_eq!(
             rootbeer_package::distribution::input_key(
                 &id,
                 &system,
-                original,
+                original.revision,
+                &original.platforms[&system],
                 "engine",
                 "environment"
             ),
             rootbeer_package::distribution::input_key(
                 &id,
                 &system,
-                recipe,
+                recipe.revision,
+                &recipe.platforms[&system],
                 "engine",
                 "environment"
             )
@@ -443,7 +446,10 @@ mod tests {
             "99.0".into(),
             package.versions[&resolved.package.version].clone(),
         );
-        package.default_version = "99.0".into();
+        package
+            .default_versions
+            .values_mut()
+            .for_each(|version| *version = "99.0".into());
         publish_records(
             &pending,
             &[],
@@ -460,7 +466,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             discovery.catalog.packages[&resolved.package.name].default_version_for(system),
-            resolved.package.version
+            Some(resolved.package.version.as_str())
         );
         let mut changed = catalog.clone();
         let name = &resolved.package.name;
@@ -471,8 +477,8 @@ mod tests {
             .versions
             .get_mut(&resolved.package.version)
             .unwrap()
-            .checks
-            .push(vec!["xz".into(), "changed".into()]);
+            .all_mut()
+            .for_each(|platform| platform.checks.push(vec!["xz".into(), "changed".into()]));
         assert!(publish_records(
             &changed,
             &[],

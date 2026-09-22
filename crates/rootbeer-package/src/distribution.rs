@@ -92,6 +92,7 @@ impl PackageRecord {
             return input_key(
                 &self.artifact.package.id(),
                 &self.system,
+                self.revision,
                 &self.recipe,
                 engine,
                 environment,
@@ -235,6 +236,7 @@ impl BuildProvenance {
 pub fn input_key(
     package: &str,
     system: &str,
+    revision: u32,
     recipe: &CatalogRecipe,
     engine: &str,
     environment: &str,
@@ -244,6 +246,7 @@ pub fn input_key(
             "rootbeer-package-inputs-v1",
             package,
             system,
+            revision,
             recipe,
             engine,
             environment,

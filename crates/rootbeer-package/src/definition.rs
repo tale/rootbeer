@@ -72,7 +72,7 @@ impl PackageDefinition {
         Ok(definitions)
     }
 
-    /// Records a discovered version and the digest each platform published for it.
+    /// Records a discovered version, merging in the digest each platform published for it.
     pub fn add_version(
         &mut self,
         version: &str,

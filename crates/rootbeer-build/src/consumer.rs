@@ -235,13 +235,23 @@ impl PackageResolver for SourceResolver {
         recipe.mirror = false;
         let name = package.name.clone();
         let catalog_sha256 = catalog.sha256();
-        catalog.packages.get_mut(&name).unwrap().versions.insert(
+        let entry = catalog.packages.get_mut(&name).unwrap();
+        let mut platforms = entry
+            .versions
+            .get(&version)
+            .map(|entry| entry.platforms.clone())
+            .unwrap_or_default();
+        platforms.insert(context.system.clone(), recipe);
+        entry.versions.insert(
             version.clone(),
             rootbeer_package::CatalogVersion {
-                platforms: BTreeMap::from([(context.system.clone(), recipe)]),
+                platforms,
                 ..published
             },
         );
+        entry
+            .default_versions
+            .insert(context.system.clone(), version.clone());
         catalog.validate()?;
         let runs = state.join("source-builds");
         fs::create_dir_all(&runs).map_err(|error| error.to_string())?;

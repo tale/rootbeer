@@ -705,6 +705,8 @@ fn mirror_package(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::test_catalog::VersionTestExt;
     use std::time::Duration;
 
     #[test]
@@ -741,29 +743,37 @@ MAKE
             .unwrap();
         let mut catalog = crate::test_catalog::catalog().clone();
         catalog.packages.retain(|name, _| name == "xz");
+        let system = ResolveContext::current().system;
         let package = catalog.packages.get_mut("xz").unwrap();
-        let recipe = package.versions.get_mut(&package.default_version).unwrap();
-        recipe.systems = vec![ResolveContext::current().system];
-        recipe.bins = vec!["xz".into()];
-        recipe.checks = vec![vec!["xz".into(), "--version".into()]];
-        let build = recipe.build.as_mut().unwrap();
-        build.url = "https://example.invalid/shared-source.tar.gz".into();
-        build.sha256 = downloaded.sha256;
-        build.strip_prefix = "fixture".into();
-        build.configure.clear();
-        build.dependencies.clear();
+        let version = package.default_version_for(&system).unwrap().to_string();
+        package
+            .default_versions
+            .retain(|platform, _| platform == &system);
+        let recipe = package.versions.get_mut(&version).unwrap();
+        recipe.platforms.retain(|platform, _| platform == &system);
+        for platform in recipe.all_mut() {
+            platform.bins = rootbeer_package::Bins::Names(vec!["xz".into()]);
+            platform.checks = vec![vec!["xz".into(), "--version".into()]];
+            let build = platform.build.as_mut().unwrap();
+            build.url = "https://example.invalid/shared-source.tar.gz".into();
+            build.sha256 = downloaded.sha256.clone();
+            build.strip_prefix = "fixture".into();
+            build.configure.clear();
+            build.dependencies.clear();
+        }
         let package = package.clone();
         for name in ["consumer-a", "consumer-b"] {
             let mut consumer = package.clone();
             consumer.name = name.into();
+            let dependency = format!("xz@{version}");
             consumer
                 .versions
-                .get_mut(&consumer.default_version)
+                .get_mut(&version)
                 .unwrap()
-                .build
-                .as_mut()
-                .unwrap()
-                .dependencies = vec![format!("xz@{}", package.default_version).into()];
+                .all_mut()
+                .for_each(|platform| {
+                    platform.build.as_mut().unwrap().dependencies = vec![dependency.clone().into()]
+                });
             catalog.packages.insert(name.into(), consumer);
         }
         let mut cache = ExportCache {
@@ -889,8 +899,8 @@ MAKE
             .versions
             .get_mut("5.8.3")
             .unwrap()
-            .checks
-            .push(vec!["xz".into(), "--help".into()]);
+            .all_mut()
+            .for_each(|platform| platform.checks.push(vec!["xz".into(), "--help".into()]));
         let planned = plan_export(&catalog, "owner/index", &options, Some(&cache), None).unwrap();
         assert!(matches!(
             planned.packages["consumer-a@5.8.3"],
@@ -921,8 +931,8 @@ MAKE
             .versions
             .get_mut("5.8.3")
             .unwrap()
-            .checks
-            .push(vec!["xz".into(), "--fail".into()]);
+            .all_mut()
+            .for_each(|platform| platform.checks.push(vec!["xz".into(), "--fail".into()]));
         let failed_output = root.path().join("failed-checks");
         let error = export_catalog_with_workers(
             &catalog,
@@ -949,8 +959,10 @@ MAKE
             .versions
             .get_mut("5.8.3")
             .unwrap()
-            .checks
-            .pop();
+            .all_mut()
+            .for_each(|platform| {
+                platform.checks.pop();
+            });
 
         catalog
             .packages
@@ -959,11 +971,15 @@ MAKE
             .versions
             .get_mut("5.8.3")
             .unwrap()
-            .build
-            .as_mut()
-            .unwrap()
-            .configure
-            .push("--changed-input".into());
+            .all_mut()
+            .for_each(|platform| {
+                platform
+                    .build
+                    .as_mut()
+                    .unwrap()
+                    .configure
+                    .push("--changed-input".into())
+            });
         let dependency_changed = export(&catalog, "dependency-changed", Some(&cache), 4);
         for key in ["xz@5.8.3", "consumer-a@5.8.3", "consumer-b@5.8.3"] {
             assert_ne!(
@@ -1022,20 +1038,18 @@ MAKE
             .unwrap();
         let mut catalog = crate::test_catalog::catalog().clone();
         catalog.packages.retain(|name, _| name == "xz");
+        let system = ResolveContext::current().system;
         let package = catalog.packages.get_mut("xz").unwrap();
-        let recipe = package.versions.get_mut(&package.default_version).unwrap();
-        recipe.systems = vec![ResolveContext::current().system];
-        recipe.bins = vec!["xz".into()];
-        recipe.checks = vec![vec!["xz".into(), "--version".into()]];
-        recipe.source = Some("github:fixture/should-not-fetch@1".into());
-        recipe
-            .assets
-            .insert(ResolveContext::current().system, "upstream.tar.gz".into());
-        recipe.mirror = true;
-        recipe
-            .checksums
-            .insert(ResolveContext::current().system, "a".repeat(64));
-        let build = recipe.build.as_mut().unwrap();
+        let version = package.default_version_for(&system).unwrap().to_string();
+        package
+            .default_versions
+            .retain(|platform, _| platform == &system);
+        let recipe = package.versions.get_mut(&version).unwrap();
+        recipe.platforms.retain(|platform, _| platform == &system);
+        let platform = recipe.platforms.get_mut(&system).unwrap();
+        platform.bins = Bins::Names(vec!["xz".into()]);
+        platform.checks = vec![vec!["xz".into(), "--version".into()]];
+        let build = platform.build.as_mut().unwrap();
         build.url = "https://example.invalid/rootbeer-worker-test.tar.gz".into();
         build.sha256 = downloaded.sha256;
         build.strip_prefix = "fixture".into();
@@ -1045,7 +1059,10 @@ MAKE
         failed.name = if should_cancel { "z-wait" } else { "a-failure" }.into();
         failed
             .versions
-            .get_mut(&failed.default_version)
+            .get_mut(&version)
+            .unwrap()
+            .platforms
+            .get_mut(&system)
             .unwrap()
             .checks = vec![vec![
             "xz".into(),
@@ -1114,9 +1131,11 @@ MAKE
             let package = catalog.packages.get_mut("z-wait").unwrap();
             package
                 .versions
-                .get_mut(&package.default_version)
-                .unwrap()
-                .checks = vec![vec!["xz".into(), "--version".into()]];
+                .values_mut()
+                .flat_map(|version| version.all_mut())
+                .for_each(|platform| {
+                    platform.checks = vec![vec!["xz".into(), "--version".into()]];
+                });
         } else {
             fs::remove_dir_all(options.directory.join("builds")).unwrap();
             catalog.packages.remove("a-failure");
@@ -1154,6 +1173,7 @@ MAKE
         assert_eq!(
             receipt.build.sha256,
             catalog.packages["xz"].versions["5.8.3"]
+                .any()
                 .build
                 .as_ref()
                 .unwrap()
@@ -1323,7 +1343,9 @@ MAKE
         let mut consumer = catalog.packages["xz"].clone();
         consumer.name = "consumer".into();
         for recipe in consumer.versions.values_mut() {
-            recipe.build.as_mut().unwrap().dependencies = vec!["xz@5.8.3".into()];
+            recipe.all_mut().for_each(|platform| {
+                platform.build.as_mut().unwrap().dependencies = vec!["xz@5.8.3".into()]
+            });
         }
         catalog.packages.insert(consumer.name.clone(), consumer);
         let grouped = shard_groups(&catalog, &system).unwrap();

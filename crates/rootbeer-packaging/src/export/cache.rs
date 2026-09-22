@@ -728,11 +728,11 @@ mod tests {
         bundle_artifacts(&catalog, &[receipt], "ghcr://owner/index/xz", &bundle).unwrap();
         let mut index: ArtifactIndex = publication::read_json(&bundle.join("index.json")).unwrap();
         index.catalog.packages.retain(|name, _| name == "xz");
-        index
-            .catalog
-            .packages
-            .get_mut("xz")
-            .unwrap()
+        let package = index.catalog.packages.get_mut("xz").unwrap();
+        package
+            .default_versions
+            .retain(|system, _| system != "aarch64-macos");
+        package
             .versions
             .get_mut("5.8.3")
             .unwrap()

@@ -281,6 +281,7 @@ pub fn push_package(release: &Path, public_key: &str) -> Result<String, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_catalog::VersionTestExt;
     use ring::signature::{Ed25519KeyPair, KeyPair};
     use rootbeer_package::{BuildEnvironmentInput, BuildEnvironmentLock};
     use std::collections::BTreeMap;
@@ -341,7 +342,9 @@ mod tests {
             Some(&rootbeer_package::distribution::input_key(
                 &build.package.id(),
                 &build.system,
-                &catalog.packages[&build.package.name].versions[&build.package.version],
+                build.revision,
+                &catalog.packages[&build.package.name].versions[&build.package.version].platforms
+                    [&build.system],
                 &rootbeer_build::engine_identity(Some(&build.build.backend)),
                 build.qualification_environment.as_deref().unwrap(),
             )),
@@ -378,8 +381,8 @@ mod tests {
             .versions
             .get_mut(&build.package.version)
             .unwrap()
-            .checks
-            .push(vec!["new-check".into()]);
+            .all_mut()
+            .for_each(|platform| platform.checks.push(vec!["new-check".into()]));
         assert!(release_package(
             &changed,
             &receipt,

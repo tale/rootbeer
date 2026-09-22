@@ -1,11 +1,7 @@
-use crate::{CatalogPackage, GitHubUpstream, PackageCatalog};
-use rootbeer_package::download::read_json_url;
+use crate::{GitHubUpstream, PackageCatalog};
 use rootbeer_package::github::Release;
 use rootbeer_package::upstream::{check_identity, validate_definitions};
 use serde::Deserialize;
-use std::collections::BTreeMap;
-use std::fs;
-use std::path::Path;
 
 mod generate;
 mod metadata;
@@ -84,18 +80,10 @@ fn discover_package(
 mod tests {
     use super::*;
 
-    fn release(version: usize) -> serde_json::Value {
-        serde_json::json!({
-            "id": version, "tag_name": format!("v{version}"),
-            "assets": [{"name": format!("tool-v{version}-darwin-arm64.tar.gz"),
-                "browser_download_url": "https://example.com/tool"}]
-        })
-    }
-
     #[test]
     fn rejects_duplicate_names_aliases_repositories_and_ids() {
-        let first = GitHubUpstream::new("one".into(), "owner/one".into(), vec!["one".into()]);
-        let second = GitHubUpstream::new("two".into(), "owner/two".into(), vec!["two".into()]);
+        let first = GitHubUpstream::new("one".into(), "owner/one".into());
+        let second = GitHubUpstream::new("two".into(), "owner/two".into());
         assert!(validate_definitions(&[first.clone(), second.clone()]).is_ok());
         let mut collision = second.clone();
         collision.aliases.push("one".into());
@@ -112,7 +100,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_discovery_contracts_without_catalog_recipes() {
-        let upstream = GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
+        let upstream = GitHubUpstream::new("tool".into(), "owner/tool".into());
         for invalid in [
             serde_json::json!({"description": " "}),
             serde_json::json!({"homepage": "http://example.com"}),
@@ -121,8 +109,6 @@ mod tests {
             serde_json::json!({"systems": []}),
             serde_json::json!({"systems": ["aarch64-macos", "aarch64-macos"]}),
             serde_json::json!({"systems": ["unknown"]}),
-            serde_json::json!({"bins": ["tool", "tool"]}),
-            serde_json::json!({"checks": [["undeclared", "--version"]]}),
         ] {
             let mut value = serde_json::to_value(&upstream).unwrap();
             value
@@ -137,23 +123,23 @@ mod tests {
     #[test]
     fn recognizes_existing_upstreams_and_prevents_alias_takeover() {
         let catalog = crate::test_catalog::catalog();
-        let upstream = GitHubUpstream::new(
-            "encryption".into(),
-            "filosottile/AGE".into(),
-            vec!["age".into()],
-        );
-        assert!(check_identity(catalog, &upstream)
+        let identity = |upstream: &GitHubUpstream| {
+            check_identity(
+                catalog,
+                &upstream.name,
+                &upstream.repository,
+                upstream.build.is_some(),
+            )
+        };
+        let upstream = GitHubUpstream::new("encryption".into(), "filosottile/AGE".into());
+        assert!(identity(&upstream)
             .unwrap_err()
             .contains("canonicalized as `age`"));
-        let upstream = GitHubUpstream::new("age".into(), "other/tool".into(), vec!["age".into()]);
-        assert!(check_identity(catalog, &upstream)
+        let upstream = GitHubUpstream::new("age".into(), "other/tool".into());
+        assert!(identity(&upstream)
             .unwrap_err()
             .contains("different upstream"));
-        let mut upstream =
-            GitHubUpstream::new("tool".into(), "other/tool".into(), vec!["tool".into()]);
-        upstream.aliases.push("rg".into());
-        assert!(check_identity(catalog, &upstream)
-            .unwrap_err()
-            .contains("belongs to"));
+        let upstream = GitHubUpstream::new("rg".into(), "other/tool".into());
+        assert!(identity(&upstream).unwrap_err().contains("belongs to"));
     }
 }

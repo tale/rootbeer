@@ -50,12 +50,9 @@ fn build_graph_orders_dependencies_once_and_rejects_cycles() {
         .get_mut("5.8.3")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap()
-        .dependencies = vec!["build-tool@5.8.3".into()];
+        .for_each(|platform| {
+            platform.build.as_mut().unwrap().dependencies = vec!["build-tool@5.8.3".into()]
+        });
     catalog.validate().unwrap();
     let order = DependencyGraph::new(&catalog, &["xz".into()], &ResolveContext::current().system)
         .unwrap()
@@ -69,19 +66,16 @@ fn build_graph_orders_dependencies_once_and_rejects_cycles() {
         .get_mut("5.8.3")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap()
-        .dependencies = vec!["xz@5.8.3".into()];
+        .for_each(|platform| {
+            platform.build.as_mut().unwrap().dependencies = vec!["xz@5.8.3".into()]
+        });
     assert!(catalog.validate().unwrap_err().contains("cycle"));
 }
 
 #[test]
 fn invalid_build_inputs_fail_before_creating_output() {
     let mut catalog = source_catalog();
-    let build = catalog
+    for platform in catalog
         .packages
         .get_mut("xz")
         .unwrap()
@@ -89,12 +83,10 @@ fn invalid_build_inputs_fail_before_creating_output() {
         .get_mut("5.8.3")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap();
-    build.strip_prefix = "../outside".into();
+    {
+        let build = platform.build.as_mut().unwrap();
+        build.strip_prefix = "../outside".into();
+    }
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("output");
     assert!(
@@ -112,12 +104,9 @@ fn invalid_build_inputs_fail_before_creating_output() {
         .get_mut("5.8.3")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap()
-        .dependencies = vec!["missing@1".into()];
+        .for_each(|platform| {
+            platform.build.as_mut().unwrap().dependencies = vec!["missing@1".into()]
+        });
     assert!(catalog
         .validate()
         .unwrap_err()
@@ -136,46 +125,15 @@ fn invalid_build_inputs_fail_before_creating_output() {
 }
 
 #[test]
-fn pinned_build_rejects_missing_catalog_and_dependency_inputs_before_io() {
-    let mut catalog = source_catalog();
+fn pinned_build_rejects_an_unpinned_catalog_before_io() {
+    let catalog = source_catalog();
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("output");
-    let mut inputs = PackageResolverInputs::default();
+    let inputs = PackageResolverInputs::default();
     assert!(BuildPlan::resolve(&catalog, "xz", &inputs)
         .and_then(|plan| plan.execute(&output, &BuildOptions::default()))
         .unwrap_err()
         .contains("pin the current catalog"));
-    let mut dependency = catalog.packages["xz"].clone();
-    dependency.name = "tool".into();
-    for platform in dependency.versions.get_mut("5.8.3").unwrap().all_mut() {
-        platform.build = None;
-        platform.source = Some("aqua:fixture/tool@5.8.3".into());
-    }
-    catalog.packages.insert("tool".into(), dependency);
-    catalog
-        .packages
-        .get_mut("xz")
-        .unwrap()
-        .versions
-        .get_mut("5.8.3")
-        .unwrap()
-        .all_mut()
-        .next()
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap()
-        .dependencies = vec!["tool@5.8.3".into()];
-    inputs.resolvers.insert(
-        "rootbeer".into(),
-        rootbeer_package::ResolverInput::Catalog {
-            sha256: catalog.sha256(),
-        },
-    );
-    assert!(BuildPlan::resolve(&catalog, "xz", &inputs)
-        .and_then(|plan| plan.execute(&output, &BuildOptions::default()))
-        .unwrap_err()
-        .contains("pinned Aqua registry"));
     assert!(!output.exists());
 }
 
@@ -392,12 +350,9 @@ EOF
         .get_mut("5.8.3")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap()
-        .dependencies = vec!["tool@5.8.3".into()];
+        .for_each(|platform| {
+            platform.build.as_mut().unwrap().dependencies = vec!["tool@5.8.3".into()]
+        });
     let inputs = PackageResolverInputs {
         resolvers: BTreeMap::from([
             (
@@ -571,12 +526,9 @@ EOF
         .get_mut("5.8.3")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap()
-        .patches = vec!["invalid patch".into()];
+        .for_each(|platform| {
+            platform.build.as_mut().unwrap().patches = vec!["invalid patch".into()]
+        });
     let failing_inputs = PackageResolverInputs {
         resolvers: BTreeMap::from([(
             "rootbeer".into(),

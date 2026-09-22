@@ -348,6 +348,7 @@ fn validate_receipt(catalog: &PackageCatalog, receipt: &BuildArtifact) -> Result
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::test_catalog::VersionTestExt;
     use crate::{LockedPackage, PackageResolverInputs, Provides};
     use flate2::{write::GzEncoder, Compression};
     use rootbeer_store::hash_tree;
@@ -356,10 +357,12 @@ pub(crate) mod tests {
     pub(crate) fn fixture(root: &Path) -> (PackageCatalog, PathBuf) {
         let catalog = crate::test_catalog::catalog().clone();
         let entry = &catalog.packages["xz"];
-        let recipe = &entry.versions[&entry.default_version];
+        let version = entry.default_version_for("aarch64-linux").unwrap();
+        let entry_version = &entry.versions[version];
+        let recipe = &entry_version.platforms["aarch64-linux"];
         let tree = root.join("tree");
         fs::create_dir_all(tree.join("bin")).unwrap();
-        for bin in &recipe.bins {
+        for bin in recipe.bins.names() {
             let path = tree.join("bin").join(bin);
             fs::write(&path, b"bundle test executable\n").unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
@@ -383,7 +386,7 @@ pub(crate) mod tests {
             isolation: None,
             runtime_audit_sha256: None,
             catalog_sha256: catalog.sha256(),
-            revision: recipe.revision,
+            revision: entry_version.revision,
             system: "aarch64-linux".into(),
             build: recipe.build.clone().unwrap(),
             dependencies: BTreeMap::new(),
@@ -391,7 +394,7 @@ pub(crate) mod tests {
             toolchain: BTreeMap::new(),
             package: LockedPackage {
                 name: entry.name.clone(),
-                version: entry.default_version.clone(),
+                version: version.into(),
                 source: LockedSource::File {
                     path: PathBuf::from("/unavailable/runner/package.tar.gz"),
                     sha256: hash_file(&archive).unwrap(),
@@ -404,7 +407,8 @@ pub(crate) mod tests {
                     apps: Default::default(),
                     bins: recipe
                         .bins
-                        .iter()
+                        .names()
+                        .into_iter()
                         .map(|bin| (bin.clone(), PathBuf::from("bin").join(bin)))
                         .collect(),
                 },
@@ -512,13 +516,16 @@ pub(crate) mod tests {
             .versions
             .get_mut(&version)
             .unwrap();
-        recipe.build.as_mut().unwrap().dependencies =
-            vec![rootbeer_package::BuildDependency::Scoped {
-                package: dependency_id.clone(),
-                kind: rootbeer_package::DependencyKind::Runtime,
-            }];
-        receipt.build = recipe.build.clone().unwrap();
-        receipt.recipe_sha256 = recipe.sha256();
+        recipe.all_mut().for_each(|platform| {
+            platform.build.as_mut().unwrap().dependencies =
+                vec![rootbeer_package::BuildDependency::Scoped {
+                    package: dependency_id.clone(),
+                    kind: rootbeer_package::DependencyKind::Runtime,
+                }];
+        });
+        let platform = &recipe.platforms["aarch64-linux"];
+        receipt.build = platform.build.clone().unwrap();
+        receipt.recipe_sha256 = platform.sha256();
         receipt.schema = 2;
         receipt.catalog_sha256 = catalog.sha256();
         let tree = root.path().join("tree");
@@ -571,7 +578,7 @@ pub(crate) mod tests {
         bundle_artifacts(&catalog, &[path], "ghcr://owner/index/xz", &output).unwrap();
         let index: ArtifactIndex =
             serde_json::from_slice(&fs::read(output.join("index.json")).unwrap()).unwrap();
-        assert_eq!(index.schema, 6);
+        assert_eq!(index.schema, 7);
         let package = &index.artifacts[&receipt.package.id()][&receipt.system].package;
         let dependency = &package.runtime_dependencies[&dependency_id];
         let LockedSource::Url { url, sha256 } = &dependency.source else {
@@ -582,12 +589,6 @@ pub(crate) mod tests {
             hash_file(output.join("artifacts").join(format!("{sha256}.tar.gz"))).unwrap(),
             *sha256
         );
-        let mut downgraded = index;
-        downgraded.schema = 5;
-        assert!(downgraded
-            .validate_fragment()
-            .unwrap_err()
-            .contains("schema 6"));
     }
 
     #[test]

@@ -356,14 +356,15 @@ fn write_local_recipe(root: &std::path::Path) {
         root.join("packages/demo.lua"),
         format!(
             r#"return {{
-        schema = 2, name = "demo", aliases = {{ "demo-alias" }},
+        name = "demo", aliases = {{ "demo-alias" }},
         description = "Local test tool", homepage = "https://example.invalid/demo",
-        default_version = "1", systems = {{ "{}" }},
-        inputs = {{ prebuilt = {{ github = "owner/demo", tag = "v{{version}}", assets = {{ ["aarch64-macos"] = "demo.tar.gz", ["x86_64-linux"] = "demo.tar.gz", ["aarch64-linux"] = "demo.tar.gz" }} }} }},
+        default_license = "MIT",
+        prebuilt = {{ github = "owner/demo", tag = "v{{version}}", asset = "demo.tar.gz" }},
         outputs = {{ bins = {{ "demo" }}, checks = {{ {{ "demo", "--version" }} }} }},
-        versions = {{ ["1"] = {{}} }},
+        platforms = {{ ["{system}"] = {{ default_version = "1" }} }},
+        versions = {{ ["1"] = {{ digests = {{ ["{system}"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }} }} }},
     }}"#,
-            crate::package::ResolveContext::current().system
+            system = crate::package::ResolveContext::current().system
         ),
     )
     .unwrap();
@@ -404,7 +405,7 @@ fn local_catalogs_reject_late_duplicate_and_invalid_declarations() {
     }
     std::fs::write(
         root.path().join("packages/demo.lua"),
-        "return { schema = 2 }",
+        "return { name = 'demo' }",
     )
     .unwrap();
     let vm = super::super::test_support::vm(root.path(), None);

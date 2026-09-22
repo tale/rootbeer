@@ -16,15 +16,6 @@ fn catalog(system: &str) -> PackageCatalog {
         package.default_versions = BTreeMap::from([(system.to_string(), "1".to_string())]);
         let mut recipe = package.versions.remove("5.8.3").unwrap();
         recipe.platforms.retain(|platform, _| platform == system);
-        for platform in recipe.all_mut() {
-            platform.bins = rootbeer_package::Bins::Names(vec![name.into()]);
-            platform.checks = vec![vec![name.into()]];
-            if matches!(name, "tool" | "runtime") {
-                platform.source = Some(format!("github:fixture/{name}@1"));
-                platform.asset = Some(name.into());
-                platform.build = None;
-            }
-        }
         let dependencies: Vec<BuildDependency> = match name {
             "root" => vec!["tool@1".into()],
             "tool" => vec![
@@ -37,13 +28,15 @@ fn catalog(system: &str) -> PackageCatalog {
             _ => vec![],
         };
         for platform in recipe.all_mut() {
+            platform.bins = rootbeer_package::Bins::Names(vec![name.into()]);
+            platform.checks = vec![vec![name.into()]];
             if name == "runtime" {
+                platform.source = Some(format!("github:fixture/{name}@1"));
+                platform.asset = Some(name.into());
                 platform.build = None;
                 continue;
             }
-            if let Some(build) = platform.build.as_mut() {
-                build.dependencies = dependencies.clone();
-            }
+            platform.build.as_mut().unwrap().dependencies = dependencies.clone();
         }
         package.versions = BTreeMap::from([("1".into(), recipe)]);
         catalog.packages.insert(name.into(), package);
@@ -112,7 +105,7 @@ fn source_dependencies_build_and_reuse_our_outputs_despite_upstream_binaries() {
         .materialize(&format!("file://{}", archive.display()), None)
         .unwrap();
     for name in ["root", "tool", "compiler"] {
-        let build = catalog
+        for platform in catalog
             .packages
             .get_mut(name)
             .unwrap()
@@ -120,22 +113,20 @@ fn source_dependencies_build_and_reuse_our_outputs_despite_upstream_binaries() {
             .get_mut("1")
             .unwrap()
             .all_mut()
-            .next()
-            .unwrap()
-            .build
-            .as_mut()
-            .unwrap();
-        build.backend = BuildBackend::Custom;
-        build.configure.clear();
-        build.url = "https://source.invalid/archive.tar.gz".into();
-        build.sha256 = cached.sha256.clone();
-        build.strip_prefix = "fixture".into();
-        build.steps = Some(BuildSteps {
-            configure: vec![],
-            build: if name == "root" { vec![vec!["tool".into()]] } else { vec![vec!["sh".into(), "-c".into(), "exit 0".into()]] },
-            check: vec![vec!["sh".into(), "-c".into(), "exit 0".into()]],
-            install: vec![vec!["sh".into(), "-c".into(), format!("mkdir -p \"$1/bin\"; printf '#!/bin/sh\\nexit 0\\n' > \"$1/bin/{name}\"; chmod +x \"$1/bin/{name}\""), "install".into(), "{prefix}".into()]],
-        });
+        {
+            let build = platform.build.as_mut().unwrap();
+            build.backend = BuildBackend::Custom;
+            build.configure.clear();
+            build.url = "https://source.invalid/archive.tar.gz".into();
+            build.sha256 = cached.sha256.clone();
+            build.strip_prefix = "fixture".into();
+            build.steps = Some(BuildSteps {
+                configure: vec![],
+                build: if name == "root" { vec![vec!["tool".into()]] } else { vec![vec!["sh".into(), "-c".into(), "exit 0".into()]] },
+                check: vec![vec!["sh".into(), "-c".into(), "exit 0".into()]],
+                install: vec![vec!["sh".into(), "-c".into(), format!("mkdir -p \"$1/bin\"; printf '#!/bin/sh\\nexit 0\\n' > \"$1/bin/{name}\"; chmod +x \"$1/bin/{name}\""), "install".into(), "{prefix}".into()]],
+            });
+        }
     }
     catalog.validate().unwrap();
     let graph = DependencyGraph::new(&catalog, &["root".into()], &system).unwrap();
@@ -202,18 +193,9 @@ fn source_dependencies_build_and_reuse_our_outputs_despite_upstream_binaries() {
 #[test]
 fn source_roots_and_dependencies_keep_source_edges() {
     let system = ResolveContext::current().system;
-    let mut catalog = catalog(&system);
+    let catalog = catalog(&system);
     let graph = DependencyGraph::new(&catalog, &["tool".into()], &system).unwrap();
     assert_eq!(graph.order, ["compiler@1", "runtime@1", "tool@1"]);
-    catalog
-        .packages
-        .get_mut("tool")
-        .unwrap()
-        .versions
-        .get_mut("1")
-        .unwrap()
-        .all_mut()
-        .for_each(|platform| platform.asset = None);
     let graph = DependencyGraph::new(&catalog, &["root".into()], &system).unwrap();
     assert_eq!(graph.order, ["compiler@1", "runtime@1", "tool@1", "root@1"]);
     let inputs = PackageResolverInputs {
@@ -240,7 +222,7 @@ fn source_roots_and_dependencies_keep_source_edges() {
 fn source_libraries_preserve_transitive_link_exports() {
     let system = ResolveContext::current().system;
     let mut catalog = catalog(&system);
-    let build = catalog
+    for platform in catalog
         .packages
         .get_mut("tool")
         .unwrap()
@@ -248,16 +230,14 @@ fn source_libraries_preserve_transitive_link_exports() {
         .get_mut("1")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap();
-    build.libraries = vec!["lib/libtool.a".into()];
-    build.dependencies[0] = BuildDependency::Scoped {
-        package: "compiler@1".into(),
-        kind: DependencyKind::Link,
-    };
+    {
+        let build = platform.build.as_mut().unwrap();
+        build.libraries = vec!["lib/libtool.a".into()];
+        build.dependencies[0] = BuildDependency::Scoped {
+            package: "compiler@1".into(),
+            kind: DependencyKind::Link,
+        };
+    }
     catalog
         .packages
         .get_mut("compiler")
@@ -266,12 +246,9 @@ fn source_libraries_preserve_transitive_link_exports() {
         .get_mut("1")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap()
-        .libraries = vec!["lib/libbase.a".into()];
+        .for_each(|platform| {
+            platform.build.as_mut().unwrap().libraries = vec!["lib/libbase.a".into()]
+        });
     let graph = DependencyGraph::new(&catalog, &["root".into()], &system).unwrap();
     assert_eq!(graph.order, ["compiler@1", "runtime@1", "tool@1", "root@1"]);
     assert_eq!(
