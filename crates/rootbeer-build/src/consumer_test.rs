@@ -56,7 +56,6 @@ EOF
         build.configure.clear();
     }
     let mut index = ArtifactIndex {
-        schema: 7,
         catalog_sha256: catalog.sha256(),
         catalog,
         artifacts: BTreeMap::new(),

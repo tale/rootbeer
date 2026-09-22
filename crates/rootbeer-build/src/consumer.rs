@@ -117,7 +117,6 @@ impl PackageResolver for SourceResolver {
             .map(|discovery| {
                 let catalog = discovery.manifest()?.catalog.clone();
                 Ok::<_, String>(ArtifactIndex {
-                    schema: 7,
                     catalog_sha256: catalog.sha256(),
                     catalog,
                     artifacts: Default::default(),

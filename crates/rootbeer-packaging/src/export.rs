@@ -257,7 +257,6 @@ pub fn export_catalog_with_workers(
         .map(|options| cache::Cache::new(options, build_options))
         .transpose()?;
     let mut index = ArtifactIndex {
-        schema: 7,
         catalog: catalog.clone(),
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),

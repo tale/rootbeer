@@ -31,7 +31,6 @@ pub fn bundle_artifacts(
         staging.path().join("install"),
     );
     let mut index = ArtifactIndex {
-        schema: 7,
         catalog: catalog.clone(),
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),
@@ -578,7 +577,6 @@ pub(crate) mod tests {
         bundle_artifacts(&catalog, &[path], "ghcr://owner/index/xz", &output).unwrap();
         let index: ArtifactIndex =
             serde_json::from_slice(&fs::read(output.join("index.json")).unwrap()).unwrap();
-        assert_eq!(index.schema, 7);
         let package = &index.artifacts[&receipt.package.id()][&receipt.system].package;
         let dependency = &package.runtime_dependencies[&dependency_id];
         let LockedSource::Url { url, sha256 } = &dependency.source else {
