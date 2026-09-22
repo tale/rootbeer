@@ -307,7 +307,7 @@ impl Recipe {
             install: None,
             build: None,
             asset: None,
-            sha256: Some(digest.to_string()),
+            sha256: None,
             bins: outputs.bins.clone().unwrap_or_default(),
             apps: outputs.apps.clone().unwrap_or_default(),
             checks: outputs.checks.clone().unwrap_or_default(),
@@ -316,6 +316,9 @@ impl Recipe {
         };
 
         if let Some(prebuilt) = &spec.prebuilt {
+            // The digest pins the artifact a prebuilt downloads; a source build pins its
+            // archive on the build instead, and its output hashes to something else.
+            recipe.sha256 = Some(digest.to_string());
             recipe.mirror = prebuilt.mirror;
             recipe.install = prebuilt.install.clone();
             match &prebuilt.provider {
@@ -342,6 +345,11 @@ impl Recipe {
                 .as_ref()
                 .ok_or("a source platform needs a build")?;
             let mut build = build.clone();
+            if let Some(go) = build.go.as_mut() {
+                for value in go.variables.values_mut() {
+                    *value = substitute(value, version, &tag, target)?;
+                }
+            }
             build.sha256 = digest.to_string();
             if let Some(archive) = &source.archive {
                 build.archive = match archive.as_str() {
