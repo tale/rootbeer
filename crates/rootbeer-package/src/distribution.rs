@@ -122,7 +122,7 @@ impl PackageRecord {
     /// Validates the dependency-free package contract supported by this schema.
     pub fn validate(&self) -> Result<(), String> {
         let package = &self.artifact.package;
-        if self.schema != 1 || !self.recipe.platforms.is_empty() {
+        if self.schema != 1 {
             return Err("unsupported package record schema".into());
         }
         if !crate::catalog::valid_name(&package.name)
@@ -134,7 +134,7 @@ impl PackageRecord {
         {
             return Err("invalid package record identity".into());
         }
-        self.recipe.validate()?;
+        self.recipe.validate(&self.system)?;
         if !matches!(self.provenance, PackageProvenance::Retained(_))
             && (self
                 .recipe
@@ -242,7 +242,7 @@ pub fn input_key(
             "rootbeer-package-inputs-v1",
             package,
             system,
-            &recipe.for_system(system),
+            recipe,
             engine,
             environment,
         ))
@@ -332,7 +332,10 @@ mod tests {
             extra: Default::default(),
             schema: 1,
             system: "aarch64-linux".into(),
-            recipe: index.catalog.packages[&package.name].versions[&package.version].clone(),
+            recipe: index.catalog.packages[&package.name].versions[&package.version]
+                .for_system("aarch64-linux")
+                .unwrap()
+                .clone(),
             artifact,
             provenance: PackageProvenance::Source(Box::new(BuildProvenance {
                 engine_sha256: "a".repeat(64),

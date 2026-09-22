@@ -26,10 +26,10 @@ impl ArtifactIndex {
     pub fn validate_complete(&self) -> Result<(), String> {
         self.validate()?;
         for package in self.catalog.packages.values() {
-            for (version, recipe) in &package.versions {
+            for (version, entry) in &package.versions {
                 let key = format!("{}@{version}", package.name);
-                for system in recipe.supported_systems() {
-                    if self.schema >= 7 && recipe.for_system(system).build.is_some() {
+                for (system, recipe) in &entry.platforms {
+                    if recipe.build.is_some() {
                         continue;
                     }
                     if !self
@@ -48,118 +48,23 @@ impl ArtifactIndex {
     /// Validates the catalog and every advertised artifact without executing recipes.
     pub fn validate(&self) -> Result<(), String> {
         if self.artifacts.is_empty()
-            && (self.schema < 7
-                || !self.catalog.packages.values().any(|package| {
-                    package
-                        .versions
-                        .values()
-                        .any(|recipe| recipe.build.is_some())
-                }))
+            && !self.catalog.packages.values().any(|package| {
+                package
+                    .versions
+                    .values()
+                    .flat_map(|entry| entry.platforms.values())
+                    .any(|recipe| recipe.build.is_some())
+            })
         {
             return Err("empty artifact index".into());
         }
         self.validate_fragment()
     }
 
-    pub fn schema_for(catalog: &super::PackageCatalog) -> u32 {
-        if catalog.packages.values().any(|package| {
-            package.versions.values().any(|recipe| {
-                recipe
-                    .build
-                    .as_ref()
-                    .is_some_and(|build| build.git.is_some() || recipe.source.is_some())
-            })
-        }) {
-            return 7;
-        }
-        if catalog.packages.values().any(|package| {
-            package.versions.values().any(|recipe| {
-                recipe.build.as_ref().is_some_and(|build| {
-                    build
-                        .dependencies
-                        .iter()
-                        .any(|dependency| dependency.kind().is_runtime())
-                })
-            })
-        }) {
-            return 6;
-        }
-        if catalog.packages.values().any(|package| {
-            package.versions.values().any(|recipe| {
-                recipe.build.as_ref().is_some_and(|build| {
-                    build.dependencies.iter().any(|dependency| {
-                        matches!(dependency, super::BuildDependency::Scoped { .. })
-                    })
-                })
-            })
-        }) {
-            return 5;
-        }
-        if catalog.packages.values().any(|package| {
-            package.versions.values().any(|recipe| {
-                recipe.build.as_ref().is_some_and(|build| {
-                    !build.libraries.is_empty()
-                        || matches!(build.backend, super::BuildBackend::Custom)
-                })
-            })
-        }) {
-            return 4;
-        }
-        if catalog.packages.values().any(|package| {
-            package
-                .versions
-                .values()
-                .any(|recipe| !recipe.apps.is_empty())
-        }) {
-            3
-        } else {
-            2
-        }
-    }
-
     pub fn validate_fragment(&self) -> Result<(), String> {
         self.catalog.validate()?;
-        if !matches!(self.schema, 1..=7) || self.catalog_sha256 != self.catalog.sha256() {
-            return Err("invalid artifact index schema or catalog digest".into());
-        }
-        if self.schema < 7 && Self::schema_for(&self.catalog) == 7 {
-            return Err(
-                "source alternatives and Git inputs require artifact index schema 7".into(),
-            );
-        }
-        if self.schema < 6 && Self::schema_for(&self.catalog) == 6 {
-            return Err("runtime dependencies require artifact index schema 6".into());
-        }
-        if self.schema < 5 && Self::schema_for(&self.catalog) == 5 {
-            return Err("scoped build dependencies require artifact index schema 5".into());
-        }
-        if self.schema < 4 && Self::schema_for(&self.catalog) == 4 {
-            return Err(
-                "library dependencies and command builds require artifact index schema 4".into(),
-            );
-        }
-        if self.schema < 3 && Self::schema_for(&self.catalog) == 3 {
-            return Err("application exports require artifact index schema 3".into());
-        }
-        if self.schema == 1
-            && self.catalog.packages.values().any(|package| {
-                package.versions.values().any(|recipe| {
-                    !recipe.bin_paths.is_empty()
-                        || !recipe.checksums.is_empty()
-                        || recipe.mirror
-                        || recipe.build.as_ref().is_some_and(|build| {
-                            matches!(
-                                build.backend,
-                                super::BuildBackend::Zig
-                                    | super::BuildBackend::Rust
-                                    | super::BuildBackend::Go
-                            ) || !build.args.is_empty()
-                                || !build.patches.is_empty()
-                        })
-                })
-            })
-        {
-            return Err("extended package recipes require artifact index schema 2".into());
+        if self.catalog_sha256 != self.catalog.sha256() {
+            return Err("invalid artifact index catalog digest".into());
         }
         for (key, systems) in &self.artifacts {
             let request = PackageRequest::parse(key);
@@ -181,22 +86,24 @@ impl ArtifactIndex {
                 return Err(format!("{key}: no platform artifacts"));
             }
             for (system, artifact) in systems {
-                artifact.validate(key, system, recipe)?;
+                let platform = recipe
+                    .for_system(system)
+                    .ok_or_else(|| format!("{key}: {system} has no recipe"))?;
+                artifact.validate(key, system, platform)?;
                 for dependency in super::runtime::closure(&artifact.package)? {
-                    if self.schema < 6 {
-                        return Err("runtime dependencies require artifact index schema 6".into());
-                    }
-                    let (_, _, recipe) = super::graph::find_recipe_for_system(
+                    let (_, _, entry) = super::graph::find_recipe_definition(
                         &self.catalog,
                         &dependency.id(),
-                        system,
                     )?;
+                    let dependency_recipe = entry.for_system(system).ok_or_else(|| {
+                        format!("{}: {system} has no recipe", dependency.id())
+                    })?;
                     super::PublishedArtifact {
-                        revision: recipe.revision,
+                        revision: entry.revision,
                         receipt_sha256: artifact.receipt_sha256.clone(),
                         package: dependency.clone(),
                     }
-                    .validate(&dependency.id(), system, &recipe)?;
+                    .validate(&dependency.id(), system, dependency_recipe)?;
                 }
             }
         }
@@ -211,7 +118,6 @@ impl super::PublishedArtifact {
         system: &str,
         recipe: &super::CatalogRecipe,
     ) -> Result<(), String> {
-        let recipe = &recipe.for_system(system);
         let package = &self.package;
         let runtime: std::collections::BTreeSet<_> = recipe
             .build
@@ -230,8 +136,6 @@ impl super::PublishedArtifact {
             return Err(format!("{key}: runtime dependencies differ from recipe"));
         }
         if package.id() != key
-            || self.revision != recipe.revision
-            || !recipe.systems.iter().any(|target| target == system)
             || !is_sha256(&self.receipt_sha256)
             || package
                 .output_sha256
@@ -240,7 +144,7 @@ impl super::PublishedArtifact {
             || package.provides.bins.len() != recipe.bins.len()
             || recipe
                 .bins
-                .iter()
+                .keys()
                 .any(|bin| !package.provides.bins.contains_key(bin))
         {
             return Err(format!("{key}: invalid platform artifact contract"));
@@ -251,10 +155,7 @@ impl super::PublishedArtifact {
             ));
         }
         super::catalog::validate_apps(&package.provides.apps)?;
-        if recipe.build.is_none()
-            && !recipe.bin_paths.is_empty()
-            && package.provides.bins != recipe.bin_paths
-        {
+        if package.provides.bins != recipe.bins {
             return Err(format!(
                 "{key}: artifact command paths differ from the recipe"
             ));
@@ -313,14 +214,13 @@ impl super::PublishedArtifact {
                 "{key}: download differs from the approved URL or install format"
             ));
         }
-        if recipe.build.is_none() && recipe.mirror && !url.starts_with("ghcr://") {
+        if recipe.mirror && !url.starts_with("ghcr://") {
             return Err(format!("{key}: mirrored artifacts must use GHCR"));
         }
-        if recipe.build.is_none()
-            && !recipe.mirror
+        if !recipe.mirror
             && recipe
-                .checksums
-                .get(system)
+                .sha256
+                .as_deref()
                 .is_some_and(|expected| expected != sha256)
         {
             return Err(format!("{key}: artifact checksum differs from the recipe"));
@@ -405,10 +305,12 @@ impl PackageResolver for IndexResolver {
             .catalog
             .find(&request.name)
             .ok_or_else(|| format!("unknown index package `{}`", request.name))?;
-        let version = request
-            .version
-            .as_deref()
-            .unwrap_or_else(|| entry.default_version_for(&context.system));
+        let version = match request.version.as_deref() {
+            Some(version) => version,
+            None => entry
+                .default_version_for(&context.system)
+                .ok_or_else(|| format!("{} does not support {}", entry.name, context.system))?,
+        };
         let key = format!("{}@{version}", entry.name);
         let artifact = index
             .artifacts
@@ -446,14 +348,14 @@ mod tests {
         entry.aliases = vec!["new-alias".into()];
         let mut platforms = index
             .artifacts
-            .remove(&format!("xz@{}", entry.default_version))
+            .remove(&format!("xz@{}", entry.default_version_for("aarch64-linux").unwrap()))
             .unwrap();
         for artifact in platforms.values_mut() {
             artifact.package.name = entry.name.clone();
         }
         index
             .artifacts
-            .insert(format!("new-tool@{}", entry.default_version), platforms);
+            .insert(format!("new-tool@{}", entry.default_version_for("aarch64-linux").unwrap()), platforms);
         index.catalog.packages.insert(entry.name.clone(), entry);
         index.catalog_sha256 = index.catalog.sha256();
         let bytes = serde_json::to_vec(&index).unwrap();
@@ -476,57 +378,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn application_contracts_require_schema_three_and_exact_artifact_paths() {
-        let root = tempfile::tempdir().unwrap();
-        let (mut index, _) = fixture(root.path());
-        let package = index.catalog.packages.get_mut("new-tool").unwrap();
-        let recipe = package.versions.get_mut(&package.default_version).unwrap();
-        recipe.systems = vec!["aarch64-macos".into()];
-        recipe.apps.insert("Tool.app".into(), "Tool.app".into());
-        let key = format!("new-tool@{}", package.default_version);
-        let mut artifact = index.artifacts[&key]["aarch64-linux"].clone();
-        artifact.package.provides.apps = recipe.apps.clone();
-        index.artifacts = std::collections::BTreeMap::from([(
-            key.clone(),
-            std::collections::BTreeMap::from([("aarch64-macos".into(), artifact)]),
-        )]);
-        index.catalog_sha256 = index.catalog.sha256();
-        for schema in [1, 2] {
-            index.schema = schema;
-            assert!(index.validate().unwrap_err().contains("schema 3"));
-        }
-        index.schema = 3;
-        index.validate().unwrap();
-        let mut decoded: ArtifactIndex =
-            serde_json::from_slice(&serde_json::to_vec(&index).unwrap()).unwrap();
-        decoded.validate().unwrap();
-        decoded
-            .artifacts
-            .get_mut(&key)
-            .unwrap()
-            .get_mut("aarch64-macos")
-            .unwrap()
-            .package
-            .provides
-            .apps
-            .clear();
-        assert!(decoded
-            .validate()
-            .unwrap_err()
-            .contains("application paths"));
-    }
 
     #[test]
     fn published_index_uses_platform_default_without_changing_exact_pins() {
         let root = tempfile::tempdir().unwrap();
         let (mut index, _) = fixture(root.path());
         let entry = index.catalog.packages.get_mut("new-tool").unwrap();
-        let original = entry.default_version.clone();
+        let original = entry
+            .default_version_for("aarch64-linux")
+            .unwrap()
+            .to_string();
         entry
             .versions
             .insert("99.0.0".into(), entry.versions[&original].clone());
-        entry.default_version = "99.0.0".into();
+
         entry
             .default_versions
             .insert("aarch64-linux".into(), original.clone());
@@ -646,11 +511,16 @@ mod tests {
         let (key, platforms) = index.artifacts.iter().next().unwrap();
         let mut artifact = platforms["aarch64-linux"].clone();
         let package = &index.catalog.packages["new-tool"];
-        let mut recipe = package.versions[&package.default_version].clone();
+        let mut recipe = package.versions
+            [package.default_version_for("aarch64-linux").unwrap()]
+        .for_system("aarch64-linux")
+        .unwrap()
+        .clone();
         recipe.build = None;
         recipe.source = Some("github:owner/tool@v1".into());
-        recipe.bin_paths = artifact.package.provides.bins.clone();
-        recipe.validate().unwrap();
+        recipe.bins = artifact.package.provides.bins.clone();
+        recipe.asset = Some("tool-v1-linux.tar.gz".into());
+        recipe.validate("aarch64-linux").unwrap();
         artifact.validate(key, "aarch64-linux", &recipe).unwrap();
 
         *artifact.package.provides.bins.values_mut().next().unwrap() = "bin/other".into();
@@ -659,31 +529,6 @@ mod tests {
             .unwrap_err()
             .contains("command paths differ"));
 
-        recipe.bin_paths.clear();
-        artifact.validate(key, "aarch64-linux", &recipe).unwrap();
-    }
-
-    #[test]
-    fn source_artifacts_do_not_inherit_upstream_archive_hashes_or_layouts() {
-        let root = tempfile::tempdir().unwrap();
-        let (index, _) = fixture(root.path());
-        let (key, platforms) = index.artifacts.iter().next().unwrap();
-        let artifact = &platforms["aarch64-linux"];
-        let package = &index.catalog.packages["new-tool"];
-        let mut recipe = package.versions[&package.default_version].clone();
-        assert!(recipe.build.is_some());
-        recipe.source = Some("github:owner/tool@v1".into());
-        recipe
-            .checksums
-            .insert("aarch64-linux".into(), "f".repeat(64));
-        recipe.bin_paths = recipe
-            .bins
-            .iter()
-            .map(|bin| (bin.clone(), std::path::PathBuf::from(bin)))
-            .collect();
-        artifact.validate(key, "aarch64-linux", &recipe).unwrap();
-        recipe.build = None;
-        assert!(artifact.validate(key, "aarch64-linux", &recipe).is_err());
     }
 
     #[test]
@@ -693,26 +538,27 @@ mod tests {
         let (key, platforms) = index.artifacts.iter().next().unwrap();
         let mut artifact = platforms["aarch64-linux"].clone();
         let package = &index.catalog.packages["new-tool"];
-        let mut recipe = package.versions[&package.default_version].clone();
+        let mut recipe = package.versions
+            [package.default_version_for("aarch64-linux").unwrap()]
+        .for_system("aarch64-linux")
+        .unwrap()
+        .clone();
         recipe.build = None;
         recipe.source = Some("github:owner/tool@v1".into());
         let LockedSource::Url { sha256, .. } = &artifact.package.source else {
             panic!("expected URL source");
         };
-        recipe.checksums = recipe
-            .systems
-            .iter()
-            .map(|system| (system.clone(), "b".repeat(64)))
-            .collect();
-        recipe
-            .checksums
-            .insert("aarch64-linux".into(), sha256.clone());
-        recipe.validate().unwrap();
+        recipe.sha256 = Some(sha256.clone());
+        recipe.asset = Some("tool-v1-linux.tar.gz".into());
+        recipe.validate("aarch64-linux").unwrap();
         artifact.validate(key, "aarch64-linux", &recipe).unwrap();
+
+        recipe.sha256 = Some("b".repeat(64));
         assert!(artifact
-            .validate(key, "x86_64-linux", &recipe)
+            .validate(key, "aarch64-linux", &recipe)
             .unwrap_err()
             .contains("checksum differs"));
+        recipe.sha256 = Some(sha256.clone());
 
         recipe.mirror = true;
         assert!(artifact
@@ -731,68 +577,4 @@ mod tests {
             .contains("checksum differs"));
     }
 
-    #[test]
-    fn reads_legacy_indexes_but_rejects_extended_recipes_under_schema_one() {
-        let root = tempfile::tempdir().unwrap();
-        let (mut index, _) = fixture(root.path());
-        assert_eq!(index.schema, 2);
-        index.schema = 1;
-        index.validate().unwrap();
-        let original = serde_json::to_value(&index).unwrap();
-
-        for feature in ["bin_paths", "checksums", "mirror", "zig", "args", "patches"] {
-            let mut index: ArtifactIndex = serde_json::from_value(original.clone()).unwrap();
-            let package = index.catalog.packages.get_mut("new-tool").unwrap();
-            let recipe = package.versions.get_mut(&package.default_version).unwrap();
-            if matches!(feature, "bin_paths" | "checksums" | "mirror") {
-                recipe.build = None;
-                recipe.source = Some("github:owner/tool@v1".into());
-            }
-            match feature {
-                "bin_paths" => {
-                    recipe.bin_paths = recipe
-                        .bins
-                        .iter()
-                        .map(|bin| (bin.clone(), "bin/tool".into()))
-                        .collect()
-                }
-                "checksums" | "mirror" => {
-                    recipe.checksums = recipe
-                        .systems
-                        .iter()
-                        .map(|system| (system.clone(), "a".repeat(64)))
-                        .collect();
-                    recipe.mirror = feature == "mirror";
-                }
-                "zig" | "args" => {
-                    let build = recipe.build.as_mut().unwrap();
-                    build.backend = super::super::BuildBackend::Zig;
-                    build.configure.clear();
-                    if feature == "args" {
-                        build.args.push("-Doptimize=ReleaseFast".into());
-                    }
-                }
-                "patches" => recipe
-                    .build
-                    .as_mut()
-                    .unwrap()
-                    .patches
-                    .push("patch contents".into()),
-                _ => unreachable!(),
-            }
-            index.catalog_sha256 = index.catalog.sha256();
-            index.artifacts.clear();
-            assert!(
-                index.validate_fragment().unwrap_err().contains("schema 2"),
-                "{feature}"
-            );
-            index.schema = 2;
-            index.validate_fragment().unwrap();
-        }
-
-        for schema in [0, 8] {
-            index.schema = schema;
-            assert!(index.validate().unwrap_err().contains("schema"));
-        }
-    }
 }

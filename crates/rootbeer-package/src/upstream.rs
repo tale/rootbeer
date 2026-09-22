@@ -82,23 +82,6 @@ impl GitHubUpstream {
         }
     }
 
-    /// Loads update rules from unified package files, inheriting each package's contract.
-    pub fn from_directory(directory: &Path) -> Result<Vec<Self>, String> {
-        Self::from_definitions(&super::PackageDefinition::from_directory(directory)?)
-    }
-
-    /// Extracts validated update rules from already evaluated package definitions.
-    pub fn from_definitions(
-        definitions: &BTreeMap<String, super::PackageDefinition>,
-    ) -> Result<Vec<Self>, String> {
-        let definitions = definitions
-            .values()
-            .filter_map(|definition| definition.github_upstream().transpose())
-            .collect::<Result<Vec<_>, _>>()?;
-        validate_definitions(&definitions)?;
-        Ok(definitions)
-    }
-
     pub fn validate(&self) -> Result<(), String> {
         repository(&self.repository)?;
         if !valid_name(&self.name) || self.repository_id == Some(0) {
@@ -141,7 +124,6 @@ impl GitHubUpstream {
         {
             super::catalog::validate_commands(&self.bins, &self.checks)?;
         }
-        super::catalog::validate_bin_paths(&self.bins, &self.bin_paths)?;
         super::catalog::validate_apps(&self.apps)?;
         if !self.apps.is_empty()
             && self
@@ -191,42 +173,46 @@ pub fn validate_definitions(definitions: &[GitHubUpstream]) -> Result<(), String
     Ok(())
 }
 
-pub fn check_identity(catalog: &PackageCatalog, upstream: &GitHubUpstream) -> Result<(), String> {
+pub fn check_identity(
+    catalog: &PackageCatalog,
+    name: &str,
+    repository: &str,
+    is_source: bool,
+) -> Result<(), String> {
     for package in catalog.packages.values() {
         let is_same_repository = package
             .versions
             .values()
+            .flat_map(|entry| entry.platforms.values())
             .filter_map(|recipe| recipe.source.as_deref())
             .map(PackageRequest::parse)
             .any(|request| {
                 request.resolver.as_deref() == Some("github")
-                    && request.name.eq_ignore_ascii_case(&upstream.repository)
+                    && request.name.eq_ignore_ascii_case(repository)
             });
-        if is_same_repository && package.name != upstream.name {
+        if is_same_repository && package.name != name {
             return Err(format!(
-                "{} is already canonicalized as `{}`",
-                upstream.repository, package.name
+                "{repository} is already canonicalized as `{}`",
+                package.name
             ));
         }
-        if package.name == upstream.name
+        if package.name == name
             && !is_same_repository
-            && !(upstream.build.is_some()
+            && !(is_source
                 && package
                     .versions
                     .values()
+                    .flat_map(|entry| entry.platforms.values())
                     .all(|recipe| recipe.build.is_some()))
         {
             return Err(format!(
-                "{}: existing package has a different upstream; resolve identity manually",
-                upstream.name
+                "{name}: existing package has a different upstream; resolve identity manually",
             ));
         }
     }
-    for name in std::iter::once(&upstream.name).chain(&upstream.aliases) {
-        if let Some(existing) = catalog.find(name) {
-            if existing.name != upstream.name {
-                return Err(format!("name `{name}` belongs to `{}`", existing.name));
-            }
+    if let Some(existing) = catalog.find(name) {
+        if existing.name != name {
+            return Err(format!("name `{name}` belongs to `{}`", existing.name));
         }
     }
     Ok(())

@@ -108,7 +108,7 @@ impl DiscoveryManifest {
                 return Err("invalid discovery package identity".into());
             }
             for (system, pin) in platforms {
-                if !recipe.supported_systems().contains(system) {
+                if !recipe.platforms.contains_key(system) {
                     return Err(format!("{id}: unapproved discovery platform {system}"));
                 }
                 crate::index::validate_https(&pin.url)?;
@@ -260,10 +260,12 @@ impl DiscoveryResolver {
             .catalog
             .find(&request.name)
             .ok_or_else(|| format!("unknown package {}", request.name))?;
-        let version = request
-            .version
-            .as_deref()
-            .unwrap_or_else(|| package.default_version_for(&context.system));
+        let version = match request.version.as_deref() {
+            Some(version) => version,
+            None => package
+                .default_version_for(&context.system)
+                .ok_or_else(|| format!("{} does not support {}", package.name, context.system))?,
+        };
         let id = format!("{}@{version}", package.name);
         let pin = manifest
             .records
@@ -275,8 +277,7 @@ impl DiscoveryResolver {
         if package
             .versions
             .get(version)
-            .map(|recipe| recipe.for_system(&context.system))
-            .as_ref()
+            .and_then(|entry| entry.for_system(&context.system))
             != Some(&record.recipe)
         {
             return Err("package record differs from the discovered recipe".into());
@@ -324,7 +325,6 @@ mod tests {
             sequence: 1,
             catalog: PackageCatalog {
                 extra: Default::default(),
-                schema: 1,
                 packages: BTreeMap::new(),
             },
             records: BTreeMap::new(),

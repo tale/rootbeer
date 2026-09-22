@@ -26,10 +26,12 @@ pub(crate) fn fixture() -> ArtifactIndex {
     use crate::{ArchiveFormat, LockedInstall, LockedSource, Provides};
     let catalog = crate::test_catalog::catalog().clone();
     let entry = &catalog.packages["xz"];
-    let recipe = &entry.versions[&entry.default_version];
+    let version = entry.default_version_for("aarch64-linux").unwrap();
+    let published = &entry.versions[version];
+    let recipe = published.for_system("aarch64-linux").unwrap();
     let package = LockedPackage {
         name: entry.name.clone(),
-        version: entry.default_version.clone(),
+        version: version.to_string(),
         source: LockedSource::Url {
             url: "https://packages.example/xz.tar.gz".into(),
             sha256: "a".repeat(64),
@@ -39,25 +41,21 @@ pub(crate) fn fixture() -> ArtifactIndex {
             strip_prefix: None,
         },
         provides: Provides {
-            bins: recipe
-                .bins
-                .iter()
-                .map(|bin| (bin.clone(), std::path::PathBuf::from("bin").join(bin)))
-                .collect(),
+            bins: recipe.bins.clone(),
             apps: Default::default(),
         },
         runtime_dependencies: Default::default(),
         output_sha256: Some("b".repeat(64)),
     };
     ArtifactIndex {
-        schema: ArtifactIndex::schema_for(&catalog),
+        schema: 7,
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::from([(
             package.id(),
             BTreeMap::from([(
                 "aarch64-linux".into(),
                 PublishedArtifact {
-                    revision: recipe.revision,
+                    revision: published.revision,
                     receipt_sha256: "c".repeat(64),
                     package,
                 },

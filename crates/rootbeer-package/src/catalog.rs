@@ -11,13 +11,12 @@ use crate::store::hash_bytes;
 
 mod recipe;
 
-pub(crate) use recipe::{validate_apps, validate_bin_paths, validate_commands, validate_systems};
-pub use recipe::{CatalogPackage, CatalogRecipe, ExtraFields};
+pub(crate) use recipe::{validate_apps, validate_commands, validate_systems};
+pub use recipe::{CatalogPackage, CatalogRecipe, CatalogVersion, ExtraFields};
 
 /// A versioned snapshot of Rootbeer's canonical package definitions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageCatalog {
-    pub schema: u32,
     pub packages: BTreeMap<String, CatalogPackage>,
     /// Fields published by a newer engine, retained so they survive a round trip.
     #[serde(
@@ -71,12 +70,20 @@ impl PackageCatalog {
         }
         let catalog = Self {
             extra: Default::default(),
-            schema: 1,
             packages,
         };
         catalog.validate()?;
-        for upstream in super::GitHubUpstream::from_definitions(definitions)? {
-            super::upstream::check_identity(&catalog, &upstream)?;
+        for (name, definition) in definitions {
+            for rules in definition.upstream.values() {
+                let super::PackageUpstream::Github { repository, .. } = rules;
+                let is_source = definition
+                    .package
+                    .versions
+                    .values()
+                    .flat_map(|entry| entry.platforms.values())
+                    .all(|recipe| recipe.build.is_some());
+                super::upstream::check_identity(&catalog, name, repository, is_source)?;
+            }
         }
         Ok(catalog)
     }
@@ -86,7 +93,6 @@ impl PackageCatalog {
         let definitions = super::PackageDefinition::from_directory(directory)?;
         let catalog = Self {
             extra: Default::default(),
-            schema: 1,
             packages: definitions
                 .into_iter()
                 .map(|(name, definition)| (name, definition.package))
@@ -104,7 +110,7 @@ impl PackageCatalog {
         self.packages
             .values()
             .flat_map(|package| package.versions.values())
-            .flat_map(|recipe| std::iter::once(recipe).chain(recipe.platforms.values()))
+            .flat_map(|version| version.platforms.values())
             .filter_map(|recipe| recipe.build.as_ref())
             .flat_map(|build| &build.dependencies)
             .any(|dependency| {
@@ -121,8 +127,8 @@ impl PackageCatalog {
 
     /// Checks recipe identities and contracts without requiring a complete dependency graph.
     pub fn validate_recipes(&self) -> Result<(), String> {
-        if self.schema != 1 || self.packages.is_empty() {
-            return Err("catalog must use schema 1 and contain packages".into());
+        if self.packages.is_empty() {
+            return Err("catalog must contain packages".into());
         }
         let mut names = BTreeSet::new();
         for (name, package) in &self.packages {
@@ -137,24 +143,8 @@ impl PackageCatalog {
                     return Err(format!("invalid or duplicate package name `{identity}`"));
                 }
             }
-            if !package.versions.contains_key(&package.default_version) {
-                return Err(format!("{name}: default version has no recipe"));
-            }
-            for (system, version) in &package.default_versions {
-                if !package
-                    .versions
-                    .get(version)
-                    .is_some_and(|recipe| recipe.supported_systems().contains(system))
-                {
-                    return Err(format!(
-                        "{name}: default for {system} must reference a supported recipe"
-                    ));
-                }
-            }
-            for (version, recipe) in &package.versions {
-                recipe
-                    .validate()
-                    .map_err(|e| format!("{name}@{version}: {e}"))?;
+            package.validate()?;
+            for version in package.versions.keys() {
                 if version.is_empty()
                     || matches!(version.as_str(), "latest" | "HEAD")
                     || version
@@ -262,11 +252,13 @@ impl PackageResolver for CatalogResolver {
         {
             return Err("the locked catalog differs from the selected catalog; select the matching catalog or explicitly refresh with --update".into());
         }
-        let version = request
-            .version
-            .as_deref()
-            .unwrap_or_else(|| package.default_version_for(&context.system));
-        let recipe = package.versions.get(version).ok_or_else(|| {
+        let version = match request.version.as_deref() {
+            Some(version) => version,
+            None => package
+                .default_version_for(&context.system)
+                .ok_or_else(|| format!("{} does not support {}", package.name, context.system))?,
+        };
+        let entry = package.versions.get(version).ok_or_else(|| {
             format!(
                 "{}@{version} is not in the catalog; available: {}",
                 package.name,
@@ -278,29 +270,21 @@ impl PackageResolver for CatalogResolver {
                     .join(", ")
             )
         })?;
-        let recipe = recipe.for_system(&context.system);
-        if !recipe.systems.contains(&context.system) {
-            return Err(format!(
+        let recipe = entry.for_system(&context.system).ok_or_else(|| {
+            format!(
                 "{}@{version} has no recipe for {}",
                 package.name, context.system
-            ));
-        }
+            )
+        })?;
         let source = recipe.source.as_deref().ok_or_else(|| format!(
             "{}@{version} has a source recipe but no published binary; use `rootbeer-forge build {} --output <directory>` explicitly",
             package.name, package.name
         ))?;
-        if recipe.build.is_some()
-            && source.starts_with("github:")
-            && !recipe.assets.contains_key(&context.system)
-        {
-            return Err("no matching upstream prebuilt; build this package from source".into());
-        }
         if source.starts_with("https://") {
             let sha256 = recipe
-                .checksums
-                .get(&context.system)
-                .ok_or("direct download requires a checksum")?
-                .clone();
+                .sha256
+                .clone()
+                .ok_or("direct download requires a checksum")?;
             return Ok(Some(PackageResolution::new(
                 super::LockedPackage {
                     name: package.name.clone(),
@@ -314,7 +298,7 @@ impl PackageResolver for CatalogResolver {
                         .clone()
                         .ok_or("direct download requires an install format")?,
                     provides: super::Provides {
-                        bins: recipe.bin_paths.clone(),
+                        bins: recipe.bins.clone(),
                         apps: recipe.apps.clone(),
                     },
                     runtime_dependencies: BTreeMap::new(),
@@ -327,8 +311,8 @@ impl PackageResolver for CatalogResolver {
             )));
         }
         let mut source = PackageRequest::parse(source);
-        source.asset = recipe.assets.get(&context.system).cloned();
-        source.bins = recipe.bin_paths.clone();
+        source.asset = recipe.asset.clone();
+        source.bins = recipe.bins.clone();
         let resolution = self
             .backends
             .resolve_package(&source, context)
@@ -341,19 +325,19 @@ impl PackageResolver for CatalogResolver {
         if let (Some("github"), super::LockedInstall::Binary { path }, true) = (
             source.resolver.as_deref(),
             &mut locked.install,
-            recipe.bin_paths.is_empty(),
+            recipe.bins.len() == 1,
         ) {
-            let [command] = recipe.bins.as_slice() else {
+            let Some(command) = recipe.bins.keys().next().cloned() else {
                 return Err(format!(
                     "{}: raw GitHub assets must declare exactly one command",
                     package.name
                 ));
             };
             // Raw assets have no internal filename; the recipe owns their installed command.
-            *path = command.into();
-            locked.provides.bins = BTreeMap::from([(command.clone(), path.clone())]);
+            *path = command.clone().into();
+            locked.provides.bins = BTreeMap::from([(command, path.clone())]);
         }
-        if let Some(expected) = recipe.checksums.get(&context.system) {
+        if let Some(expected) = recipe.sha256.as_ref() {
             if !matches!(&locked.source, super::LockedSource::Url { sha256, .. } if sha256 == expected)
             {
                 return Err(format!(
@@ -362,7 +346,7 @@ impl PackageResolver for CatalogResolver {
                 ));
             }
         }
-        for bin in &recipe.bins {
+        for bin in recipe.bins.keys() {
             if !locked.provides.bins.contains_key(bin) {
                 return Err(format!(
                     "{}: backend did not provide declared command `{bin}`",
@@ -373,7 +357,7 @@ impl PackageResolver for CatalogResolver {
         locked
             .provides
             .bins
-            .retain(|name, _| recipe.bins.contains(name));
+            .retain(|name, _| recipe.bins.contains_key(name));
         locked.name = package.name.clone();
         locked.version = version.to_string();
         Ok(Some(PackageResolution::new(
@@ -382,7 +366,7 @@ impl PackageResolver for CatalogResolver {
                 catalog_sha256: digest,
                 name: package.name.clone(),
                 version: version.to_string(),
-                revision: recipe.revision,
+                revision: entry.revision,
                 source,
                 source_proof: Box::new(resolution.proof),
             }),
@@ -448,6 +432,9 @@ mod tests {
             .versions
             .get_mut("10.4.2")
             .unwrap()
+            .platforms
+            .get_mut("x86_64-linux")
+            .unwrap()
             .source = Some("aqua:sharkdp/fd@latest".into());
         assert!(catalog.validate().unwrap_err().contains("exact"));
 
@@ -459,6 +446,9 @@ mod tests {
             .versions
             .get_mut("10.4.2")
             .unwrap()
+            .platforms
+            .get_mut("x86_64-linux")
+            .unwrap()
             .checks = vec![vec!["sh".into(), "-c".into(), "true".into()]];
         assert!(catalog
             .validate()
@@ -467,29 +457,28 @@ mod tests {
     }
 
     #[test]
-    fn validates_complete_github_asset_maps() {
+    fn a_prebuilt_platform_needs_exactly_one_named_asset() {
         let catalog = crate::test_catalog::catalog();
-        let original = catalog.packages["ripgrep"].versions["15.2.0"].clone();
-        assert!(original.validate().is_ok());
+        let original = catalog.packages["ripgrep"].versions["15.2.0"]
+            .for_system("x86_64-linux")
+            .unwrap()
+            .clone();
+        assert!(original.validate("x86_64-linux").is_ok());
 
         let mut recipe = original.clone();
-        recipe.assets.remove("x86_64-linux");
+        recipe.asset = None;
         assert!(recipe
-            .validate()
+            .validate("x86_64-linux")
             .unwrap_err()
-            .contains("one GitHub release asset"));
+            .contains("one release asset"));
 
         let mut recipe = original.clone();
-        recipe.assets.insert("x86_64-linux".into(), " ".into());
-        assert!(recipe.validate().is_err());
-
-        let mut recipe = original.clone();
-        recipe.source = Some("aqua:BurntSushi/ripgrep@15.2.0".into());
-        assert!(recipe.validate().is_err());
+        recipe.asset = Some(" ".into());
+        assert!(recipe.validate("x86_64-linux").is_err());
 
         let mut recipe = original;
-        recipe.assets.clear();
-        assert!(recipe.validate().is_ok());
+        recipe.source = Some("aqua:BurntSushi/ripgrep@15.2.0".into());
+        assert!(recipe.validate("x86_64-linux").is_err());
     }
 
     #[test]

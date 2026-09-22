@@ -53,17 +53,13 @@ impl Entry {
                 .to_string(),
         };
         let id = format!("{PACKAGE}@{version}");
-        let recipe: CatalogRecipe =
+        let entry: crate::CatalogVersion =
             serde_json::from_value(package["versions"][&version].clone())
                 .map_err(|error| format!("{id} is not readable by this build: {error}"))?;
-        recipe.validate()?;
-        if !recipe
-            .supported_systems()
-            .iter()
-            .any(|value| *value == system)
-        {
+        entry.validate()?;
+        let Some(recipe) = entry.for_system(system).cloned() else {
             return Err(format!("{id}: unapproved discovery platform {system}"));
-        }
+        };
 
         let pin: PackageIndexPin = serde_json::from_value(value["records"][&id][system].clone())
             .map_err(|_| format!("{id} has no published package for {system}"))?;
@@ -117,7 +113,7 @@ impl Resolver {
         )?;
         let bytes = self.read(&entry.pin, crate::distribution::RECORD_LIMIT)?;
         let record = verify_record(&bytes, &self.pin.public_key, &entry.id, &context.system)?;
-        if entry.recipe.for_system(&context.system) != record.recipe {
+        if entry.recipe != record.recipe {
             return Err("package record differs from the discovered recipe".into());
         }
         Ok((record, entry.pin))
