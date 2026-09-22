@@ -306,16 +306,21 @@ impl PlannedPipeline {
                 return false;
             };
             let context = crate::package::ResolveContext::current();
-            let version = request
+            let Some(version) = request
                 .version
                 .as_deref()
-                .unwrap_or_else(|| package.default_version_for(&context.system));
-            package.versions.get(version).is_some_and(|recipe| {
-                recipe.build.is_none()
-                    && recipe
-                        .source
-                        .as_deref()
-                        .is_some_and(|source| source.starts_with("aqua:"))
+                .or_else(|| package.default_version_for(&context.system))
+            else {
+                return false;
+            };
+            package.versions.get(version).is_some_and(|entry| {
+                entry.for_system(&context.system).is_some_and(|recipe| {
+                    recipe.build.is_none()
+                        && recipe
+                            .source
+                            .as_deref()
+                            .is_some_and(|source| source.starts_with("aqua:"))
+                })
             })
         });
         if needs_aqua

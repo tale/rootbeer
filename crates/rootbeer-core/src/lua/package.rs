@@ -323,21 +323,27 @@ fn request_bins(lua: &Lua, cx: &Ctx<'_>, request: &PackageRequest) -> LuaResult<
             .and_then(|catalog| catalog.find(&request.name))
         {
             let context = ResolveContext::current();
-            let version = request
-                .version
-                .as_deref()
-                .unwrap_or_else(|| package.default_version_for(&context.system));
-            let recipe = package.versions.get(version).ok_or_else(|| {
+            let version = match request.version.as_deref() {
+                Some(version) => version,
+                None => package
+                    .default_version_for(&context.system)
+                    .ok_or_else(|| {
+                        LuaError::RuntimeError(format!(
+                            "{} does not support {}",
+                            package.name, context.system
+                        ))
+                    })?,
+            };
+            let entry = package.versions.get(version).ok_or_else(|| {
                 LuaError::RuntimeError(format!("{}@{version}: no local recipe", package.name))
             })?;
-            let recipe = recipe.for_system(&context.system);
-            if !recipe.systems.contains(&context.system) {
-                return Err(LuaError::RuntimeError(format!(
+            let recipe = entry.for_system(&context.system).ok_or_else(|| {
+                LuaError::RuntimeError(format!(
                     "{}@{version}: no local recipe for {}",
                     package.name, context.system
-                )));
-            }
-            return Ok(recipe.bins.clone());
+                ))
+            })?;
+            return Ok(recipe.bins.names().into_iter().cloned().collect());
         }
     }
     if let Ok(lock) = RootbeerLock::read(cx.runtime.script_dir.join("rootbeer.lock")) {
