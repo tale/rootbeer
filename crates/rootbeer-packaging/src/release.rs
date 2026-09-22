@@ -8,6 +8,15 @@ use rootbeer_package::{
 };
 use rootbeer_store::{hash_bytes, Store};
 
+/// Who approves a release, and when it counts as published.
+pub struct Signer<'a> {
+    /// Publisher's Ed25519 PKCS#8 DER key.
+    pub key_der: &'a [u8],
+    pub public_key: &'a str,
+    /// Unix seconds recorded in the signed record.
+    pub published: u64,
+}
+
 /// Verifies and signs one qualified package. The caller must trust the receipt's producer.
 /// The destination contains only this package's archive, receipt, and signed record.
 pub fn release_package(
@@ -15,8 +24,7 @@ pub fn release_package(
     receipt: &Path,
     registry: &str,
     output: &Path,
-    key_der: &[u8],
-    public_key: &str,
+    signer: &Signer,
     expected_inputs: Option<&str>,
 ) -> Result<String, String> {
     rootbeer_package::ghcr::validate_repository(registry)?;
@@ -70,10 +78,14 @@ pub fn release_package(
             &realizer,
         )?
     };
+    let record = PackageRecord {
+        published: Some(signer.published),
+        ..record
+    };
     if expected_inputs.is_some_and(|expected| record.input_key() != expected) {
         return Err("receipt differs from the planned package inputs".into());
     }
-    let signed = crate::sign_package_record(&record, key_der, public_key)?;
+    let signed = crate::sign_package_record(&record, signer.key_der, signer.public_key)?;
     let digest = hash_bytes(&signed);
     fs::write(destination.join("package.json"), signed).map_err(|error| error.to_string())?;
     fs::write(destination.join("receipt.json"), receipt_bytes)
@@ -142,6 +154,7 @@ fn prepare_source(
     Ok(PackageRecord {
         extra: Default::default(),
         schema: 1,
+        published: None,
         revision,
         system,
         recipe: recipe.clone(),
@@ -191,6 +204,7 @@ fn prepare_binary(
     let record = PackageRecord {
         extra: Default::default(),
         schema: 1,
+        published: None,
         revision,
         system: receipt.system,
         recipe: recipe.clone(),
@@ -337,8 +351,11 @@ mod tests {
             &receipt,
             "example/packages/tool",
             &release,
-            key.as_ref(),
-            &public_key,
+            &crate::release::Signer {
+                key_der: key.as_ref(),
+                public_key: &public_key,
+                published: 1,
+            },
             Some(&rootbeer_package::distribution::input_key(
                 &build.package.id(),
                 &build.system,
@@ -352,13 +369,14 @@ mod tests {
         .unwrap();
         let bytes = fs::read(release.join("package.json")).unwrap();
         assert!(reference.ends_with(&hash_bytes(&bytes)));
-        rootbeer_package::distribution::verify_record(
+        let record = rootbeer_package::distribution::verify_record(
             &bytes,
             &public_key,
             &build.package.id(),
             &build.system,
         )
         .unwrap();
+        assert_eq!(record.published, Some(1));
         assert_eq!(fs::read_dir(&release).unwrap().count(), 3);
         assert!(!String::from_utf8(bytes).unwrap().contains("catalog_sha256"));
 
@@ -368,8 +386,11 @@ mod tests {
             &receipt,
             "example/packages/tool",
             &wrong_inputs,
-            key.as_ref(),
-            &public_key,
+            &crate::release::Signer {
+                key_der: key.as_ref(),
+                public_key: &public_key,
+                published: 1
+            },
             Some(&"0".repeat(64)),
         )
         .unwrap_err()
@@ -388,8 +409,11 @@ mod tests {
             &receipt,
             "example/packages/tool",
             &root.path().join("changed"),
-            key.as_ref(),
-            &public_key,
+            &crate::release::Signer {
+                key_der: key.as_ref(),
+                public_key: &public_key,
+                published: 1
+            },
             None
         )
         .unwrap_err()
@@ -406,8 +430,11 @@ mod tests {
             &receipt,
             "example/packages/tool",
             &failed,
-            key.as_ref(),
-            &public_key,
+            &crate::release::Signer {
+                key_der: key.as_ref(),
+                public_key: &public_key,
+                published: 1
+            },
             None
         )
         .is_err());

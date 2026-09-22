@@ -57,6 +57,9 @@ enum Command {
         /// Require these planned inputs before signing
         #[arg(long)]
         input_key: Option<String>,
+        /// Publication time in Unix seconds, when backfilling history; defaults to now
+        #[arg(long)]
+        published: Option<u64>,
     },
     /// Upload a signed package release to GHCR without rebuilding or signing again
     Push {
@@ -374,17 +377,29 @@ fn execute(args: Args) -> Result<(), String> {
             key,
             public_key,
             input_key,
+            published,
         } => {
             let definition = PackageDefinition::from_lua(
                 &std::fs::read_to_string(recipe).map_err(|error| error.to_string())?,
             )?;
+            let published = match published {
+                Some(published) => published,
+                None => std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_secs(),
+            };
+            let key_der = std::fs::read(key).map_err(|error| error.to_string())?;
             let reference = rootbeer_packaging::release_package(
                 &definition.package,
                 &receipt,
                 &registry,
                 &destination,
-                &std::fs::read(key).map_err(|error| error.to_string())?,
-                &public_key,
+                &rootbeer_packaging::Signer {
+                    key_der: &key_der,
+                    public_key: &public_key,
+                    published,
+                },
                 input_key.as_deref(),
             )?;
             writeln!(

@@ -388,8 +388,11 @@ mod tests {
                 &prepared.join("receipt.json"),
                 "example/demo",
                 &release,
-                key.as_ref(),
-                &public_key,
+                &crate::release::Signer {
+                    key_der: key.as_ref(),
+                    public_key: &public_key,
+                    published: 1,
+                },
                 Some(&task.key),
             )
             .unwrap();
@@ -416,8 +419,11 @@ mod tests {
                 &prepared.join("receipt.json"),
                 "example/demo",
                 &root.path().join("wrong-inputs"),
-                key.as_ref(),
-                &public_key,
+                &crate::release::Signer {
+                    key_der: key.as_ref(),
+                    public_key: &public_key,
+                    published: 1
+                },
                 Some(&"f".repeat(64))
             )
             .is_err());
@@ -449,8 +455,11 @@ mod tests {
                 &prepared.join("receipt.json"),
                 "example/demo",
                 &root.path().join("tampered"),
-                key.as_ref(),
-                &public_key,
+                &crate::release::Signer {
+                    key_der: key.as_ref(),
+                    public_key: &public_key,
+                    published: 1
+                },
                 Some(&task.key)
             )
             .unwrap_err()
