@@ -13,17 +13,19 @@ fn catalog(system: &str) -> PackageCatalog {
         let mut package = crate::test_catalog::catalog().packages["xz"].clone();
         package.name = name.into();
         package.aliases.clear();
-        package.default_version = "1".into();
+        package.default_versions = BTreeMap::from([(system.to_string(), "1".to_string())]);
         let mut recipe = package.versions.remove("5.8.3").unwrap();
-        recipe.systems = vec![system.into()];
-        recipe.bins = vec![name.into()];
-        recipe.checks = vec![vec![name.into()]];
-        if matches!(name, "tool" | "runtime") {
-            recipe.source = Some(format!("github:fixture/{name}@1"));
-            recipe.assets.insert(system.into(), name.into());
+        recipe.platforms.retain(|platform, _| platform == system);
+        for platform in recipe.all_mut() {
+            platform.bins = rootbeer_package::Bins::Names(vec![name.into()]);
+            platform.checks = vec![vec![name.into()]];
+            if matches!(name, "tool" | "runtime") {
+                platform.source = Some(format!("github:fixture/{name}@1"));
+                platform.asset = Some(name.into());
+                platform.build = None;
+            }
         }
-        let build = recipe.build.as_mut().unwrap();
-        build.dependencies = match name {
+        let dependencies: Vec<BuildDependency> = match name {
             "root" => vec!["tool@1".into()],
             "tool" => vec![
                 "compiler@1".into(),
@@ -34,8 +36,14 @@ fn catalog(system: &str) -> PackageCatalog {
             ],
             _ => vec![],
         };
-        if name == "runtime" {
-            recipe.build = None;
+        for platform in recipe.all_mut() {
+            if name == "runtime" {
+                platform.build = None;
+                continue;
+            }
+            if let Some(build) = platform.build.as_mut() {
+                build.dependencies = dependencies.clone();
+            }
         }
         package.versions = BTreeMap::from([("1".into(), recipe)]);
         catalog.packages.insert(name.into(), package);
@@ -205,10 +213,7 @@ fn source_roots_and_dependencies_keep_source_edges() {
         .get_mut("1")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .assets
-        .clear();
+        .for_each(|platform| platform.asset = None);
     let graph = DependencyGraph::new(&catalog, &["root".into()], &system).unwrap();
     assert_eq!(graph.order, ["compiler@1", "runtime@1", "tool@1", "root@1"]);
     let inputs = PackageResolverInputs {

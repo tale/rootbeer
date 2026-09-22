@@ -147,9 +147,10 @@ fn pinned_build_rejects_missing_catalog_and_dependency_inputs_before_io() {
         .contains("pin the current catalog"));
     let mut dependency = catalog.packages["xz"].clone();
     dependency.name = "tool".into();
-    let recipe = dependency.versions.get_mut("5.8.3").unwrap();
-    recipe.build = None;
-    recipe.source = Some("aqua:fixture/tool@5.8.3".into());
+    for platform in dependency.versions.get_mut("5.8.3").unwrap().all_mut() {
+        platform.build = None;
+        platform.source = Some("aqua:fixture/tool@5.8.3".into());
+    }
     catalog.packages.insert("tool".into(), dependency);
     catalog
         .packages
@@ -286,15 +287,15 @@ EOF
         name: "fixture".into(),
         ..package
     };
-    let recipe = package.versions.get_mut("5.8.3").unwrap();
-    recipe.bins = vec!["fixture".into()];
-    recipe.checks = vec![vec!["fixture".into()]];
-    let build = recipe.build.as_mut().unwrap();
-    build.url = "https://source.invalid/fixture.tar.gz".into();
-    build.sha256 = cached.sha256;
-    build.strip_prefix = "fixture".into();
-    build.configure.clear();
-    build.patches = vec![r#"--- a/configure
+    for platform in package.versions.get_mut("5.8.3").unwrap().all_mut() {
+        platform.bins = rootbeer_package::Bins::Names(vec!["fixture".into()]);
+        platform.checks = vec![vec!["fixture".into()]];
+        let build = platform.build.as_mut().unwrap();
+        build.url = "https://source.invalid/fixture.tar.gz".into();
+        build.sha256 = cached.sha256.clone();
+        build.strip_prefix = "fixture".into();
+        build.configure.clear();
+        build.patches = vec![r#"--- a/configure
 +++ b/configure
 @@ -1,4 +1,5 @@
  #!/bin/sh
@@ -303,7 +304,8 @@ EOF
 +printf 'source-patch-applied\n'
  cat > Makefile <<'EOF'
 "#
-    .into()];
+        .into()];
+    }
     catalog.packages.insert("fixture".into(), package);
     catalog.validate().unwrap();
     let tools = directory.path().join("tools");
@@ -373,13 +375,14 @@ EOF
         .unwrap();
     let mut dependency = catalog.packages["fixture"].clone();
     dependency.name = "tool".into();
-    let recipe = dependency.versions.get_mut("5.8.3").unwrap();
-    recipe.bins = vec!["fixture-tool".into()];
-    recipe.checks = vec![vec!["fixture-tool".into()]];
-    let build = recipe.build.as_mut().unwrap();
-    build.sha256 = cached.sha256;
-    build.strip_prefix = "tool".into();
-    build.patches.clear();
+    for platform in dependency.versions.get_mut("5.8.3").unwrap().all_mut() {
+        platform.bins = rootbeer_package::Bins::Names(vec!["fixture-tool".into()]);
+        platform.checks = vec![vec!["fixture-tool".into()]];
+        let build = platform.build.as_mut().unwrap();
+        build.sha256 = cached.sha256.clone();
+        build.strip_prefix = "tool".into();
+        build.patches.clear();
+    }
     catalog.packages.insert("tool".into(), dependency);
     catalog
         .packages
@@ -717,7 +720,8 @@ EOF
     assert_eq!(cache_entries(), before);
     let key = cache::key(
         "tool@5.8.3",
-        &catalog.packages["tool"].versions["5.8.3"],
+        catalog.packages["tool"].versions["5.8.3"].revision,
+        catalog.packages["tool"].versions["5.8.3"].any(),
         &ResolveContext::current().system,
         &BTreeMap::new(),
         &environment
@@ -789,16 +793,19 @@ fn isolated_builds_and_cache_hits_use_distinct_policy_keys() {
     let mut catalog = source_catalog();
     let package = catalog.packages.get_mut("xz").unwrap();
     let recipe = package.versions.get_mut("5.8.3").unwrap();
-    recipe.bins = vec!["xz".into()];
-    recipe.checks = vec![vec!["xz".into()]];
-    recipe.build = Some(serde_json::from_value(serde_json::json!({
+    let isolation_build: rootbeer_package::SourceBuild = serde_json::from_value(serde_json::json!({
         "backend": "custom", "url": "https://source.invalid/isolation.tar.gz",
         "sha256": downloaded.sha256, "archive": "tar.gz", "strip_prefix": "fixture",
         "steps": {
             "configure": [], "build": [["cc", "-c", "main.c", "-o", "main.o"], ["sh", "-c", "read value < input; test \"$value\" = source"]],
             "check": [["sh", "-c", "exit 0"]], "install": [["sh", "-c", "mkdir -p \"$1/bin\"; printf '#!/bin/sh\\nif (read value < \"$SECRET\") 2>/dev/null; then printf host-visible; else printf isolated; fi\\n' > \"$1/bin/xz\"; chmod +x \"$1/bin/xz\"", "install", "{prefix}"]]
         }
-    })).unwrap());
+    })).unwrap();
+    for platform in recipe.all_mut() {
+        platform.bins = rootbeer_package::Bins::Names(vec!["xz".into()]);
+        platform.checks = vec![vec!["xz".into()]];
+        platform.build = Some(isolation_build.clone());
+    }
     let tools: BTreeMap<String, PathBuf> = ["sh", "cc", "as", "make", "patch", "mkdir", "chmod"]
         .into_iter()
         .map(|name| {
@@ -902,13 +909,24 @@ fn failed_configure_retains_diagnostics_without_publishing_a_result() {
         .materialize(&format!("file://{}", archive.display()), None)
         .unwrap();
     let mut catalog = source_catalog();
-    catalog.packages.get_mut("xz").unwrap().versions.get_mut("5.8.3").unwrap().build = Some(serde_json::from_value(serde_json::json!({
+    let diagnostics_build: rootbeer_package::SourceBuild = serde_json::from_value(serde_json::json!({
         "backend": "custom", "url": "https://source.invalid/diagnostics.tar.gz", "sha256": cached.sha256,
         "archive": "tar.gz", "strip_prefix": "project", "steps": {
             "configure": [["sh", "-c", "printf compiler-diagnostics > config.log; exit 7"]],
             "build": [["sh", "-c", "exit 0"]], "check": [["sh", "-c", "exit 0"]], "install": [["sh", "-c", "exit 0"]]
         }
-    })).unwrap());
+    })).unwrap();
+    for platform in catalog
+        .packages
+        .get_mut("xz")
+        .unwrap()
+        .versions
+        .get_mut("5.8.3")
+        .unwrap()
+        .all_mut()
+    {
+        platform.build = Some(diagnostics_build.clone());
+    }
     let output = directory.path().join("output");
     let cache = directory.path().join("cache");
     let error = build_package(

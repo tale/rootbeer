@@ -59,37 +59,45 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
         let is_library = matches!(name, "base" | "middle");
         let mut package = template.clone();
         package.name = name.into();
-        package.default_version = "1".into();
-        package.default_versions.clear();
         let mut recipe = package.versions.values().next().unwrap().clone();
+        package.default_versions = recipe
+            .platforms
+            .keys()
+            .map(|system| (system.clone(), "1".to_string()))
+            .collect();
         let install = if is_library {
             format!("mkdir -p \"$1/lib\" \"$1/include\" \"$1/lib/pkgconfig\"; cp lib{name}.a \"$1/lib/\"; cp {name}.h \"$1/include/\"; if test -f {name}.pc; then cp {name}.pc \"$1/lib/pkgconfig/\"; fi")
         } else {
             format!("mkdir -p \"$1/bin\"; cp {name} \"$1/bin/\"")
         };
-        recipe.bins = if is_library {
-            vec![]
+        let bins = if is_library {
+            rootbeer_package::Bins::Names(vec![])
         } else {
-            vec![name.into()]
+            rootbeer_package::Bins::Names(vec![name.into()])
         };
-        recipe.checks = if is_library {
+        let checks = if is_library {
             vec![]
         } else {
             vec![vec![name.into()]]
         };
-        recipe.build = Some(
+        let build = Some(
             serde_json::from_value(serde_json::json!({
                 "backend": "custom", "url": "https://source.invalid/libraries.tar.gz",
                 "sha256": cached.sha256, "archive": "tar.gz", "strip_prefix": name,
                 "dependencies": dependency.into_iter().map(|package| serde_json::json!({"package": package, "kind": if name == "base" { "build" } else { "link" }})).collect::<Vec<_>>(),
                 "libraries": if is_library { vec![format!("lib/lib{name}.a")] } else { vec![] },
                 "steps": {
-                    "configure": if name == "consumer" { vec![vec!["sh", "./configure"]] } else { vec![] }, "build": [["make", "-j{jobs}"]], "check": [["make", "check"]],
+                    "configure": if name == "consumer" { vec![vec!["sh", "./configure"]] } else { Vec::<Vec<&str>>::new() }, "build": [["make", "-j{jobs}"]], "check": [["make", "check"]],
                     "install": [["sh", "-ec", install, "install", "{prefix}"]]
                 }
             }))
             .unwrap(),
         );
+        for platform in recipe.all_mut() {
+            platform.bins = bins.clone();
+            platform.checks = checks.clone();
+            platform.build = build.clone();
+        }
         package.versions = BTreeMap::from([("1".into(), recipe)]);
         catalog.packages.insert(name.into(), package);
     }
@@ -136,7 +144,7 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
         .unwrap();
     assert_eq!(artifact.environment, Some(environment));
     assert_eq!(artifact.dependencies.len(), 3);
-    assert_eq!(ArtifactIndex::schema_for(&catalog), 5);
+    assert_eq!(7, 5);
     let mut index = ArtifactIndex {
         schema: 4,
         catalog_sha256: catalog.sha256(),
@@ -217,7 +225,7 @@ fn library_recipes_separate_inputs_builds_and_exports() {
         PackageCatalog::from_directory(directory.path())
     };
     let catalog = load(source).unwrap();
-    assert_eq!(ArtifactIndex::schema_for(&catalog), 4);
+    assert_eq!(7, 4);
     let build = catalog.packages["library"].versions["1"]
         .any()
         .build

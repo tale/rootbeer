@@ -49,20 +49,27 @@ fn runtime_chain_survives_cache_reuse_and_installation_without_build_trees() {
         let is_library = name != "consumer";
         let mut package = template.clone();
         package.name = name.into();
-        package.default_version = "1".into();
-        package.default_versions.clear();
         package.aliases.clear();
         let mut recipe = package.versions.values().next().unwrap().clone();
-        recipe.bins = if is_library {
-            vec![]
+        package.default_versions = recipe
+            .platforms
+            .keys()
+            .map(|system| (system.clone(), "1".to_string()))
+            .collect();
+        let bins = if is_library {
+            rootbeer_package::Bins::Names(vec![])
         } else {
-            vec![name.into()]
+            rootbeer_package::Bins::Names(vec![name.into()])
         };
-        recipe.checks = if is_library {
+        let checks = if is_library {
             vec![]
         } else {
             vec![vec![name.into()]]
         };
+        for platform in recipe.all_mut() {
+            platform.bins = bins.clone();
+            platform.checks = checks.clone();
+        }
         let filename = if is_library {
             format!("lib{name}.{extension}")
         } else {
@@ -97,14 +104,17 @@ fn runtime_chain_survives_cache_reuse_and_installation_without_build_trees() {
             }
         }
         let output_dir = if is_library { "lib" } else { "bin" };
-        recipe.build = Some(serde_json::from_value(serde_json::json!({
+        let runtime_build: rootbeer_package::SourceBuild = serde_json::from_value(serde_json::json!({
             "backend": "custom", "url": "https://source.invalid/runtime.tar.gz", "sha256": cached.sha256,
             "archive": "tar.gz", "strip_prefix": name,
             "dependencies": dependency.map(|name| serde_json::json!({"package": format!("{name}@1"), "kind": "link_runtime"})).into_iter().collect::<Vec<_>>(),
             "libraries": if is_library { vec![format!("lib/{filename}")] } else { vec![] },
             "steps": {"configure": [], "build": [command], "check": [["sh", "-c", "exit 0"]],
                 "install": [["mkdir", "-p", format!("{{prefix}}/{output_dir}")], ["cp", filename, format!("{{prefix}}/{output_dir}/")]]}
-        })).unwrap());
+        })).unwrap();
+        for platform in recipe.all_mut() {
+            platform.build = Some(runtime_build.clone());
+        }
         package.versions = BTreeMap::from([("1".into(), recipe)]);
         catalog.packages.insert(name.into(), package);
     }
