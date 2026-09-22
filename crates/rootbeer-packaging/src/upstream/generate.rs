@@ -1,4 +1,3 @@
-use rootbeer_package::PackageRequest;
 use std::collections::BTreeMap;
 
 use super::{GitHubUpstream, Repository};
@@ -265,152 +264,16 @@ pub(super) fn source_package(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rootbeer_package::PackageDefinition;
 
-    #[test]
-    fn source_discovery_hashes_new_archives_and_preserves_retained_versions() {
-        let package = crate::test_catalog::catalog().packages["xz"].clone();
-        let previous = package.default_version.clone();
-        let mut build = package.versions[&previous].build.clone().unwrap();
-        build.url = "https://example.com/xz-{tag}.tar.gz".into();
-        build.strip_prefix = "xz-{version}".into();
-        let mut upstream = GitHubUpstream::new("xz".into(), "owner/xz".into(), vec!["xz".into()]);
-        upstream.tag_prefix = Some("v".into());
-        upstream.systems = vec!["aarch64-macos".into()];
-        upstream.build = Some(build);
-        let releases = [release("v99.0", &[]), release("v98.0", &[])];
-        let mut fetched = Vec::new();
-        let generated = source_package(&upstream, &releases, &package, |url| {
-            fetched.push(url.to_string());
-            Ok("b".repeat(64))
-        })
-        .unwrap();
-        assert_eq!(fetched, ["https://example.com/xz-v99.0.tar.gz"]);
-        assert_eq!(generated.default_version, "99.0");
-        assert_eq!(generated.default_version_for("x86_64-linux"), previous);
-        let recipe = &generated.versions["99.0"];
-        assert!(recipe.source.is_none());
-        assert!(recipe.assets.is_empty());
-        assert_eq!(recipe.build.as_ref().unwrap().sha256, "b".repeat(64));
-        assert_eq!(
-            serde_json::to_value(&generated.versions[&previous]).unwrap(),
-            serde_json::to_value(&package.versions[&previous]).unwrap()
-        );
-        let repeated = source_package(&upstream, &releases, &generated, |_| {
-            panic!("unchanged sources must not be downloaded")
-        })
-        .unwrap();
-        assert_eq!(
-            serde_json::to_value(repeated).unwrap(),
-            serde_json::to_value(generated).unwrap()
-        );
-        assert!(source_package(&upstream, &releases, &package, |_| Err(
-            "download failed".into()
-        ))
-        .unwrap_err()
-        .contains("download failed"));
-    }
-
-    #[test]
-    fn go_discovery_expands_linker_versions_and_preserves_the_template() {
-        let source = format!(
-            r#"return {{
-            schema = 2, name = "tool", description = "Tool", homepage = "https://example.com", default_version = "1",
-            systems = {{ "aarch64-macos" }},
-            upstream = {{ github = "owner/tool", repository_id = 42, tag_prefix = "v" }},
-            inputs = {{ source = {{ url = "https://example.com/tool-{{tag}}.tar.gz", archive = "tar.gz", strip_prefix = "tool-{{version}}" }} }},
-            build = {{ backend = "go", go = {{ binaries = {{ tool = "." }}, variables = {{ ["main.version"] = "{{tag}}" }} }} }},
-            outputs = {{ bins = {{ "tool" }}, checks = {{ {{ "tool", "--version" }} }} }},
-            versions = {{ ["1"] = {{ inputs = {{ source = {{ sha256 = "{}" }} }} }} }},
-        }}"#,
-            "a".repeat(64)
-        );
-        let mut definition = crate::PackageDefinition::from_lua(&source).unwrap();
-        let upstream = definition.github_upstream().unwrap().unwrap();
-        definition.package = source_package(
-            &upstream,
-            &[release("v2.0", &[])],
-            &definition.package,
-            |_| Ok("b".repeat(64)),
-        )
-        .unwrap();
-        let updated = crate::PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
-        assert_eq!(
-            updated.package.versions["2.0"]
-                .build
-                .as_ref()
-                .unwrap()
-                .go
-                .as_ref()
-                .unwrap()
-                .variables["main.version"],
-            "v2.0"
-        );
-        assert_eq!(
-            updated.package.versions["1"]
-                .build
-                .as_ref()
-                .unwrap()
-                .go
-                .as_ref()
-                .unwrap()
-                .variables["main.version"],
-            "v1"
-        );
-        assert_eq!(
-            updated
-                .github_upstream()
-                .unwrap()
-                .unwrap()
-                .build
-                .unwrap()
-                .go
-                .unwrap()
-                .variables["main.version"],
-            "{tag}"
-        );
-    }
-
-    #[test]
-    fn source_candidates_round_trip_shared_inputs_and_library_contracts() {
-        let source = format!(
-            r#"return {{
-            schema = 2, name = "lib", description = "Library", homepage = "https://example.com",
-            systems = {{ "aarch64-macos" }}, default_version = "1",
-            upstream = {{ github = "owner/lib", repository_id = 42, tag_prefix = "v" }},
-            inputs = {{ source = {{ url = "https://example.com/lib-{{tag}}.tar.gz", archive = "tar.gz", strip_prefix = "lib-{{version}}" }} }},
-            build = {{ backend = "custom", steps = {{ configure = {{}}, build = {{ {{ "make" }} }}, check = {{ {{ "make", "test" }} }}, install = {{ {{ "make", "install" }} }} }} }},
-            outputs = {{ bins = {{}}, checks = {{}}, libraries = {{ "lib/lib.a" }} }},
-            versions = {{ ["1"] = {{ inputs = {{ source = {{ sha256 = "{}" }} }} }} }},
-        }}"#,
-            "a".repeat(64)
-        );
-        let definition = crate::PackageDefinition::from_lua(&source).unwrap();
-        let upstream = definition.github_upstream().unwrap().unwrap();
-        let generated = source_package(
-            &upstream,
-            &[release("v2", &[])],
-            &definition.package,
-            |_| Ok("b".repeat(64)),
-        )
-        .unwrap();
-        let updated = definition
-            .with_updates(generated.clone(), &upstream)
-            .unwrap();
-        let text = updated.to_lua().unwrap();
-        let loaded = crate::PackageDefinition::from_lua(&text).unwrap();
-        assert_eq!(
-            serde_json::to_value(loaded.package).unwrap(),
-            serde_json::to_value(generated).unwrap()
-        );
-        assert!(text.contains("https://example.com/lib-{tag}.tar.gz"));
-        assert!(text.contains("backend = \"custom\""));
-    }
-
+    /// Digests are mandatory, so every release asset must publish one.
     fn release(tag: &str, assets: &[&str]) -> Release {
         serde_json::from_value(serde_json::json!({
             "id": 1, "tag_name": tag,
             "assets": assets.iter().map(|name| serde_json::json!({
-                "name": name, "browser_download_url": "https://example.com/archive"
+                "name": name,
+                "browser_download_url": "https://example.com/archive",
+                "digest": format!("sha256:{}", "a".repeat(64)),
             })).collect::<Vec<_>>()
         }))
         .unwrap()
@@ -426,226 +289,204 @@ mod tests {
     }
 
     fn upstream() -> GitHubUpstream {
-        let mut upstream =
-            GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
+        let mut upstream = GitHubUpstream::new("tool".into(), "owner/tool".into());
         upstream.systems = vec!["aarch64-macos".into(), "x86_64-linux".into()];
         upstream
     }
 
+    fn definition(version: &str, systems: &[&str]) -> PackageDefinition {
+        let platforms = systems
+            .iter()
+            .map(|system| {
+                format!(
+                    r#"["{system}"] = {{ target = "{system}", default_version = "{version}" }},"#
+                )
+            })
+            .collect::<String>();
+        let digests = systems
+            .iter()
+            .map(|system| format!(r#"["{system}"] = "{}","#, "a".repeat(64)))
+            .collect::<String>();
+        PackageDefinition::from_lua(&format!(
+            r#"return {{
+                name = "tool", description = "A tool", homepage = "https://example.com",
+                default_license = "MIT",
+                prebuilt = {{ github = "owner/tool", asset = "tool-{{version}}-{{target}}.tar.gz" }},
+                outputs = {{ bins = {{ "tool" }}, checks = {{ {{ "tool", "--version" }} }} }},
+                platforms = {{ {platforms} }},
+                versions = {{ ["{version}"] = {{ digests = {{ {digests} }} }} }},
+            }}"#
+        ))
+        .unwrap()
+    }
+
     #[test]
-    fn selects_highest_version_per_platform_and_round_trips_saved_rules() {
-        let releases = vec![
-            release("v1.10.0", &["tool-v1.10.0-darwin-arm64.tar.gz"]),
+    fn selects_the_highest_version_each_platform_can_install() {
+        let mut recipe = definition("1", &["aarch64-macos", "x86_64-linux"]);
+        let releases = [
             release(
-                "v1.9.0",
-                &[
-                    "tool-v1.9.0-darwin-arm64.tar.gz",
-                    "tool-v1.9.0-linux-amd64.tar.gz",
-                ],
+                "2",
+                &["tool-2-aarch64-macos.tar.gz", "tool-2-x86_64-linux.tar.gz"],
+            ),
+            release(
+                "1",
+                &["tool-1-aarch64-macos.tar.gz", "tool-1-x86_64-linux.tar.gz"],
             ),
         ];
-        let mut upstream = upstream();
-        let package = package(&mut upstream, &repository(), &releases, None).unwrap();
-        assert_eq!(package.default_version, "1.10.0");
-        assert_eq!(package.default_version_for("x86_64-linux"), "1.9.0");
+        package(&mut upstream(), &repository(), &releases, &mut recipe).unwrap();
+
         assert_eq!(
-            upstream.assets["aarch64-macos"],
-            "tool-{tag}-darwin-arm64.tar.gz"
+            recipe.package.default_version_for("aarch64-macos"),
+            Some("2")
         );
-        let serialized = serde_json::to_string(&upstream).unwrap();
-        let mut saved = serde_json::from_str(&serialized).unwrap();
-        let repeated =
-            super::package(&mut saved, &repository(), &releases, Some(&package)).unwrap();
         assert_eq!(
-            serde_json::to_value(package).unwrap(),
-            serde_json::to_value(repeated).unwrap()
+            recipe.package.default_version_for("x86_64-linux"),
+            Some("2")
+        );
+        assert!(
+            recipe.package.versions.contains_key("1"),
+            "retains the old version"
         );
     }
 
     #[test]
-    fn retains_old_recipes_and_defaults_when_assets_disappear() {
-        let mut upstream = upstream();
-        let old_releases = vec![release(
-            "v1.0.0",
-            &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
-        )];
-        let old = package(&mut upstream, &repository(), &old_releases, None).unwrap();
-        let new_releases = vec![release("v2.0.0", &["tool-darwin-arm64.tar.gz"])];
-        let updated = package(&mut upstream, &repository(), &new_releases, Some(&old)).unwrap();
-        assert_eq!(updated.default_version, "2.0.0");
-        assert_eq!(updated.default_version_for("x86_64-linux"), "1.0.0");
-        assert_eq!(
-            serde_json::to_value(&updated.versions["1.0.0"]).unwrap(),
-            serde_json::to_value(&old.versions["1.0.0"]).unwrap()
-        );
-        let repeated =
-            package(&mut upstream, &repository(), &old_releases, Some(&updated)).unwrap();
-        assert_eq!(repeated.default_version_for("aarch64-macos"), "2.0.0");
-    }
-
-    #[test]
-    fn preserves_unselected_platforms_when_updating_one_target() {
-        let mut upstream = upstream();
-        let old_releases = vec![release(
-            "v1",
-            &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
-        )];
-        let old = package(&mut upstream, &repository(), &old_releases, None).unwrap();
-        upstream.systems = vec!["aarch64-macos".into()];
-        upstream
-            .assets
-            .retain(|system, _| system == "aarch64-macos");
-        upstream.description = Some("Updated description".into());
-        let updated = package(
-            &mut upstream,
-            &repository(),
-            &[release("v2", &["tool-darwin-arm64.tar.gz"])],
-            Some(&old),
-        )
-        .unwrap();
-        assert_eq!(updated.default_version_for("aarch64-macos"), "2");
-        assert_eq!(updated.default_version_for("x86_64-linux"), "1");
-        assert_eq!(updated.description, "Updated description");
-    }
-
-    #[test]
-    fn rejects_ambiguity_instead_of_falling_back() {
-        let releases = vec![
-            release("v2", &["tool-darwin-arm64.tar.gz", "tool-darwin-arm64.zip"]),
+    fn a_platform_whose_asset_disappeared_keeps_the_version_it_had() {
+        let mut recipe = definition("1", &["aarch64-macos", "x86_64-linux"]);
+        let releases = [
+            release("2", &["tool-2-aarch64-macos.tar.gz"]),
             release(
-                "v1",
-                &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
+                "1",
+                &["tool-1-aarch64-macos.tar.gz", "tool-1-x86_64-linux.tar.gz"],
             ),
         ];
-        assert!(package(&mut upstream(), &repository(), &releases, None)
-            .unwrap_err()
-            .contains("ambiguous"));
-        let mut upstream = upstream();
-        upstream
-            .assets
-            .insert("aarch64-macos".into(), "tool-darwin-arm64.tar.gz".into());
-        assert!(package(&mut upstream, &repository(), &releases, None).is_ok());
+        package(&mut upstream(), &repository(), &releases, &mut recipe).unwrap();
+
+        assert_eq!(
+            recipe.package.default_version_for("aarch64-macos"),
+            Some("2")
+        );
+        assert_eq!(
+            recipe.package.default_version_for("x86_64-linux"),
+            Some("1"),
+            "a platform without an asset must not be dragged forward"
+        );
     }
 
     #[test]
-    fn ignores_drafts_prereleases_and_unrelated_tag_prefixes() {
-        let mut draft = release("tool-99", &[]);
+    fn updating_one_platform_leaves_the_others_alone() {
+        let mut recipe = definition("1", &["aarch64-macos", "x86_64-linux"]);
+        let mut rules = upstream();
+        rules.systems = vec!["aarch64-macos".into()];
+        let releases = [
+            release(
+                "2",
+                &["tool-2-aarch64-macos.tar.gz", "tool-2-x86_64-linux.tar.gz"],
+            ),
+            release(
+                "1",
+                &["tool-1-aarch64-macos.tar.gz", "tool-1-x86_64-linux.tar.gz"],
+            ),
+        ];
+        package(&mut rules, &repository(), &releases, &mut recipe).unwrap();
+
+        assert_eq!(
+            recipe.package.default_version_for("aarch64-macos"),
+            Some("2")
+        );
+        assert_eq!(
+            recipe.package.default_version_for("x86_64-linux"),
+            Some("1"),
+            "an untargeted platform must not move"
+        );
+    }
+
+    #[test]
+    fn tags_that_normalize_to_one_version_are_rejected_rather_than_guessed() {
+        let mut recipe = definition("1", &["aarch64-macos"]);
+        let mut rules = upstream();
+        rules.systems = vec!["aarch64-macos".into()];
+        let releases = [
+            release("2", &["tool-2-aarch64-macos.tar.gz"]),
+            release("v2", &["tool-2-aarch64-macos.tar.gz"]),
+        ];
+        let error = package(&mut rules, &repository(), &releases, &mut recipe).unwrap_err();
+        assert!(error.contains("restrict tag_prefix"), "{error}");
+    }
+
+    #[test]
+    fn drafts_prereleases_and_foreign_prefixes_are_skipped() {
+        let mut recipe = definition("1", &["aarch64-macos"]);
+        let mut rules = upstream();
+        rules.systems = vec!["aarch64-macos".into()];
+        rules.tag_prefix = Some("v".into());
+        let mut draft = release("v3", &["tool-3-aarch64-macos.tar.gz"]);
         draft.draft = true;
-        let mut prerelease = release("tool-100-rc1", &[]);
+        let mut prerelease = release("v4", &["tool-4-aarch64-macos.tar.gz"]);
         prerelease.prerelease = true;
-        let releases = vec![
+        let releases = [
             draft,
             prerelease,
-            release("other-999", &[]),
-            release("tool-100-rc.5", &[]),
-            release("tool-100-pgo", &[]),
-            release("tool-100..1", &[]),
-            release("tool-legacy-build", &[]),
-            release(
-                "tool-2",
-                &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
-            ),
+            release("nightly-9", &["tool-9-aarch64-macos.tar.gz"]),
+            release("v2", &["tool-2-aarch64-macos.tar.gz"]),
         ];
-        let mut upstream = upstream();
-        upstream.tag_prefix = Some("tool-".into());
-        upstream.exclude_tags = vec!["tool-legacy-build".into()];
+        package(&mut rules, &repository(), &releases, &mut recipe).unwrap();
         assert_eq!(
-            package(&mut upstream, &repository(), &releases, None)
-                .unwrap()
-                .default_version,
-            "2"
+            recipe.package.default_version_for("aarch64-macos"),
+            Some("2")
         );
-        assert!(package(
-            &mut upstream,
-            &repository(),
-            &[release("tool-stable", &[])],
-            None
-        )
-        .unwrap_err()
-        .contains("no matching stable releases"));
     }
 
     #[test]
-    fn exact_prefix_disambiguates_tags_but_duplicate_versions_still_fail() {
-        let assets = ["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"];
-        let releases = vec![release("v2", &assets), release("2", &assets)];
-        let mut upstream = upstream();
-        assert!(package(&mut upstream, &repository(), &releases, None)
-            .unwrap_err()
-            .contains("multiple release tags"));
-        upstream.tag_prefix = Some("v".into());
-        let selected = package(&mut upstream, &repository(), &releases, None).unwrap();
-        assert_eq!(
-            selected.versions["2"].source.as_deref(),
-            Some("github:owner/tool@v2")
-        );
-        let ambiguous = vec![release("v2", &assets), release("v2.0", &assets)];
-        assert!(package(&mut upstream, &repository(), &ambiguous, None)
-            .unwrap_err()
-            .contains("multiple release tags"));
-    }
-
-    #[test]
-    fn preserves_pinned_contracts_and_rejects_missing_targets() {
-        let releases = vec![release(
-            "v1",
-            &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
-        )];
-        let mut upstream = upstream();
-        let previous = package(&mut upstream, &repository(), &releases, None).unwrap();
-        upstream.checks = vec![vec!["tool".into(), "--help".into()]];
-        let unchanged = package(&mut upstream, &repository(), &releases, Some(&previous)).unwrap();
-        assert_eq!(
-            serde_json::to_value(&unchanged).unwrap(),
-            serde_json::to_value(&previous).unwrap()
-        );
-        let newer = package(
-            &mut upstream,
-            &repository(),
-            &[release(
-                "v2",
-                &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
-            )],
-            Some(&previous),
-        )
+    fn an_asset_without_a_published_digest_is_refused() {
+        let mut recipe = definition("1", &["aarch64-macos"]);
+        let mut rules = upstream();
+        rules.systems = vec!["aarch64-macos".into()];
+        let mut releases = [release("2", &["tool-2-aarch64-macos.tar.gz"])];
+        releases[0].assets[0] = serde_json::from_value(serde_json::json!({
+            "name": "tool-2-aarch64-macos.tar.gz",
+            "browser_download_url": "https://example.com/archive"
+        }))
         .unwrap();
-        assert_eq!(newer.versions["2"].checks, upstream.checks);
-        assert_eq!(newer.versions["1"].checks, previous.versions["1"].checks);
-        let releases = vec![release("v1", &["tool-darwin-arm64.tar.gz"])];
-        assert!(package(&mut upstream, &repository(), &releases, None)
-            .unwrap_err()
-            .contains("no supported release for x86_64-linux"));
+        let error = package(&mut rules, &repository(), &releases, &mut recipe).unwrap_err();
+        assert!(error.contains("no sha256 digest"), "{error}");
     }
 
     #[test]
-    fn discovery_keeps_command_paths_and_requires_manual_mirrored_updates() {
-        let mut upstream = upstream();
-        upstream
-            .bin_paths
-            .insert("tool".into(), "Tool.app/Contents/MacOS/client".into());
-        let releases = vec![release(
-            "v1.0.0",
-            &["tool-darwin-arm64.tar.gz", "tool-linux-amd64.tar.gz"],
-        )];
-        let generated = package(&mut upstream, &repository(), &releases, None).unwrap();
-        assert_eq!(generated.versions["1.0.0"].bin_paths, upstream.bin_paths);
-        let saved =
-            crate::PackageDefinition::with_github_upstream(generated.clone(), &upstream).unwrap();
-        let repeated = crate::PackageDefinition::from_lua(&saved.to_lua().unwrap()).unwrap();
-        assert_eq!(
-            repeated.github_upstream().unwrap().unwrap().bin_paths,
-            upstream.bin_paths
+    fn source_discovery_hashes_the_new_archive_once_and_skips_retained_releases() {
+        let mut recipe = definition("1", &["aarch64-macos"]);
+        let mut rules = upstream();
+        rules.systems = vec!["aarch64-macos".into()];
+        rules.tag_prefix = Some("v".into());
+        rules.build = Some(
+            serde_json::from_value(serde_json::json!({
+                "backend": "autotools",
+                "url": "https://example.com/tool-{tag}.tar.gz",
+                "sha256": "b".repeat(64),
+                "archive": "tar.gz", "strip_prefix": "tool-{version}"
+            }))
+            .unwrap(),
         );
+        let releases = [release("v99", &[]), release("v98", &[])];
+
+        let mut fetched = Vec::new();
+        source_package(&rules, &releases, &mut recipe, |url| {
+            fetched.push(url.to_string());
+            Ok("c".repeat(64))
+        })
+        .unwrap();
+        assert_eq!(fetched, ["https://example.com/tool-v99.tar.gz"]);
         assert_eq!(
-            repeated.package.versions["1.0.0"].bin_paths,
-            upstream.bin_paths
+            recipe.package.default_version_for("aarch64-macos"),
+            Some("99")
+        );
+        assert!(
+            recipe.package.versions.contains_key("1"),
+            "retains the old version"
         );
 
-        upstream.mirror = true;
-        assert!(
-            package(&mut upstream, &repository(), &releases, Some(&generated))
-                .unwrap_err()
-                .contains("manual checksum qualification")
-        );
+        source_package(&rules, &releases, &mut recipe, |_| {
+            panic!("an unchanged source must not be downloaded again")
+        })
+        .unwrap();
     }
 }
