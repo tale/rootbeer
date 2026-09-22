@@ -200,23 +200,26 @@ fn source_build_rejects_unsafe_binary_before_checks_or_cache_publication() {
         .unwrap();
     let mut catalog = crate::test_catalog::catalog().clone();
     let template = catalog.packages["xz"].clone();
-    let mut recipe = template.versions[&template.default_version].clone();
-    recipe.bins = vec!["main".into()];
-    recipe.checks = vec![vec!["main".into()]];
-    recipe.systems = vec![ResolveContext::current().system];
-    recipe.build = Some(serde_json::from_value(serde_json::json!({
+    let system = ResolveContext::current().system;
+    let mut recipe = template.versions[template.default_version_for(&system).unwrap()].clone();
+    recipe.platforms.retain(|platform, _| platform == &system);
+    let build = Some(serde_json::from_value(serde_json::json!({
         "backend": "custom", "url": "https://source.invalid/audit.tar.gz", "sha256": downloaded.sha256,
         "archive": "tar.gz", "strip_prefix": "fixture",
         "steps": {"configure": [], "build": [["sh", "-c", "exit 0"]], "check": [["sh", "-c", "exit 0"]],
             "install": [["sh", "-c", "cp -R bin lib \"$1/\"", "install", "{prefix}"]]}
     })).unwrap());
+    for platform in recipe.all_mut() {
+        platform.bins = rootbeer_package::Bins::Names(vec!["main".into()]);
+        platform.checks = vec![vec!["main".into()]];
+        platform.build = build.clone();
+    }
     catalog.packages.clear();
     catalog.packages.insert(
         "fixture".into(),
         CatalogPackage {
             name: "fixture".into(),
-            default_version: "1".into(),
-            default_versions: Default::default(),
+            default_versions: std::collections::BTreeMap::from([(system.clone(), "1".into())]),
             versions: std::collections::BTreeMap::from([("1".into(), recipe)]),
             ..template
         },

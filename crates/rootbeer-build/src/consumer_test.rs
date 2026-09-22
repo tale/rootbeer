@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::fs;
 
+#[allow(unused_imports)]
+use crate::test_catalog::VersionTestExt;
 use rootbeer_package::lockfile::{PackageLockEntry, RootbeerLock};
 use rootbeer_package::*;
 use rootbeer_store::hash_bytes;
@@ -44,13 +46,15 @@ EOF
         .versions
         .get_mut("5.8.3")
         .unwrap();
-    recipe.bins = vec!["xz".into()];
-    recipe.checks = vec![vec!["xz".into()]];
-    let build = recipe.build.as_mut().unwrap();
-    build.url = "https://source.invalid/archive.tar.gz".into();
-    build.sha256 = cached.sha256.clone();
-    build.strip_prefix = "fixture".into();
-    build.configure.clear();
+    for platform in recipe.all_mut() {
+        platform.bins = rootbeer_package::Bins::Names(vec!["xz".into()]);
+        platform.checks = vec![vec!["xz".into()]];
+        let build = platform.build.as_mut().unwrap();
+        build.url = "https://source.invalid/archive.tar.gz".into();
+        build.sha256 = cached.sha256.clone();
+        build.strip_prefix = "fixture".into();
+        build.configure.clear();
+    }
     let mut index = ArtifactIndex {
         schema: 7,
         catalog_sha256: catalog.sha256(),
@@ -203,7 +207,9 @@ EOF
         .versions
         .get_mut("5.8.3")
         .unwrap();
-    recipe.source = Some("github:owner/xz@5.8.3".into());
+    recipe
+        .all_mut()
+        .for_each(|platform| platform.source = Some("github:owner/xz@5.8.3".into()));
     index.catalog_sha256 = index.catalog.sha256();
     let resolver = SourceResolver::new(&save(&index), &state);
     assert!(resolver
