@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactIndex {
-    pub schema: u32,
     pub catalog: PackageCatalog,
     pub catalog_sha256: String,
     pub artifacts: BTreeMap<String, BTreeMap<String, PublishedArtifact>>,
@@ -48,7 +47,6 @@ pub(crate) fn fixture() -> ArtifactIndex {
         output_sha256: Some("b".repeat(64)),
     };
     ArtifactIndex {
-        schema: 7,
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::from([(
             package.id(),

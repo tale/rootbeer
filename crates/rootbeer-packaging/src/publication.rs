@@ -229,7 +229,6 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
         if index.catalog_sha256 != fragment.catalog_sha256 {
             return Err("platforms used different catalog snapshots".into());
         }
-        index.schema = index.schema.max(fragment.schema);
         for (key, systems) in std::mem::take(&mut fragment.artifacts) {
             for (system, artifact) in systems {
                 if index
@@ -244,8 +243,7 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
             }
         }
     }
-    let mut index = combined.unwrap();
-    index.schema = index.schema.max(7);
+    let index = combined.unwrap();
     index.validate_complete()?;
     write_json(&destination.join("index.json"), &index)?;
     fs::rename(destination, output).map_err(|e| e.to_string())
@@ -470,11 +468,28 @@ mod tests {
         bundle
     }
 
+    /// Republishes a fragment's catalog as prebuilt, so every platform owes an artifact.
+    fn prebuilt(bundle: &Path) {
+        let mut index: ArtifactIndex = read_json(&bundle.join("index.json")).unwrap();
+        for package in index.catalog.packages.values_mut() {
+            for recipe in package.versions.values_mut() {
+                recipe.all_mut().for_each(|platform| {
+                    platform.build = None;
+                    platform.source = Some("github:tukaani-project/xz@v5.8.3".into());
+                    platform.asset = Some("xz-5.8.3.tar.gz".into());
+                });
+            }
+        }
+        index.catalog_sha256 = index.catalog.sha256();
+        write_json(&bundle.join("index.json"), &index).unwrap();
+    }
+
     fn complete(root: &Path) -> PathBuf {
         let inputs = root.join("inputs");
         fs::create_dir(&inputs).unwrap();
         for system in ["aarch64-linux", "x86_64-linux"] {
             let source = fragment(root, system);
+            prebuilt(&source);
             fs::rename(source, inputs.join(system)).unwrap();
         }
         let output = root.join("bundle");
@@ -509,6 +524,7 @@ mod tests {
     fn bundle_verification_requires_publication_coverage() {
         let root = tempfile::tempdir().unwrap();
         let bundle = fragment(root.path(), "aarch64-linux");
+        prebuilt(&bundle);
         let index: ArtifactIndex = read_json(&bundle.join("index.json")).unwrap();
         let error = verify_bundle(&bundle, &index.catalog).unwrap_err();
         assert!(error.contains("incomplete publication"), "{error}");
@@ -672,7 +688,6 @@ mod tests {
         let bundle = complete(root.path());
         let index: ArtifactIndex = read_json(&bundle.join("index.json")).unwrap();
         index.validate_complete().unwrap();
-        assert_eq!(index.schema, 2);
         assert_eq!(index.artifacts.values().next().unwrap().len(), 2);
         let bytes = fs::read(bundle.join("index.json")).unwrap();
         assert!(assemble_indexes(&root.path().join("inputs"), &bundle)
@@ -682,27 +697,27 @@ mod tests {
     }
 
     #[test]
-    fn source_only_publication_preserves_schema_seven() {
+    fn a_source_only_catalog_publishes_without_artifacts() {
         let root = tempfile::tempdir().unwrap();
         let inputs = root.path().join("inputs");
         fs::create_dir(&inputs).unwrap();
         let source = fragment(root.path(), "aarch64-linux");
         let mut index: ArtifactIndex = read_json(&source.join("index.json")).unwrap();
-        index.schema = 7;
         index.artifacts.clear();
         write_json(&source.join("index.json"), &index).unwrap();
         fs::rename(source, inputs.join("source")).unwrap();
         let output = root.path().join("source-only");
         assemble_indexes(&inputs, &output).unwrap();
         let published: ArtifactIndex = read_json(&output.join("index.json")).unwrap();
-        assert_eq!(published.schema, 7);
         assert!(published.artifacts.is_empty());
         published.validate_complete().unwrap();
+
         for package in index.catalog.packages.values_mut() {
             for recipe in package.versions.values_mut() {
                 recipe.all_mut().for_each(|platform| {
                     platform.build = None;
                     platform.source = Some("github:owner/xz@v1".into());
+                    platform.asset = Some("xz.tar.gz".into());
                 });
             }
         }
@@ -795,13 +810,16 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let inputs = root.path().join("inputs");
         fs::create_dir(&inputs).unwrap();
-        fs::rename(fragment(root.path(), "aarch64-linux"), inputs.join("first")).unwrap();
+        let first = fragment(root.path(), "aarch64-linux");
+        prebuilt(&first);
+        fs::rename(first, inputs.join("first")).unwrap();
         let output = root.path().join("output");
         assert!(assemble_indexes(&inputs, &output)
             .unwrap_err()
             .contains("incomplete"));
         assert!(!output.exists());
         let second = fragment(root.path(), "x86_64-linux");
+        prebuilt(&second);
         let first: ArtifactIndex = read_json(&inputs.join("first/index.json")).unwrap();
         write_json(&second.join("index.json"), &first).unwrap();
         for file in fs::read_dir(inputs.join("first/receipts")).unwrap() {
