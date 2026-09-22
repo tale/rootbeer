@@ -31,6 +31,7 @@ pub(super) struct Inputs {
     engine: String,
     environment: String,
     recipes: BTreeMap<String, CatalogRecipe>,
+    revisions: BTreeMap<String, u32>,
 }
 
 impl Inputs {
@@ -57,18 +58,23 @@ impl Inputs {
     }
 
     fn validate(&self, artifact: &PublishedArtifact) -> Result<(), String> {
-        artifact.validate(&self.package, &self.system, &self.recipes[&self.package])?;
+        artifact.validate(
+            &self.package,
+            &self.system,
+            self.revisions[&self.package],
+            &self.recipes[&self.package],
+        )?;
         for dependency in rootbeer_package::runtime::closure(&artifact.package)? {
             let key = dependency.id();
             let recipe = self.recipes.get(&key).ok_or_else(|| {
                 format!("{key}: runtime dependency missing from qualification inputs")
             })?;
             PublishedArtifact {
-                revision: recipe.revision,
+                revision: self.revisions[&key],
                 receipt_sha256: artifact.receipt_sha256.clone(),
                 package: dependency.clone(),
             }
-            .validate(&key, &self.system, recipe)?;
+            .validate(&key, &self.system, self.revisions[&key], recipe)?;
         }
         Ok(())
     }
@@ -512,7 +518,16 @@ fn inputs(
             Ok((key.clone(), recipe.clone()))
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
+    let revisions = graph
+        .order
+        .iter()
+        .map(|key| {
+            let (_, _, entry) = rootbeer_package::graph::find_recipe_definition(catalog, key)?;
+            Ok((key.clone(), entry.revision))
+        })
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
     Ok(Inputs {
+        revisions,
         package: key.into(),
         engine: engine.into(),
         environment: context.into(),

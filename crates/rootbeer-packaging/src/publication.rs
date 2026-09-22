@@ -103,7 +103,11 @@ pub(crate) fn check_files(index: &ArtifactIndex, bundle: &Path) -> Result<(), St
                 verify_file(&path, suffix)?;
             }
             let package = &artifact.package;
-            let recipe = &index.catalog.packages[&package.name].versions[&package.version];
+            let Some(recipe) =
+                index.catalog.packages[&package.name].versions[&package.version].for_system(system)
+            else {
+                continue;
+            };
             if recipe.build.is_none() && recipe.mirror {
                 check_mirror_receipt(artifact, recipe, system, bundle)?;
             }
@@ -157,7 +161,7 @@ fn check_mirror_receipt(
     let has_pinned_source = matches!(
         &upstream.source,
         LockedSource::Url { url, sha256 }
-            if url.starts_with("https://") && recipe.checksums.get(system) == Some(sha256)
+            if url.starts_with("https://") && recipe.sha256.as_ref() == Some(sha256)
     );
     if receipt.schema != 1
         || receipt.revision != artifact.revision
@@ -241,7 +245,7 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
         }
     }
     let mut index = combined.unwrap();
-    index.schema = index.schema.max(ArtifactIndex::schema_for(&index.catalog));
+    index.schema = index.schema.max(7);
     index.validate_complete()?;
     write_json(&destination.join("index.json"), &index)?;
     fs::rename(destination, output).map_err(|e| e.to_string())

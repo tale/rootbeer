@@ -28,11 +28,15 @@ pub fn release_package(
     }
     let identity: Identity =
         serde_json::from_slice(&receipt_bytes).map_err(|error| error.to_string())?;
-    let recipe = definition
+    let entry = definition
         .versions
         .get(&identity.package.version)
-        .ok_or("no matching package recipe")?
-        .for_system(&identity.system);
+        .ok_or("no matching package recipe")?;
+    let revision = entry.revision;
+    let recipe = entry
+        .for_system(&identity.system)
+        .ok_or("no matching package recipe for this platform")?
+        .clone();
     if definition.name != identity.package.name {
         return Err("receipt belongs to a different package".into());
     }
@@ -48,6 +52,7 @@ pub fn release_package(
         prepare_source(
             definition,
             &recipe,
+            revision,
             receipt,
             &receipt_bytes,
             registry,
@@ -57,6 +62,7 @@ pub fn release_package(
     } else {
         prepare_binary(
             &recipe,
+            revision,
             receipt,
             &receipt_bytes,
             registry,
@@ -79,6 +85,7 @@ pub fn release_package(
 fn prepare_source(
     definition: &CatalogPackage,
     recipe: &CatalogRecipe,
+    revision: u32,
     receipt: &Path,
     receipt_bytes: &[u8],
     registry: &str,
@@ -109,7 +116,6 @@ fn prepare_source(
     };
     let catalog = PackageCatalog {
         extra: Default::default(),
-        schema: 1,
         packages: std::collections::BTreeMap::from([(definition.name.clone(), definition.clone())]),
     };
     let (system, artifact, checked_receipt) = crate::bundle::prepare_artifact(
@@ -136,6 +142,7 @@ fn prepare_source(
     Ok(PackageRecord {
         extra: Default::default(),
         schema: 1,
+        revision,
         system,
         recipe: recipe.clone(),
         artifact,
@@ -145,6 +152,7 @@ fn prepare_source(
 
 fn prepare_binary(
     recipe: &CatalogRecipe,
+    revision: u32,
     receipt_path: &Path,
     receipt_bytes: &[u8],
     registry: &str,
@@ -183,10 +191,11 @@ fn prepare_binary(
     let record = PackageRecord {
         extra: Default::default(),
         schema: 1,
+        revision,
         system: receipt.system,
         recipe: recipe.clone(),
         artifact: rootbeer_package::PublishedArtifact {
-            revision: recipe.revision,
+            revision,
             receipt_sha256: hash_bytes(receipt_bytes),
             package,
         },

@@ -58,7 +58,7 @@ pub fn plan_export(
     for package in catalog.packages.values() {
         for (version, recipe) in &package.versions {
             let key = format!("{}@{version}", package.name);
-            if !recipe.supported_systems().contains(&system)
+            if !recipe.platforms.contains_key(&system)
                 || shard.is_some_and(|shard| !shard.contains(&groups[&package.name]))
             {
                 continue;
@@ -135,9 +135,8 @@ fn shard_groups(
         package
             .versions
             .values()
-            .map(move |recipe| (&package.name, recipe.for_system(system)))
-            .filter(|(_, recipe)| recipe.systems.iter().any(|value| value == system))
-            .filter_map(|(name, recipe)| recipe.build.map(|build| (name, build)))
+            .filter_map(move |recipe| Some((&package.name, recipe.for_system(system)?)))
+            .filter_map(|(name, recipe)| recipe.build.as_ref().map(|build| (name, build)))
     });
     for (name, build) in sources {
         for dependency in &build.dependencies {
@@ -258,7 +257,7 @@ pub fn export_catalog_with_workers(
         .map(|options| cache::Cache::new(options, build_options))
         .transpose()?;
     let mut index = ArtifactIndex {
-        schema: ArtifactIndex::schema_for(catalog),
+        schema: 7,
         catalog: catalog.clone(),
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),
@@ -267,12 +266,12 @@ pub fn export_catalog_with_workers(
     let mut tasks = Vec::new();
     let mut failures = BTreeMap::new();
     for package in catalog.packages.values() {
-        for (version, recipe) in &package.versions {
-            let recipe = recipe.for_system(&context.system);
+        for (version, entry) in &package.versions {
             let key = format!("{}@{version}", package.name);
-            if !recipe.systems.contains(&context.system)
-                || shard.is_some_and(|shard| !shard.contains(&groups[&package.name]))
-            {
+            let Some(recipe) = entry.for_system(&context.system) else {
+                continue;
+            };
+            if shard.is_some_and(|shard| !shard.contains(&groups[&package.name])) {
                 continue;
             }
             let cached = (|| {
@@ -295,9 +294,10 @@ pub fn export_catalog_with_workers(
                         .insert(context.system.clone(), artifact);
                     eprintln!("REUSE {key} on {}", context.system);
                 }
-                Ok((inputs, None)) => {
-                    tasks.push((recipe.build.is_some(), (key, &package.name, recipe, inputs)))
-                }
+                Ok((inputs, None)) => tasks.push((
+                    recipe.build.is_some(),
+                    (key, &package.name, recipe, entry.revision, inputs),
+                )),
                 Err(error) => {
                     failures.insert(key, error);
                 }
@@ -318,7 +318,7 @@ pub fn export_catalog_with_workers(
         let session = rootbeer_build::BuildSession::default();
         let scheduled = tasks
             .iter()
-            .map(|(is_source, (key, _, recipe, _))| scheduler::Task {
+            .map(|(is_source, (key, _, recipe, _, _))| scheduler::Task {
                 key: key.clone(),
                 dependencies: recipe
                     .build
@@ -336,7 +336,9 @@ pub fn export_catalog_with_workers(
             .collect();
         let metadata: BTreeMap<_, _> = tasks
             .into_iter()
-            .map(|(_, (key, name, recipe, inputs))| (key, (name, recipe, inputs)))
+            .map(|(_, (key, name, recipe, revision, inputs))| {
+                (key, (name, recipe, revision, inputs))
+            })
             .collect();
         scheduler::run(
             scheduled,
@@ -348,7 +350,7 @@ pub fn export_catalog_with_workers(
                     .execution
                     .check()
                     .map_err(|error| error.to_string())?;
-                let (name, recipe, _) = &metadata[key];
+                let (name, recipe, revision, _) = &metadata[key];
                 let options = BuildOptions {
                     jobs,
                     downloads: cache_options
@@ -367,12 +369,19 @@ pub fn export_catalog_with_workers(
                 let work = tempfile::tempdir_in(staging.path()).map_err(|e| e.to_string())?;
                 let bundle = work.path().join("bundle");
                 publication::create_bundle(&bundle)?;
-                let artifact =
-                    export_recipe(&environment, key, name, recipe, work.path(), &bundle)?;
+                let artifact = export_recipe(
+                    &environment,
+                    key,
+                    name,
+                    recipe,
+                    *revision,
+                    work.path(),
+                    &bundle,
+                )?;
                 Ok((work, artifact))
             },
             |key, result| {
-                let (_, _, inputs) = &metadata[&key];
+                let (_, _, _, inputs) = &metadata[&key];
                 let result = result.and_then(|(work, artifact)| {
                     let bundle = work.path().join("bundle");
                     for (directory, extension) in [("receipts", ".json"), ("artifacts", ".tar.gz")]
@@ -460,7 +469,9 @@ pub(crate) fn export_inputs<'a>(
                     .ok_or("export dependencies must use exact versions")?,
             )
             .ok_or_else(|| format!("unknown recipe {key}"))?;
-        let recipe = recipe.for_system(&ResolveContext::current().system);
+        let Some(recipe) = recipe.for_system(&ResolveContext::current().system) else {
+            continue;
+        };
         needs_aqua |= recipe.build.is_none()
             && recipe
                 .source
@@ -503,6 +514,7 @@ fn export_recipe(
     key: &str,
     package_name: &str,
     recipe: &CatalogRecipe,
+    revision: u32,
     root: &Path,
     destination: &Path,
 ) -> Result<PublishedArtifact, String> {
@@ -571,7 +583,7 @@ fn export_recipe(
                 &downloads,
             )?;
         }
-        let mut receipt = serde_json::json!({"schema": 1, "catalog_sha256": catalog.sha256(), "revision": recipe.revision, "system": context.system, "package": locked, "proof": resolution.proof, "resolver_inputs": inputs});
+        let mut receipt = serde_json::json!({"schema": 1, "catalog_sha256": catalog.sha256(), "revision": revision, "system": context.system, "package": locked, "proof": resolution.proof, "resolver_inputs": inputs});
         if build_options.is_isolated {
             receipt["isolation"] = rootbeer_build::Sandbox::identity()?.into();
             receipt["environment"] = serde_json::to_value(&build_options.environment)
@@ -583,7 +595,7 @@ fn export_recipe(
         }
         let receipt = serde_json::to_vec(&receipt).map_err(|e| e.to_string())?;
         let artifact = PublishedArtifact {
-            revision: recipe.revision,
+            revision,
             receipt_sha256: hash_bytes(&receipt),
             package: locked,
         };
@@ -638,7 +650,11 @@ fn export_recipe(
         symlink(path, profile.join(name)).map_err(|e| e.to_string())?;
     }
     if fs::read(&path).map_err(|e| e.to_string())? != locked_bytes
-        || recipe.bins.iter().any(|bin| !profile.join(bin).is_file())
+        || recipe
+            .bins
+            .names()
+            .iter()
+            .any(|bin| !profile.join(bin).is_file())
     {
         return Err(format!(
             "{key}: offline replay changed the lock or lost commands"
