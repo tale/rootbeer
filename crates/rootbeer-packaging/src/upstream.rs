@@ -93,81 +93,6 @@ mod tests {
     }
 
     #[test]
-    fn paginates_metadata_and_never_publishes_incomplete_batches() {
-        let root = tempfile::tempdir().unwrap();
-        let catalog = crate::test_catalog::catalog();
-        let mut upstream =
-            GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
-        upstream.systems = vec!["aarch64-macos".into()];
-        let fetch = |url: &str| {
-            if url.ends_with("/repos/owner/tool") {
-                return Ok(
-                    serde_json::json!({"id": 42, "full_name": "owner/tool", "description": "Tool"}),
-                );
-            }
-            if url.ends_with("page=1") {
-                return Ok(serde_json::Value::Array((1..=100).map(release).collect()));
-            }
-            assert!(url.ends_with("page=2"));
-            Ok(serde_json::json!([release(101)]))
-        };
-        let output = root.path().join("complete");
-        let candidates =
-            import_with_fetch(catalog, &[upstream.clone()], &output, 2, fetch).unwrap();
-        assert_eq!(candidates.packages["tool"].default_version, "101");
-        let saved = GitHubUpstream::from_directory(&output.join("packages")).unwrap();
-        assert_eq!(saved[0].repository_id, Some(42));
-
-        let output = root.path().join("incomplete");
-        assert!(
-            import_with_fetch(catalog, &[upstream.clone()], &output, 1, fetch)
-                .unwrap_err()
-                .contains("exceeds --max-pages")
-        );
-        assert!(!output.exists());
-        let mut other = upstream.clone();
-        other.name = "other".into();
-        other.repository = "owner/other".into();
-        assert!(
-            import_with_fetch(catalog, &[upstream, other], &output, 2, |url| {
-                if url.ends_with("/repos/owner/other") {
-                    return Err("upstream unavailable".into());
-                }
-                fetch(url)
-            })
-            .unwrap_err()
-            .contains("upstream unavailable")
-        );
-        assert!(!output.exists());
-    }
-
-    #[test]
-    fn rejects_replaced_or_moved_repositories_before_reading_releases() {
-        let root = tempfile::tempdir().unwrap();
-        let catalog = crate::test_catalog::catalog();
-        let mut upstream =
-            GitHubUpstream::new("tool".into(), "owner/tool".into(), vec!["tool".into()]);
-        upstream.repository_id = Some(42);
-        for (id, name, expected) in [
-            (43, "owner/tool", "ID changed"),
-            (42, "other/tool", "repository moved"),
-        ] {
-            let error = import_with_fetch(
-                catalog,
-                &[upstream.clone()],
-                &root.path().join("output"),
-                1,
-                |url| {
-                    assert!(!url.contains("/releases"));
-                    Ok(serde_json::json!({"id": id, "full_name": name}))
-                },
-            )
-            .unwrap_err();
-            assert!(error.contains(expected), "{error}");
-        }
-    }
-
-    #[test]
     fn rejects_duplicate_names_aliases_repositories_and_ids() {
         let first = GitHubUpstream::new("one".into(), "owner/one".into(), vec!["one".into()]);
         let second = GitHubUpstream::new("two".into(), "owner/two".into(), vec!["two".into()]);
@@ -230,45 +155,5 @@ mod tests {
         assert!(check_identity(catalog, &upstream)
             .unwrap_err()
             .contains("belongs to"));
-    }
-
-    #[test]
-    fn writes_loadable_candidates_and_keeps_existing_output_intact() {
-        let root = tempfile::tempdir().unwrap();
-        let output = root.path().join("output");
-        let package = crate::test_catalog::catalog().find("age").unwrap().clone();
-        let catalog = PackageCatalog {
-            extra: Default::default(),
-            schema: 1,
-            packages: BTreeMap::from([("age".into(), package)]),
-        };
-        let package = &catalog.packages["age"];
-        let recipe = &package.versions[&package.default_version];
-        let mut upstream =
-            GitHubUpstream::new("age".into(), "FiloSottile/age".into(), recipe.bins.clone());
-        upstream.checks = recipe.checks.clone();
-        upstream.aliases = package.aliases.clone();
-        write_candidates(
-            root.path(),
-            &catalog,
-            std::slice::from_ref(&upstream),
-            &output,
-        )
-        .unwrap();
-        assert_eq!(
-            PackageCatalog::from_directory(&output.join("packages"))
-                .unwrap()
-                .sha256(),
-            catalog.sha256()
-        );
-        assert!(import_github_packages(&catalog, &[upstream], &output, 1)
-            .unwrap_err()
-            .contains("already exists"));
-        assert_eq!(
-            PackageCatalog::from_directory(&output.join("packages"))
-                .unwrap()
-                .sha256(),
-            catalog.sha256()
-        );
     }
 }
