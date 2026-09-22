@@ -4,8 +4,6 @@ use std::path::PathBuf;
 use clap::{Args as ClapArgs, Subcommand};
 use rootbeer_packaging::{PackageCatalog, PackageDefinition};
 
-mod import;
-
 #[derive(ClapArgs, Debug)]
 pub struct Args {
     /// Read package definitions from an index checkout
@@ -82,10 +80,6 @@ enum Command {
         public_key: String,
     },
     /// Add inferred update rules to copies of the selected catalog's GitHub packages
-    SeedUpstreams {
-        #[arg(long)]
-        output: PathBuf,
-    },
     /// Check tracked upstreams, caching metadata and reporting independent failures
     Updates {
         #[arg(long)]
@@ -96,7 +90,6 @@ enum Command {
         max_pages: usize,
     },
     /// Discover GitHub releases and generate complete candidate package definitions
-    Import(Box<import::ImportArgs>),
     /// List canonical names, approved defaults, and descriptions
     List,
     /// Show a package's identity and version recipes, accepting aliases
@@ -408,11 +401,6 @@ fn execute(args: Args) -> Result<(), String> {
             let reference = rootbeer_packaging::push_package(&release, &public_key)?;
             writeln!(output, "published {reference}").map_err(|error| error.to_string())?;
         }
-        Command::SeedUpstreams { output } => {
-            let count = rootbeer_packaging::seed_upstreams(catalog()?, &output)?;
-            writeln!(io::stdout(), "Seeded {count} GitHub upstream definitions")
-                .map_err(|e| e.to_string())?;
-        }
         Command::Updates {
             cache,
             output,
@@ -438,24 +426,6 @@ fn execute(args: Args) -> Result<(), String> {
             if !report.errors.is_empty() {
                 return Err("some upstreams failed; see the discovery report".into());
             }
-        }
-        Command::Import(args) => {
-            let candidates = import::run(*args, catalog()?)?;
-            for package in candidates.packages.values() {
-                writeln!(
-                    output,
-                    "{}: default {}",
-                    package.name, package.default_version
-                )
-                .map_err(|e| e.to_string())?;
-                for (system, version) in &package.default_versions {
-                    writeln!(output, "  {system}: {version}").map_err(|e| e.to_string())?;
-                }
-            }
-            eprintln!(
-                "Generated {} candidate packages; run package export on each declared platform before publication.",
-                candidates.packages.len()
-            );
         }
         Command::List => {
             let system = rootbeer_packaging::ResolveContext::current().system;

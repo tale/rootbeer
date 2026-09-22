@@ -23,67 +23,6 @@ pub struct UpdateReport {
     metadata: Statistics,
 }
 
-/// Seeds reusable rules from GitHub-backed defaults without requesting network metadata.
-/// Source-built and other backend packages are omitted; the destination must be new.
-pub fn seed_upstreams(catalog: &PackageCatalog, output: &Path) -> Result<usize, String> {
-    catalog.validate()?;
-    let staging = crate::staging::staging(output)?;
-    let destination = staging.path().join("packages");
-    fs::create_dir(&destination).map_err(|e| e.to_string())?;
-    let mut definitions = Vec::new();
-    for package in catalog.packages.values() {
-        let recipe = &package.versions[&package.default_version];
-        let Some(source) = recipe.source.as_deref() else {
-            continue;
-        };
-        let request = PackageRequest::parse(source);
-        if request.resolver.as_deref() != Some("github") {
-            continue;
-        }
-        let mut definition =
-            GitHubUpstream::new(package.name.clone(), request.name, recipe.bins.clone());
-        definition.aliases = package.aliases.clone();
-        definition.description = Some(package.description.clone());
-        definition.homepage = Some(package.homepage.clone());
-        definition.checks = recipe.checks.clone();
-        definition.bin_paths = recipe.bin_paths.clone();
-        definition.apps = recipe.apps.clone();
-        definition.mirror = recipe.mirror;
-        definition.systems = package
-            .versions
-            .values()
-            .flat_map(|recipe| recipe.systems.iter().cloned())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let tag = request.version.ok_or("GitHub recipe has no tag")?;
-        let prefix = tag.strip_suffix(&package.default_version).ok_or_else(|| {
-            format!(
-                "{}: tag cannot be mapped to its canonical version",
-                package.name
-            )
-        })?;
-        definition.tag_prefix = Some(prefix.into());
-        definitions.push(definition);
-    }
-    validate_definitions(&definitions)?;
-    for definition in &definitions {
-        fs::write(
-            destination.join(format!("{}.lua", definition.name)),
-            crate::PackageDefinition::with_github_upstream(
-                catalog.packages[&definition.name].clone(),
-                definition,
-            )?
-            .to_lua()?,
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    fs::rename(destination, output).map_err(|e| e.to_string())?;
-    Ok(definitions.len())
-}
-
-/// Discovers each tracked project independently using conditional cached API requests.
-/// Writes only changed candidate recipes, saved rules, and a consolidated JSON/Markdown report.
 pub fn discover_updates(
     catalog: &PackageCatalog,
     definitions: &[GitHubUpstream],
@@ -109,7 +48,10 @@ pub fn discover_definition_updates(
     output: &Path,
     max_pages: usize,
 ) -> Result<UpdateReport, String> {
-    let upstreams = GitHubUpstream::from_definitions(definitions)?;
+    let upstreams: Vec<GitHubUpstream> = definitions
+        .values()
+        .filter_map(|definition| definition.github_rules())
+        .collect();
     discover_cached(catalog, &upstreams, definitions, cache, output, max_pages)
 }
 
@@ -175,8 +117,19 @@ fn discover_with_fetch(
             "Discover {} from {}",
             definition.name, definition.repository
         );
-        let result = discover_package(&combined, definition, max_pages, &mut fetch).and_then(
-            |(upstream, package)| {
+        let mut recipe = match templates.get(&definition.name) {
+            Some(recipe) => (*recipe).clone(),
+            None => {
+                report.errors.insert(
+                    definition.name.clone(),
+                    "discovery requires an authored recipe".into(),
+                );
+                continue;
+            }
+        };
+        let result = discover_package(&combined, definition, &mut recipe, max_pages, &mut fetch)
+            .and_then(|upstream| {
+                let package = recipe.package.clone();
                 let id = upstream.repository_id.unwrap();
                 if let Some(name) = identities.get(&id) {
                     return Err(format!("repository is already tracked as `{name}`"));
@@ -189,8 +142,7 @@ fn discover_with_fetch(
                 identities.insert(id, package.name.clone());
                 combined = candidate;
                 Ok((upstream, package))
-            },
-        );
+            });
         let (upstream, package) = match result {
             Ok(result) => result,
             Err(error) => {
@@ -219,15 +171,11 @@ fn discover_with_fetch(
             report.rules_changed.push(upstream.name.clone());
         }
         if is_changed || has_rule_changes {
-            let definition = match templates.get(&package.name) {
-                Some(definition) => definition.with_updates(package, &upstream)?,
-                None => PackageDefinition::with_github_upstream(package, &upstream)?,
-            };
             fs::write(
                 destination
                     .join("packages")
-                    .join(format!("{}.lua", definition.package.name)),
-                definition.to_lua()?,
+                    .join(format!("{}.lua", package.name)),
+                recipe.to_lua()?,
             )
             .map_err(|e| e.to_string())?;
         }
@@ -258,10 +206,9 @@ fn discover_with_fetch(
 
 fn platform_defaults(package: &CatalogPackage) -> BTreeMap<String, String> {
     package
-        .versions
-        .values()
-        .flat_map(|recipe| &recipe.systems)
-        .map(|system| (system.clone(), package.default_version_for(system).into()))
+        .default_versions
+        .iter()
+        .map(|(system, version)| (system.clone(), version.clone()))
         .collect()
 }
 
@@ -463,22 +410,5 @@ mod tests {
                 serde_json::to_value(&catalog.packages["tool"].versions["1"]).unwrap(),
             );
         }
-    }
-
-    #[test]
-    fn seeds_only_github_projects_and_preserves_functional_checks() {
-        let root = tempfile::tempdir().unwrap();
-        let output = root.path().join("upstreams");
-        let catalog = crate::test_catalog::catalog();
-        let count = seed_upstreams(catalog, &output).unwrap();
-        let definitions = GitHubUpstream::from_directory(&output).unwrap();
-        assert_eq!(count, definitions.len());
-        assert!(!definitions.iter().any(|definition| definition.name == "xz"));
-        let age = definitions
-            .iter()
-            .find(|definition| definition.name == "age")
-            .unwrap();
-        assert_eq!(age.bins, ["age", "age-keygen"]);
-        assert_eq!(age.tag_prefix.as_deref(), Some("v"));
     }
 }

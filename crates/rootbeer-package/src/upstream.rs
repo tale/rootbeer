@@ -35,14 +35,8 @@ pub struct GitHubUpstream {
     pub assets: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<crate::SourceBuild>,
-    pub bins: Vec<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub bin_paths: BTreeMap<String, PathBuf>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub apps: BTreeMap<String, PathBuf>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub mirror: bool,
-    pub checks: Vec<Vec<String>>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -57,11 +51,7 @@ fn supported_systems() -> Vec<String> {
 
 impl GitHubUpstream {
     /// Creates discovery rules with version checks for explicitly selected commands.
-    pub fn new(name: String, repository: String, bins: Vec<String>) -> Self {
-        let checks = bins
-            .iter()
-            .map(|bin| vec![bin.clone(), "--version".into()])
-            .collect();
+    pub fn new(name: String, repository: String) -> Self {
         Self {
             name,
             repository,
@@ -74,11 +64,7 @@ impl GitHubUpstream {
             systems: supported_systems(),
             assets: BTreeMap::new(),
             build: None,
-            bins,
-            bin_paths: BTreeMap::new(),
-            apps: BTreeMap::new(),
             mirror: false,
-            checks,
         }
     }
 
@@ -113,25 +99,6 @@ impl GitHubUpstream {
                         .into(),
                 );
             }
-        }
-        if !self.bins.is_empty()
-            || !self.checks.is_empty()
-            || self.apps.is_empty()
-                && self
-                    .build
-                    .as_ref()
-                    .is_none_or(|build| build.libraries.is_empty())
-        {
-            super::catalog::validate_commands(&self.bins, &self.checks)?;
-        }
-        super::catalog::validate_apps(&self.apps)?;
-        if !self.apps.is_empty()
-            && self
-                .systems
-                .iter()
-                .any(|system| !system.ends_with("-macos"))
-        {
-            return Err("application exports require macOS-only upstream systems".into());
         }
         for (system, pattern) in &self.assets {
             if !self.systems.contains(system) || pattern.trim().is_empty() {

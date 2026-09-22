@@ -179,6 +179,36 @@ impl Outputs {
 }
 
 impl Recipe {
+    pub(super) fn insert_version(
+        &mut self,
+        version: &str,
+        digests: BTreeMap<String, String>,
+        license: Option<String>,
+    ) {
+        let entry = self.versions.entry(version.to_string()).or_default();
+        entry.digests = digests;
+        if license.is_some() {
+            entry.license = license;
+        }
+    }
+
+    pub(super) fn set_default_version(
+        &mut self,
+        system: &str,
+        version: &str,
+    ) -> Result<(), String> {
+        let platform = self
+            .platforms
+            .get_mut(system)
+            .ok_or_else(|| format!("{}: {system} is not a declared platform", self.name))?;
+        platform.default_version = version.to_string();
+        Ok(())
+    }
+
+    pub(super) fn platform_names(&self) -> Vec<String> {
+        self.platforms.keys().cloned().collect()
+    }
+
     pub(super) fn expand(&self) -> Result<super::PackageDefinition, String> {
         if self.platforms.is_empty() {
             return Err("a recipe declares at least one platform".into());

@@ -10,7 +10,7 @@ use std::path::Path;
 mod generate;
 mod metadata;
 mod updates;
-pub use updates::{discover_definition_updates, discover_updates, seed_upstreams, UpdateReport};
+pub use updates::{discover_definition_updates, discover_updates, UpdateReport};
 
 #[derive(Debug, Deserialize)]
 struct Repository {
@@ -20,70 +20,19 @@ struct Repository {
     homepage: Option<String>,
 }
 
-/// Generates a new candidate directory containing pinned recipes and reusable upstream rules.
-/// Existing catalogs and output paths are never overwritten. Candidates still require export checks.
-pub fn import_github_packages(
-    catalog: &PackageCatalog,
-    definitions: &[GitHubUpstream],
-    output: &Path,
-    max_pages: usize,
-) -> Result<PackageCatalog, String> {
-    import_with_fetch(catalog, definitions, output, max_pages, |url| {
-        read_json_url(url).map_err(|e| e.to_string())
-    })
-}
-
-fn import_with_fetch(
-    catalog: &PackageCatalog,
-    definitions: &[GitHubUpstream],
-    output: &Path,
-    max_pages: usize,
-    mut fetch: impl FnMut(&str) -> Result<serde_json::Value, String>,
-) -> Result<PackageCatalog, String> {
-    validate_definitions(definitions)?;
-    if definitions.is_empty() {
-        return Err("no upstream definitions supplied".into());
-    }
-    if !(1..=100).contains(&max_pages) {
-        return Err("max-pages must be between 1 and 100".into());
-    }
-    for upstream in definitions {
-        check_identity(catalog, upstream)?;
-    }
-    let staging = crate::staging::staging(output)?;
-    let mut resolved = Vec::new();
-    let mut candidates = PackageCatalog {
-        extra: Default::default(),
-        schema: 1,
-        packages: BTreeMap::new(),
-    };
-    let mut combined = catalog.clone();
-    for definition in definitions {
-        eprintln!(
-            "Discover {} from {}",
-            definition.name, definition.repository
-        );
-        let (upstream, package) = discover_package(catalog, definition, max_pages, &mut fetch)?;
-        combined
-            .packages
-            .insert(package.name.clone(), package.clone());
-        candidates.packages.insert(package.name.clone(), package);
-        resolved.push(upstream);
-    }
-    validate_definitions(&resolved)?;
-    combined.validate()?;
-    candidates.validate()?;
-    write_candidates(staging.path(), &candidates, &resolved, output)?;
-    Ok(candidates)
-}
-
 fn discover_package(
     catalog: &PackageCatalog,
     definition: &GitHubUpstream,
+    recipe: &mut rootbeer_package::PackageDefinition,
     max_pages: usize,
     fetch: &mut impl FnMut(&str) -> Result<serde_json::Value, String>,
-) -> Result<(GitHubUpstream, CatalogPackage), String> {
-    check_identity(catalog, definition)?;
+) -> Result<GitHubUpstream, String> {
+    check_identity(
+        catalog,
+        &definition.name,
+        &definition.repository,
+        definition.build.is_some(),
+    )?;
     let mut upstream = definition.clone();
     let url = format!("https://api.github.com/repos/{}", upstream.repository);
     let repository: Repository = serde_json::from_value(fetch(&url)?).map_err(|e| e.to_string())?;
@@ -117,53 +66,18 @@ fn discover_package(
             return Err(format!("{}: release history exceeds --max-pages {max_pages}; increase it to avoid incomplete version selection", upstream.name));
         }
     }
-    let existing = catalog.packages.get(&upstream.name);
-    let package = if upstream.build.is_some() {
+    if upstream.build.is_some() {
         let cache = rootbeer_package::download::DownloadCache::default();
-        generate::source_package(
-            &upstream,
-            &releases,
-            existing.ok_or("source discovery requires an existing source recipe")?,
-            |url| {
-                cache
-                    .materialize(url, None)
-                    .map(|file| file.sha256)
-                    .map_err(|error| error.to_string())
-            },
-        )?
+        generate::source_package(&upstream, &releases, recipe, |url| {
+            cache
+                .materialize(url, None)
+                .map(|file| file.sha256)
+                .map_err(|error| error.to_string())
+        })?;
     } else {
-        generate::package(&mut upstream, &repository, &releases, existing)?
-    };
-    Ok((upstream, package))
-}
-
-fn write_candidates(
-    staging: &Path,
-    candidates: &PackageCatalog,
-    definitions: &[GitHubUpstream],
-    output: &Path,
-) -> Result<(), String> {
-    let root = staging.join("candidates");
-    fs::create_dir(&root).map_err(|e| e.to_string())?;
-    fs::create_dir(root.join("packages")).map_err(|e| e.to_string())?;
-    for package in candidates.packages.values() {
-        let upstream = definitions
-            .iter()
-            .find(|upstream| upstream.name == package.name)
-            .ok_or("candidate has no update rules")?;
-        let definition = super::PackageDefinition::with_github_upstream(package.clone(), upstream)?;
-        fs::write(
-            root.join("packages").join(format!("{}.lua", package.name)),
-            definition.to_lua()?,
-        )
-        .map_err(|e| e.to_string())?;
+        generate::package(&mut upstream, &repository, &releases, recipe)?;
     }
-    let loaded = PackageCatalog::from_directory(&root.join("packages"))?;
-    if loaded.sha256() != candidates.sha256() {
-        return Err("generated Lua differs from candidate catalog".into());
-    }
-    GitHubUpstream::from_directory(&root.join("packages"))?;
-    fs::rename(root, output).map_err(|e| e.to_string())
+    Ok(upstream)
 }
 
 #[cfg(test)]
