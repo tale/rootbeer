@@ -5,6 +5,7 @@ use std::process::Command;
 use rootbeer_package::distribution::{BuildProvenance, PackageProvenance, PackageRecord};
 use rootbeer_package::{
     BuildArtifact, CatalogPackage, CatalogRecipe, LockedSource, PackageCatalog, PackageRealizer,
+    PublishedArtifact,
 };
 use rootbeer_store::{hash_bytes, Store};
 
@@ -56,11 +57,9 @@ pub fn release_package(
         staging.path().join("downloads"),
         staging.path().join("install"),
     );
-    let record = if recipe.build.is_some() {
+    let qualified = if recipe.build.is_some() {
         prepare_source(
             definition,
-            &recipe,
-            revision,
             receipt,
             &receipt_bytes,
             registry,
@@ -79,8 +78,14 @@ pub fn release_package(
         )?
     };
     let record = PackageRecord {
-        published: Some(signer.published),
-        ..record
+        extra: Default::default(),
+        schema: 2,
+        system: qualified.system,
+        revision,
+        recipe,
+        artifact: qualified.artifact,
+        provenance: qualified.provenance,
+        published: signer.published,
     };
     if expected_inputs.is_some_and(|expected| record.input_key() != expected) {
         return Err("receipt differs from the planned package inputs".into());
@@ -94,16 +99,21 @@ pub fn release_package(
     Ok(format!("ghcr://{registry}@sha256:{digest}"))
 }
 
+/// A package checked against its receipt, before anyone has approved it.
+struct Qualified {
+    system: String,
+    artifact: PublishedArtifact,
+    provenance: PackageProvenance,
+}
+
 fn prepare_source(
     definition: &CatalogPackage,
-    recipe: &CatalogRecipe,
-    revision: u32,
     receipt: &Path,
     receipt_bytes: &[u8],
     registry: &str,
     destination: &Path,
     realizer: &PackageRealizer,
-) -> Result<PackageRecord, String> {
+) -> Result<Qualified, String> {
     fs::create_dir(destination.join("artifacts")).map_err(|error| error.to_string())?;
     let build: BuildArtifact =
         serde_json::from_slice(receipt_bytes).map_err(|error| error.to_string())?;
@@ -151,13 +161,8 @@ fn prepare_source(
     )
     .map_err(|error| error.to_string())?;
     fs::remove_dir(destination.join("artifacts")).map_err(|error| error.to_string())?;
-    Ok(PackageRecord {
-        extra: Default::default(),
-        schema: 1,
-        published: None,
-        revision,
+    Ok(Qualified {
         system,
-        recipe: recipe.clone(),
         artifact,
         provenance: PackageProvenance::Source(Box::new(provenance)),
     })
@@ -171,7 +176,7 @@ fn prepare_binary(
     registry: &str,
     destination: &Path,
     realizer: &PackageRealizer,
-) -> Result<PackageRecord, String> {
+) -> Result<Qualified, String> {
     let receipt: crate::prepare::BinaryReceipt =
         serde_json::from_slice(receipt_bytes).map_err(|error| error.to_string())?;
     if receipt.schema != 1
@@ -201,22 +206,16 @@ fn prepare_binary(
         url: format!("ghcr://{registry}@sha256:{sha256}"),
         sha256: sha256.clone(),
     };
-    let record = PackageRecord {
-        extra: Default::default(),
-        schema: 1,
-        published: None,
-        revision,
+    let qualified = Qualified {
         system: receipt.system,
-        recipe: recipe.clone(),
-        artifact: rootbeer_package::PublishedArtifact {
+        artifact: PublishedArtifact {
             revision,
             receipt_sha256: hash_bytes(receipt_bytes),
             package,
         },
         provenance: PackageProvenance::Upstream(Box::new(receipt.provenance)),
     };
-    record.validate()?;
-    let mut local = record.artifact.package.clone();
+    let mut local = qualified.artifact.package.clone();
     local.source = LockedSource::File {
         path: archive,
         sha256,
@@ -224,7 +223,7 @@ fn prepare_binary(
     realizer
         .realize(&local)
         .map_err(|error| error.to_string())?;
-    Ok(record)
+    Ok(qualified)
 }
 
 /// Uploads a verified package release as an OCI artifact, retaining all three blobs together.
@@ -376,7 +375,7 @@ mod tests {
             &build.system,
         )
         .unwrap();
-        assert_eq!(record.published, Some(1));
+        assert_eq!(record.published, 1);
         assert_eq!(fs::read_dir(&release).unwrap().count(), 3);
         assert!(!String::from_utf8(bytes).unwrap().contains("catalog_sha256"));
 
