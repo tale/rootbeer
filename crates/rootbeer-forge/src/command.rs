@@ -76,8 +76,6 @@ enum Command {
         #[arg(long)]
         site: PathBuf,
         #[arg(long)]
-        site_url: String,
-        #[arg(long)]
         key: PathBuf,
         #[arg(long)]
         public_key: String,
@@ -342,7 +340,6 @@ fn execute(args: Args) -> Result<(), String> {
             mut record,
             records,
             site,
-            site_url,
             key,
             public_key,
         } => {
@@ -355,19 +352,10 @@ fn execute(args: Args) -> Result<(), String> {
                 }
             }
             let key = std::fs::read(key).map_err(|error| error.to_string())?;
-            let count = rootbeer_packaging::publish_records(
-                catalog()?,
-                &record,
-                &site,
-                &site_url,
-                &key,
-                &public_key,
-            )?;
-            writeln!(
-                output,
-                "published discovery for {count} package/platform records"
-            )
-            .map_err(|error| error.to_string())?;
+            let count =
+                rootbeer_packaging::publish_records(catalog()?, &record, &site, &key, &public_key)?;
+            writeln!(output, "published {count} package platforms")
+                .map_err(|error| error.to_string())?;
         }
         Command::Release {
             recipe,

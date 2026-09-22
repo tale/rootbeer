@@ -2077,6 +2077,7 @@ dependencies = [
  "proc-macro2",
  "ring",
  "rootbeer-build",
+ "rootbeer-catalog",
  "rootbeer-package",
  "rootbeer-store",
  "serde",
