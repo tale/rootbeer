@@ -44,9 +44,6 @@ pub fn plan_packages(
                 "{id}: separate dependency results are not supported yet"
             ));
         }
-        if !recipe.systems.contains(&system) {
-            continue;
-        }
         let engine =
             rootbeer_build::engine_identity(recipe.build.as_ref().map(|build| &build.backend));
         let environment = match environments.get(&engine) {

@@ -31,7 +31,7 @@ pub fn bundle_artifacts(
         staging.path().join("install"),
     );
     let mut index = ArtifactIndex {
-        schema: ArtifactIndex::schema_for(catalog),
+        schema: 7,
         catalog: catalog.clone(),
         catalog_sha256: catalog.sha256(),
         artifacts: BTreeMap::new(),
@@ -231,20 +231,22 @@ fn validate_base_url(url: &str) -> Result<(), String> {
 
 fn validate_receipt(catalog: &PackageCatalog, receipt: &BuildArtifact) -> Result<(), String> {
     let package = &receipt.package;
-    let recipe = catalog
+    let entry = catalog
         .packages
         .get(&package.name)
         .and_then(|entry| entry.versions.get(&package.version))
-        .ok_or_else(|| format!("{}: no matching catalog recipe", package.id()))?
-        .for_system(&receipt.system);
+        .ok_or_else(|| format!("{}: no matching catalog recipe", package.id()))?;
+    let revision = entry.revision;
+    let recipe = entry
+        .for_system(&receipt.system)
+        .ok_or_else(|| format!("{}: no recipe for {}", package.id(), receipt.system))?;
     let Some(build) = &recipe.build else {
         return Err(format!("{}: not a source recipe", package.id()));
     };
     if !matches!(receipt.schema, 1 | 2)
         || (receipt.schema < 2 && !package.runtime_dependencies.is_empty())
-        || receipt.revision != recipe.revision
+        || receipt.revision != revision
         || receipt.recipe_sha256 != recipe.sha256()
-        || !recipe.systems.contains(&receipt.system)
         || serde_json::to_value(&receipt.build).map_err(|e| e.to_string())?
             != serde_json::to_value(build).map_err(|e| e.to_string())?
     {
@@ -264,11 +266,12 @@ fn validate_receipt(catalog: &PackageCatalog, receipt: &BuildArtifact) -> Result
             .is_none_or(|sha| !is_sha256(sha))
         || !matches!(&package.source, LockedSource::File { sha256, .. } if is_sha256(sha256))
         || package.provides.apps != recipe.apps
-        || package.provides.bins.len() != recipe.bins.len()
+        || package.provides.bins.len() != recipe.bins.names().len()
         || recipe
             .bins
+            .names()
             .iter()
-            .any(|bin| package.provides.bins.get(bin) != Some(&PathBuf::from("bin").join(bin)))
+            .any(|bin| package.provides.bins.get(*bin) != Some(&PathBuf::from("bin").join(bin)))
     {
         return Err(format!(
             "{}: invalid artifact hash, layout, or commands",

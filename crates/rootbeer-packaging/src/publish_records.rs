@@ -98,9 +98,12 @@ pub fn publish_records(
                         id,
                         system,
                     )?;
+                    let (_, _, approved_version) =
+                        rootbeer_package::graph::find_recipe_definition(&index.catalog, id)?;
                     let record = PackageRecord {
                         extra: Default::default(),
                         schema: 1,
+                        revision: approved_version.revision,
                         system: system.clone(),
                         recipe: approved.clone(),
                         artifact: artifact.clone(),
@@ -194,12 +197,15 @@ pub fn publish_records(
                         .get(&format!("{}@{version}", package.name))
                         .is_some_and(|platforms| platforms.contains_key(system))
                 };
-                let preferred = package.default_version_for(system);
-                let retained = old.default_version_for(system);
+                let (Some(preferred), Some(retained)) = (
+                    package.default_version_for(system),
+                    old.default_version_for(system),
+                ) else {
+                    continue;
+                };
                 if !available(preferred) && available(retained) {
-                    package
-                        .default_versions
-                        .insert(system.into(), retained.into());
+                    let retained = retained.to_string();
+                    package.default_versions.insert(system.into(), retained);
                 }
             }
         }
