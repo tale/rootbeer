@@ -19,6 +19,10 @@ pub struct PackageRecord {
     pub recipe: CatalogRecipe,
     pub artifact: PublishedArtifact,
     pub provenance: PackageProvenance,
+    /// When the publisher signed this record, in Unix seconds. Not an input: re-signing the
+    /// same qualification at another time must not look like a different build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published: Option<u64>,
     #[serde(flatten, default, skip_serializing_if = "crate::ExtraFields::is_empty")]
     pub extra: crate::ExtraFields,
 }
@@ -332,6 +336,7 @@ mod tests {
         let record = PackageRecord {
             extra: Default::default(),
             schema: 1,
+            published: Some(1),
             system: "aarch64-linux".into(),
             revision: index.catalog.packages[&package.name].versions[&package.version].revision,
             recipe: index.catalog.packages[&package.name].versions[&package.version]
@@ -387,7 +392,9 @@ mod tests {
         assert!(verify_record(&bytes, &key, "another@1", "aarch64-linux").is_err());
         assert!(verify_record(&bytes, &key, &id, "aarch64-macos").is_err());
 
+        assert_eq!(record.published, Some(1));
         for (from, to) in [
+            (r#""published":1"#, r#""published":2"#),
             ("host", "sandbox"),
             ("aarch64-linux", "x86_64-linux"),
             ("test compiler", "another compiler"),
@@ -410,6 +417,17 @@ mod tests {
             "aarch64-linux"
         )
         .is_err());
+    }
+
+    #[test]
+    fn publication_time_is_signed_but_is_not_an_input() {
+        let (bytes, key, id) = signed();
+        let record = verify_record(&bytes, &key, &id, "aarch64-linux").unwrap();
+        let backfilled = PackageRecord {
+            published: Some(1_600_000_000),
+            ..record.clone()
+        };
+        assert_eq!(backfilled.input_key(), record.input_key());
     }
 
     #[test]

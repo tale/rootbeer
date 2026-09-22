@@ -25,7 +25,7 @@ pub use publication::{
     assemble_indexes, publish_index, verify_bundle, verify_candidate, PublishOptions,
 };
 pub use publish_records::publish_records;
-pub use release::{push_package, release_package};
+pub use release::{push_package, release_package, Signer};
 
 mod sign;
 pub use sign::{sign_index, sign_package_record};

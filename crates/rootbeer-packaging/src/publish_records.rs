@@ -103,6 +103,7 @@ pub fn publish_records(
                     let record = PackageRecord {
                         extra: Default::default(),
                         schema: 1,
+                        published: None,
                         revision: approved_version.revision,
                         system: system.clone(),
                         recipe: approved.clone(),
