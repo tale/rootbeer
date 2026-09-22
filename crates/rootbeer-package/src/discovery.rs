@@ -51,10 +51,8 @@ pub(crate) fn signing_message<C: Serialize, R: Serialize>(
     catalog: &C,
     records: &R,
 ) -> Result<Vec<u8>, String> {
-    let mut value = serde_json::to_value(("rootbeer-discovery-v1", sequence, catalog, records))
-        .map_err(|error| error.to_string())?;
-    value.sort_all_objects();
-    serde_json::to_vec(&value).map_err(|error| error.to_string())
+    rootbeer_catalog::canonical_json(&("rootbeer-discovery-v1", sequence, catalog, records))
+        .map_err(|error| error.to_string())
 }
 
 fn signed_sequence(value: &serde_json::Value) -> Result<u64, String> {

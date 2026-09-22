@@ -5,7 +5,7 @@ use std::process::Command;
 use rootbeer_package::download::DownloadCache;
 use rootbeer_package::index::IndexResolver;
 use rootbeer_package::*;
-use rootbeer_store::{hash_bytes, hash_file};
+use rootbeer_store::hash_file;
 
 /// Resolves Rootbeer itself and nothing else; see [`rootbeer_package::self_update`].
 pub fn self_update_resolver_stack(inputs: &PackageResolverInputs) -> ResolverStack {
@@ -201,8 +201,7 @@ impl PackageResolver for SourceResolver {
             .build
             .as_mut()
             .ok_or_else(|| format!("{key} is prebuilt-only; no source build is declared"))?;
-        let recipe_sha256 =
-            hash_bytes(&serde_json::to_vec(&original).map_err(|error| error.to_string())?);
+        let recipe_sha256 = original.sha256();
         let state = &self.state;
         let downloads = state.join("downloads");
         let mut version = version.to_string();

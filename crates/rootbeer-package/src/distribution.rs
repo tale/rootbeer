@@ -98,16 +98,14 @@ impl PackageRecord {
                 environment,
             );
         }
-        crate::store::hash_bytes(
-            &serde_json::to_vec(&(
-                "rootbeer-retained-package-v1",
-                &self.artifact.package.id(),
-                &self.system,
-                &self.recipe,
-                &self.provenance,
-            ))
-            .expect("retained package inputs serialize"),
-        )
+        rootbeer_catalog::canonical_sha256(&(
+            "rootbeer-retained-package-v1",
+            &self.artifact.package.id(),
+            &self.system,
+            &self.recipe,
+            &self.provenance,
+        ))
+        .expect("retained package inputs serialize")
     }
 
     /// Verifies any earlier publisher approval retained as package provenance.
@@ -241,18 +239,16 @@ pub fn input_key(
     engine: &str,
     environment: &str,
 ) -> String {
-    crate::store::hash_bytes(
-        &serde_json::to_vec(&(
-            "rootbeer-package-inputs-v1",
-            package,
-            system,
-            revision,
-            recipe,
-            engine,
-            environment,
-        ))
-        .expect("package inputs serialize"),
-    )
+    rootbeer_catalog::canonical_sha256(&(
+        "rootbeer-package-inputs-v1",
+        package,
+        system,
+        revision,
+        recipe,
+        engine,
+        environment,
+    ))
+    .expect("package inputs serialize")
 }
 
 /// Domain-separated bytes shared by package signing and verification.
