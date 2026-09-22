@@ -5,9 +5,10 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::Value;
 
+use super::discover_upstream;
 use super::metadata::{MetadataCache, Statistics};
-use super::{discover_package, validate_definitions, GitHubUpstream};
 use crate::{CatalogPackage, PackageCatalog, PackageDefinition};
+use rootbeer_package::upstream::validate_upstreams;
 
 /// A discovery report; candidate recipes are unqualified until package export succeeds.
 #[derive(Serialize)]
@@ -23,66 +24,41 @@ pub struct UpdateReport {
     metadata: Statistics,
 }
 
+/// Discovers new versions for every package with an upstream, writing candidate recipes.
 pub fn discover_updates(
-    catalog: &PackageCatalog,
-    definitions: &[GitHubUpstream],
-    cache: &Path,
-    output: &Path,
-    max_pages: usize,
-) -> Result<UpdateReport, String> {
-    discover_cached(
-        catalog,
-        definitions,
-        &BTreeMap::new(),
-        cache,
-        output,
-        max_pages,
-    )
-}
-
-/// Discovers updates while preserving shared authoring templates and version overrides.
-pub fn discover_definition_updates(
-    catalog: &PackageCatalog,
-    definitions: &BTreeMap<String, PackageDefinition>,
-    cache: &Path,
-    output: &Path,
-    max_pages: usize,
-) -> Result<UpdateReport, String> {
-    let upstreams: Vec<GitHubUpstream> = definitions
-        .values()
-        .filter_map(|definition| definition.github_rules())
-        .collect();
-    discover_cached(catalog, &upstreams, definitions, cache, output, max_pages)
-}
-
-fn discover_cached(
-    catalog: &PackageCatalog,
-    upstreams: &[GitHubUpstream],
     definitions: &BTreeMap<String, PackageDefinition>,
     cache: &Path,
     output: &Path,
     max_pages: usize,
 ) -> Result<UpdateReport, String> {
     let mut cache = MetadataCache::new(cache)?;
-    let mut report =
-        discover_with_fetch(catalog, upstreams, definitions, output, max_pages, |url| {
-            cache.fetch(url)
-        })?;
+    let downloads = rootbeer_package::download::DownloadCache::default();
+    let mut report = discover_with_fetch(
+        definitions,
+        output,
+        max_pages,
+        |url| cache.fetch(url),
+        |url| {
+            downloads
+                .materialize(url, None)
+                .map(|file| file.sha256)
+                .map_err(|error| error.to_string())
+        },
+    )?;
     report.metadata = cache.statistics;
     write_report(output, &report)?;
     Ok(report)
 }
 
 fn discover_with_fetch(
-    catalog: &PackageCatalog,
-    definitions: &[GitHubUpstream],
-    templates: &BTreeMap<String, PackageDefinition>,
+    definitions: &BTreeMap<String, PackageDefinition>,
     output: &Path,
     max_pages: usize,
     mut fetch: impl FnMut(&str) -> Result<Value, String>,
+    mut hash: impl FnMut(&str) -> Result<String, String>,
 ) -> Result<UpdateReport, String> {
-    catalog.validate()?;
-    validate_definitions(definitions)?;
+    let catalog = PackageCatalog::from_definitions(definitions)?;
+    validate_upstreams(definitions)?;
     if !(1..=100).contains(&max_pages) {
         return Err("max-pages must be between 1 and 100".into());
     }
@@ -99,99 +75,91 @@ fn discover_with_fetch(
         errors: BTreeMap::new(),
         defaults: BTreeMap::new(),
         metadata: Statistics::default(),
-        untracked: catalog
-            .packages
-            .keys()
-            .filter(|name| {
-                !definitions
-                    .iter()
-                    .any(|definition| &definition.name == *name)
-            })
-            .cloned()
+        untracked: definitions
+            .iter()
+            .filter(|(_, definition)| definition.upstream.is_empty())
+            .map(|(name, _)| name.clone())
             .collect(),
     };
     let mut combined = catalog.clone();
-    let mut identities = BTreeMap::new();
-    for definition in definitions {
-        eprintln!(
-            "Discover {} from {}",
-            definition.name, definition.repository
-        );
-        let mut recipe = match templates.get(&definition.name) {
-            Some(recipe) => (*recipe).clone(),
-            None => {
-                report.errors.insert(
-                    definition.name.clone(),
-                    "discovery requires an authored recipe".into(),
-                );
-                continue;
-            }
-        };
-        let result = discover_package(&combined, definition, &mut recipe, max_pages, &mut fetch)
-            .and_then(|upstream| {
-                let package = recipe.package.clone();
-                let id = upstream.repository_id.unwrap();
-                if let Some(name) = identities.get(&id) {
-                    return Err(format!("repository is already tracked as `{name}`"));
+    let mut identities: BTreeMap<u64, &str> = BTreeMap::new();
+    for (name, definition) in definitions {
+        let mut recipe = definition.clone();
+        let mut errors = Vec::new();
+        let mut has_rule_changes = false;
+        for (upstream, systems) in definition.upstreams() {
+            eprintln!("Discover {name} from {}", upstream.repository());
+            let discovery = discover_upstream(
+                &upstream,
+                &systems,
+                &mut recipe,
+                max_pages,
+                &mut fetch,
+                &mut hash,
+            );
+            match discovery {
+                Ok(discovery) => {
+                    if let Some(owner) = identities.insert(discovery.repository_id, name) {
+                        if owner != name {
+                            errors.push(format!("repository is already tracked as `{owner}`"));
+                            recipe = definition.clone();
+                            break;
+                        }
+                    }
+                    has_rule_changes |= discovery.is_newly_pinned;
+                    errors.extend(
+                        discovery
+                            .errors
+                            .into_iter()
+                            .map(|error| format!("{}: {error}", upstream.repository())),
+                    );
                 }
-                let mut candidate = combined.clone();
-                candidate
-                    .packages
-                    .insert(package.name.clone(), package.clone());
-                candidate.validate()?;
-                identities.insert(id, package.name.clone());
-                combined = candidate;
-                Ok((upstream, package))
-            });
-        let (upstream, package) = match result {
-            Ok(result) => result,
-            Err(error) => {
-                report.errors.insert(definition.name.clone(), error);
-                continue;
+                Err(error) => errors.push(format!("{}: {error}", upstream.repository())),
             }
-        };
-        let is_changed = catalog
+        }
+
+        let mut candidate = combined.clone();
+        candidate
             .packages
-            .get(&package.name)
-            .map(serde_json::to_value)
-            .transpose()
+            .insert(name.clone(), recipe.package.clone());
+        if let Err(error) = candidate.validate() {
+            errors.push(error);
+            report.errors.insert(name.clone(), errors.join("; "));
+            continue;
+        }
+        combined = candidate;
+        if !errors.is_empty() {
+            report.errors.insert(name.clone(), errors.join("; "));
+        }
+
+        let is_changed = serde_json::to_value(&catalog.packages[name])
             .map_err(|e| e.to_string())?
-            != Some(serde_json::to_value(&package).map_err(|e| e.to_string())?);
+            != serde_json::to_value(&recipe.package).map_err(|e| e.to_string())?;
         if is_changed {
             report
                 .defaults
-                .insert(package.name.clone(), platform_defaults(&package));
-            report.updated.push(package.name.clone());
-        } else {
-            report.unchanged.push(package.name.clone());
+                .insert(name.clone(), platform_defaults(&recipe.package));
+            report.updated.push(name.clone());
+        } else if errors.is_empty() && !definition.upstream.is_empty() {
+            report.unchanged.push(name.clone());
         }
-        let has_rule_changes = serde_json::to_value(definition).map_err(|e| e.to_string())?
-            != serde_json::to_value(&upstream).map_err(|e| e.to_string())?;
         if has_rule_changes {
-            report.rules_changed.push(upstream.name.clone());
+            report.rules_changed.push(name.clone());
         }
         if is_changed || has_rule_changes {
             fs::write(
-                destination
-                    .join("packages")
-                    .join(format!("{}.lua", package.name)),
+                destination.join("packages").join(format!("{name}.lua")),
                 recipe.to_lua()?,
             )
             .map_err(|e| e.to_string())?;
         }
     }
     if !report.updated.is_empty() || !report.rules_changed.is_empty() {
-        for package in combined.packages.values() {
-            let path = destination
-                .join("packages")
-                .join(format!("{}.lua", package.name));
+        for (name, definition) in definitions {
+            let path = destination.join("packages").join(format!("{name}.lua"));
             if path.exists() {
                 continue;
             }
-            let definition = templates
-                .get(&package.name)
-                .cloned()
-                .unwrap_or_else(|| PackageDefinition::new(package.clone()));
             fs::write(path, definition.to_lua()?).map_err(|error| error.to_string())?;
         }
         let candidates = PackageCatalog::from_directory(&destination.join("packages"))?;
@@ -279,7 +247,7 @@ mod tests {
                 platforms = {{
                     ["aarch64-macos"] = {{
                         default_version = "1",
-                        upstream = {{ github = "owner/{name}", tag_prefix = "v" }},
+                        upstream = {{ github = "owner/{name}", tag = "v{{version}}" }},
                         prebuilt = {{ github = "owner/{name}", asset = "{name}-{{tag}}-darwin-arm64.tar.gz" }},
                         outputs = {{ bins = {{ "{name}" }}, checks = {{ {{ "{name}", "--version" }} }} }},
                     }},
@@ -299,11 +267,8 @@ mod tests {
             .collect()
     }
 
-    fn rules(definitions: &BTreeMap<String, PackageDefinition>) -> Vec<GitHubUpstream> {
-        definitions
-            .values()
-            .filter_map(|definition| definition.github_rules())
-            .collect()
+    fn no_downloads(url: &str) -> Result<String, String> {
+        panic!("a prebuilt must not download {url}")
     }
 
     fn releases(name: &str, tags: &[&str]) -> Value {
@@ -341,7 +306,6 @@ mod tests {
             .replace("\"aa\"", &format!("\"{}\"", digest("1"))),
         ];
         let definitions = definitions(&authored);
-        let catalog = PackageCatalog::from_definitions(&definitions).unwrap();
         let fetch = |url: &str| {
             if url.contains("/broken") {
                 return Err("rate limited".into());
@@ -354,17 +318,9 @@ mod tests {
             Ok(releases("tool", &["v1", "v2"]))
         };
         let output = root.path().join("first");
-        let report = discover_with_fetch(
-            &catalog,
-            &rules(&definitions),
-            &definitions,
-            &output,
-            1,
-            fetch,
-        )
-        .unwrap();
+        let report = discover_with_fetch(&definitions, &output, 1, fetch, no_downloads).unwrap();
         assert_eq!(report.updated, ["tool"]);
-        assert_eq!(report.errors["broken"], "rate limited");
+        assert_eq!(report.errors["broken"], "owner/broken: rate limited");
         assert_eq!(report.defaults["tool"]["aarch64-macos"], "2");
 
         let candidates = PackageDefinition::from_directory(&output.join("packages")).unwrap();
@@ -381,15 +337,7 @@ mod tests {
         );
 
         let repeat = root.path().join("repeat");
-        let report = discover_with_fetch(
-            &discovered,
-            &rules(&candidates),
-            &candidates,
-            &repeat,
-            1,
-            fetch,
-        )
-        .unwrap();
+        let report = discover_with_fetch(&candidates, &repeat, 1, fetch, no_downloads).unwrap();
         assert!(report.updated.is_empty());
         assert_eq!(report.unchanged, ["tool"]);
     }
@@ -410,8 +358,6 @@ mod tests {
         let catalog = PackageCatalog::from_definitions(&definitions).unwrap();
         let output = root.path().join("output");
         let report = discover_with_fetch(
-            &catalog,
-            &rules(&definitions),
             &definitions,
             &output,
             1,
@@ -423,6 +369,7 @@ mod tests {
                 }
                 Ok(releases("tool", &["v1", "v2"]))
             },
+            no_downloads,
         )
         .unwrap();
         assert_eq!(report.updated, ["tool"]);
@@ -452,5 +399,75 @@ mod tests {
             serde_json::to_value(retained).unwrap(),
             serde_json::to_value(&catalog.packages["tool"].versions["1"]).unwrap()
         );
+    }
+
+    /// The upstream collapse: every platform used to be discovered from the first platform's
+    /// repository, so helium's macOS build searched helium-linux for a DMG and never moved.
+    #[test]
+    fn each_platform_group_discovers_from_its_own_repository() {
+        let root = tempfile::tempdir().unwrap();
+        let source = format!(
+            r#"return {{
+                name = "helium", description = "Browse", homepage = "https://helium.computer",
+                default_license = "GPL-3.0-only",
+                platforms = {{
+                    ["aarch64-macos"] = {{
+                        default_version = "1",
+                        upstream = {{ github = "imputnet/helium-macos", repository_id = 1 }},
+                        prebuilt = {{ github = "imputnet/helium-macos", asset = "helium_{{version}}_arm64-macos.dmg",
+                                      mirror = true }},
+                        outputs = {{ apps = {{ ["Helium.app"] = "Helium.app" }} }},
+                    }},
+                    ["x86_64-linux"] = {{
+                        default_version = "1",
+                        upstream = {{ github = "imputnet/helium-linux", repository_id = 2 }},
+                        prebuilt = {{ github = "imputnet/helium-linux", asset = "helium-{{version}}-x86_64.AppImage" }},
+                        outputs = {{ bins = {{ "helium" }}, checks = {{ {{ "helium", "--version" }} }} }},
+                    }},
+                }},
+                versions = {{ ["1"] = {{ digests = {{ ["aarch64-macos"] = "{a}", ["x86_64-linux"] = "{a}" }} }} }},
+            }}"#,
+            a = digest("a")
+        );
+        let definitions = definitions(&[source]);
+        let release = |tag: &str, asset: String, seed: &str| {
+            serde_json::json!({
+                "id": 1, "tag_name": tag,
+                "assets": [{ "name": asset, "browser_download_url": "https://example.com",
+                             "digest": format!("sha256:{}", digest(seed)) }],
+            })
+        };
+        let fetch = |url: &str| match url {
+            "https://api.github.com/repos/imputnet/helium-macos" => {
+                Ok(serde_json::json!({"id": 1, "full_name": "imputnet/helium-macos"}))
+            }
+            "https://api.github.com/repos/imputnet/helium-linux" => {
+                Ok(serde_json::json!({"id": 2, "full_name": "imputnet/helium-linux"}))
+            }
+            url if url.contains("helium-macos/releases") => Ok(Value::Array(vec![release(
+                "3",
+                "helium_3_arm64-macos.dmg".into(),
+                "3",
+            )])),
+            url if url.contains("helium-linux/releases") => Ok(Value::Array(vec![release(
+                "2",
+                "helium-2-x86_64.AppImage".into(),
+                "2",
+            )])),
+            url => Err(format!("unexpected {url}")),
+        };
+        let report = discover_with_fetch(
+            &definitions,
+            &root.path().join("output"),
+            1,
+            fetch,
+            no_downloads,
+        )
+        .unwrap();
+
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        let defaults = &report.defaults["helium"];
+        assert_eq!(defaults["aarch64-macos"], "3");
+        assert_eq!(defaults["x86_64-linux"], "2");
     }
 }

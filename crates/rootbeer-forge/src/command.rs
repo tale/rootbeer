@@ -409,13 +409,8 @@ fn execute(args: Args) -> Result<(), String> {
             let definitions = definitions
                 .as_ref()
                 .ok_or("updates requires --catalog pointing to package definitions")?;
-            let report = rootbeer_packaging::discover_definition_updates(
-                catalog()?,
-                definitions,
-                &cache,
-                &output,
-                max_pages,
-            )?;
+            let report =
+                rootbeer_packaging::discover_updates(definitions, &cache, &output, max_pages)?;
             eprintln!(
                 "{} updates, {} unchanged, {} errors; report: {}",
                 report.updated.len(),

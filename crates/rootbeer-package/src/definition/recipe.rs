@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use super::PackageUpstream;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Recipe {
@@ -23,6 +25,9 @@ pub(super) struct Recipe {
     pub min_engine_level: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_license: Option<String>,
+    /// Shared by every platform that does not declare its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<PackageUpstream>,
 
     #[serde(flatten)]
     pub shared: Spec,
@@ -52,7 +57,7 @@ pub(super) struct Platform {
     pub target: Option<String>,
     pub default_version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub upstream: Option<Upstream>,
+    pub upstream: Option<PackageUpstream>,
     #[serde(flatten)]
     pub overrides: Spec,
 }
@@ -92,18 +97,6 @@ pub(super) struct Source {
     pub strip_prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub patches: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Upstream {
-    pub github: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repository_id: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tag_prefix: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub exclude_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -220,9 +213,47 @@ impl Recipe {
         self.platforms.keys().cloned().collect()
     }
 
+    pub(super) fn pin_repository_id(&mut self, repository: &str, id: u64) {
+        let declared = self.upstream.iter_mut().chain(
+            self.platforms
+                .values_mut()
+                .filter_map(|platform| platform.upstream.as_mut()),
+        );
+        for upstream in declared {
+            if upstream.repository_id.is_none()
+                && upstream.repository().eq_ignore_ascii_case(repository)
+            {
+                upstream.repository_id = Some(id);
+            }
+        }
+    }
+
+    pub(super) fn candidate(
+        &self,
+        system: &str,
+        version: &str,
+    ) -> Result<crate::CatalogRecipe, String> {
+        let platform = self
+            .platforms
+            .get(system)
+            .ok_or_else(|| format!("{}: {system} is not a declared platform", self.name))?;
+        let spec = self.shared.overlay(&platform.overrides);
+        self.resolve(version, "", platform, &spec)
+            .map_err(|error| format!("{}@{version} {system}: {error}", self.name))
+    }
+
+    fn platform_upstream<'a>(&'a self, platform: &'a Platform) -> Option<&'a PackageUpstream> {
+        platform.upstream.as_ref().or(self.upstream.as_ref())
+    }
+
     pub(super) fn expand(&self) -> Result<super::PackageDefinition, String> {
         if self.platforms.is_empty() {
             return Err("a recipe declares at least one platform".into());
+        }
+        for upstream in self.upstream().values() {
+            upstream
+                .validate()
+                .map_err(|error| format!("{}: {error}", self.name))?;
         }
         let mut versions: BTreeMap<String, crate::CatalogVersion> = BTreeMap::new();
         for (version, entry) in &self.versions {
@@ -293,12 +324,10 @@ impl Recipe {
         if spec.prebuilt.is_some() && spec.source.is_some() {
             return Err("a platform is prebuilt or built from source, not both".into());
         }
-        let prefix = platform
-            .upstream
-            .as_ref()
-            .and_then(|upstream| upstream.tag_prefix.as_deref())
-            .unwrap_or_default();
-        let tag = format!("{prefix}{version}");
+        let tag = self
+            .platform_upstream(platform)
+            .map(|upstream| upstream.tag_for(version))
+            .unwrap_or_else(|| version.to_string());
         let target = platform.target.as_deref();
         let outputs = spec.outputs.clone().unwrap_or_default();
 
@@ -384,20 +413,11 @@ impl Recipe {
         Ok(recipe)
     }
 
-    fn upstream(&self) -> BTreeMap<String, super::PackageUpstream> {
+    fn upstream(&self) -> BTreeMap<String, PackageUpstream> {
         self.platforms
             .iter()
             .filter_map(|(system, platform)| {
-                let rules = platform.upstream.as_ref()?;
-                Some((
-                    system.clone(),
-                    super::PackageUpstream::Github {
-                        repository: rules.github.clone(),
-                        repository_id: rules.repository_id,
-                        tag_prefix: rules.tag_prefix.clone(),
-                        exclude_tags: rules.exclude_tags.clone(),
-                    },
-                ))
+                Some((system.clone(), self.platform_upstream(platform)?.clone()))
             })
             .collect()
     }
@@ -406,6 +426,7 @@ impl Recipe {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::UpstreamProvider;
 
     fn parse(json: &str) -> Recipe {
         serde_json::from_str(json).unwrap_or_else(|error| panic!("{error}\n{json}"))
@@ -467,8 +488,8 @@ mod tests {
         );
         let mac = &recipe.platforms["aarch64-macos"];
         assert_eq!(
-            mac.upstream.as_ref().unwrap().github,
-            "imputnet/helium-macos"
+            mac.upstream.as_ref().unwrap().provider,
+            UpstreamProvider::Github("imputnet/helium-macos".into())
         );
         assert!(mac.overrides.outputs.as_ref().unwrap().apps.is_some());
     }

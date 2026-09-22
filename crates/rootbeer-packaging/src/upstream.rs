@@ -1,54 +1,50 @@
-use crate::{GitHubUpstream, PackageCatalog};
 use rootbeer_package::github::Release;
-use rootbeer_package::upstream::{check_identity, validate_definitions};
+use rootbeer_package::{PackageDefinition, PackageUpstream};
 use serde::Deserialize;
 
 mod generate;
 mod metadata;
 mod updates;
-pub use updates::{discover_definition_updates, discover_updates, UpdateReport};
+pub use updates::{discover_updates, UpdateReport};
 
 #[derive(Debug, Deserialize)]
 struct Repository {
     id: u64,
     full_name: String,
-    description: Option<String>,
-    homepage: Option<String>,
 }
 
-fn discover_package(
-    catalog: &PackageCatalog,
-    definition: &GitHubUpstream,
-    recipe: &mut rootbeer_package::PackageDefinition,
+/// What one upstream contributed to a package, beyond the versions it recorded.
+struct Discovery {
+    /// Failures confined to single platforms; the package's other platforms still advance.
+    errors: Vec<String>,
+    repository_id: u64,
+    is_newly_pinned: bool,
+}
+
+fn discover_upstream(
+    upstream: &PackageUpstream,
+    systems: &[String],
+    recipe: &mut PackageDefinition,
     max_pages: usize,
     fetch: &mut impl FnMut(&str) -> Result<serde_json::Value, String>,
-) -> Result<GitHubUpstream, String> {
-    check_identity(
-        catalog,
-        &definition.name,
-        &definition.repository,
-        definition.build.is_some(),
-    )?;
-    let mut upstream = definition.clone();
-    let url = format!("https://api.github.com/repos/{}", upstream.repository);
+    hash: &mut impl FnMut(&str) -> Result<String, String>,
+) -> Result<Discovery, String> {
+    let url = format!("https://api.github.com/repos/{}", upstream.repository());
     let repository: Repository = serde_json::from_value(fetch(&url)?).map_err(|e| e.to_string())?;
     if repository.id == 0 || upstream.repository_id.is_some_and(|id| id != repository.id) {
-        return Err(format!(
-            "{}: GitHub repository ID changed; review upstream ownership",
-            upstream.name
-        ));
+        return Err("GitHub repository ID changed; review upstream ownership".into());
     }
     if !upstream
-        .repository
+        .repository()
         .eq_ignore_ascii_case(&repository.full_name)
     {
         return Err(format!(
-            "{}: repository moved to {}; review the identity mapping",
-            upstream.name, repository.full_name
+            "repository moved to {}; review the identity mapping",
+            repository.full_name
         ));
     }
-    upstream.repository_id = Some(repository.id);
-    let mut releases = Vec::new();
+
+    let mut releases: Vec<Release> = Vec::new();
     for page in 1..=max_pages {
         let batch: Vec<Release> =
             serde_json::from_value(fetch(&format!("{url}/releases?per_page=100&page={page}"))?)
@@ -59,87 +55,76 @@ fn discover_package(
             break;
         }
         if page == max_pages {
-            return Err(format!("{}: release history exceeds --max-pages {max_pages}; increase it to avoid incomplete version selection", upstream.name));
+            return Err(format!("release history exceeds --max-pages {max_pages}; increase it to avoid incomplete version selection"));
         }
     }
-    if upstream.build.is_some() {
-        let cache = rootbeer_package::download::DownloadCache::default();
-        generate::source_package(&upstream, &releases, recipe, |url| {
-            cache
-                .materialize(url, None)
-                .map(|file| file.sha256)
-                .map_err(|error| error.to_string())
-        })?;
-    } else {
-        generate::package(&mut upstream, &repository, &releases, recipe)?;
+
+    let errors = generate::discover(upstream, systems, &releases, recipe, hash)?;
+    let is_newly_pinned = upstream.repository_id.is_none();
+    if is_newly_pinned {
+        recipe.pin_repository_id(upstream.repository(), repository.id)?;
     }
-    Ok(upstream)
+    Ok(Discovery {
+        errors,
+        repository_id: repository.id,
+        is_newly_pinned,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::BTreeMap;
 
-    #[test]
-    fn rejects_duplicate_names_aliases_repositories_and_ids() {
-        let first = GitHubUpstream::new("one".into(), "owner/one".into());
-        let second = GitHubUpstream::new("two".into(), "owner/two".into());
-        assert!(validate_definitions(&[first.clone(), second.clone()]).is_ok());
-        let mut collision = second.clone();
-        collision.aliases.push("one".into());
-        assert!(validate_definitions(&[first.clone(), collision]).is_err());
-        let mut collision = second.clone();
-        collision.repository = "OWNER/One".into();
-        assert!(validate_definitions(&[first.clone(), collision]).is_err());
-        let mut first = first;
-        first.repository_id = Some(42);
-        let mut second = second;
-        second.repository_id = Some(42);
-        assert!(validate_definitions(&[first, second]).is_err());
+    use rootbeer_package::upstream::{check_identity, validate_upstreams};
+    use rootbeer_package::PackageDefinition;
+
+    fn tracked(name: &str, repositories: [&str; 2]) -> (String, PackageDefinition) {
+        let definition = PackageDefinition::from_lua(&format!(
+            r#"return {{
+                name = "{name}", description = "Tool", homepage = "https://example.com",
+                default_license = "MIT",
+                prebuilt = {{ github = "owner/{name}", asset = "{name}-{{version}}.tar.gz" }},
+                outputs = {{ bins = {{ "{name}" }}, checks = {{ {{ "{name}", "--version" }} }} }},
+                platforms = {{
+                    ["aarch64-macos"] = {{ default_version = "1", upstream = {{ github = "{}" }} }},
+                    ["x86_64-linux"] = {{ default_version = "1", upstream = {{ github = "{}" }} }},
+                }},
+                versions = {{ ["1"] = {{ digests = {{ ["aarch64-macos"] = "{digest}", ["x86_64-linux"] = "{digest}" }} }} }},
+            }}"#,
+            repositories[0],
+            repositories[1],
+            digest = "a".repeat(64)
+        ))
+        .unwrap();
+        (name.to_string(), definition)
     }
 
     #[test]
-    fn rejects_invalid_discovery_contracts_without_catalog_recipes() {
-        let upstream = GitHubUpstream::new("tool".into(), "owner/tool".into());
-        for invalid in [
-            serde_json::json!({"description": " "}),
-            serde_json::json!({"homepage": "http://example.com"}),
-            serde_json::json!({"aliases": ["tool"]}),
-            serde_json::json!({"aliases": ["../tool"]}),
-            serde_json::json!({"systems": []}),
-            serde_json::json!({"systems": ["aarch64-macos", "aarch64-macos"]}),
-            serde_json::json!({"systems": ["unknown"]}),
-        ] {
-            let mut value = serde_json::to_value(&upstream).unwrap();
-            value
-                .as_object_mut()
-                .unwrap()
-                .extend(invalid.as_object().unwrap().clone());
-            let invalid: GitHubUpstream = serde_json::from_value(value).unwrap();
-            assert!(invalid.validate().is_err());
-        }
+    fn one_package_may_span_repositories_but_two_may_not_share_one() {
+        let split = BTreeMap::from([tracked("helium", ["owner/mac", "owner/linux"])]);
+        assert!(validate_upstreams(&split).is_ok());
+
+        let shared = BTreeMap::from([
+            tracked("one", ["owner/tool", "owner/tool"]),
+            tracked("two", ["owner/other", "OWNER/Tool"]),
+        ]);
+        let error = validate_upstreams(&shared).unwrap_err();
+        assert!(error.contains("another package"), "{error}");
     }
 
     #[test]
     fn recognizes_existing_upstreams_and_prevents_alias_takeover() {
         let catalog = crate::test_catalog::catalog();
-        let identity = |upstream: &GitHubUpstream| {
-            check_identity(
-                catalog,
-                &upstream.name,
-                &upstream.repository,
-                upstream.build.is_some(),
-            )
-        };
-        let upstream = GitHubUpstream::new("encryption".into(), "filosottile/AGE".into());
-        assert!(identity(&upstream)
+        let identity =
+            |name: &str, repository: &str| check_identity(catalog, name, repository, false);
+        assert!(identity("encryption", "filosottile/AGE")
             .unwrap_err()
             .contains("canonicalized as `age`"));
-        let upstream = GitHubUpstream::new("age".into(), "other/tool".into());
-        assert!(identity(&upstream)
+        assert!(identity("age", "other/tool")
             .unwrap_err()
             .contains("different upstream"));
-        let upstream = GitHubUpstream::new("rg".into(), "other/tool".into());
-        assert!(identity(&upstream).unwrap_err().contains("belongs to"));
+        assert!(identity("rg", "other/tool")
+            .unwrap_err()
+            .contains("belongs to"));
     }
 }
