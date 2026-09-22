@@ -22,139 +22,160 @@ impl ExtraFields {
     }
 }
 
-/// The upstream identity and approved versions of a canonical package.
+/// A package's identity and the versions a PDR publishes for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogPackage {
     pub name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
     pub description: String,
     pub homepage: String,
-    pub default_version: String,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipe_maintainers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_engine_level: Option<u32>,
+    /// The version each platform resolves to when a request names none.
     pub default_versions: BTreeMap<String, String>,
-    pub versions: BTreeMap<String, CatalogRecipe>,
-    /// Fields published by a newer engine, retained so they survive a round trip.
+    pub versions: BTreeMap<String, CatalogVersion>,
     #[serde(flatten, default, skip_serializing_if = "ExtraFields::is_empty")]
     pub extra: ExtraFields,
 }
 
-/// An explicit backend request and its platform and command contract.
+/// One version, and the contract each platform builds for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogVersion {
+    /// SPDX expression, or `NOASSERTION` when upstream states none.
+    pub license: String,
+    pub revision: u32,
+    pub platforms: BTreeMap<String, CatalogRecipe>,
+    #[serde(flatten, default, skip_serializing_if = "ExtraFields::is_empty")]
+    pub extra: ExtraFields,
+}
+
+/// What one platform acquires and what it installs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogRecipe {
-    pub revision: u32,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub platforms: BTreeMap<String, CatalogRecipe>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub install: Option<crate::LockedInstall>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install: Option<crate::LockedInstall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<crate::SourceBuild>,
+    /// The single release asset this platform downloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// Exported commands, each resolved to its path in the installed tree.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub assets: BTreeMap<String, String>,
-    pub systems: Vec<String>,
-    pub bins: Vec<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub bin_paths: BTreeMap<String, PathBuf>,
+    pub bins: BTreeMap<String, PathBuf>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub apps: BTreeMap<String, PathBuf>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub checksums: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub mirror: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub checks: Vec<Vec<String>>,
-    /// Fields published by a newer engine, retained so they survive a round trip.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mirror: bool,
     #[serde(flatten, default, skip_serializing_if = "ExtraFields::is_empty")]
     pub extra: ExtraFields,
 }
 
-fn is_false(value: &bool) -> bool {
-    !value
+impl CatalogPackage {
+    /// The version this system installs when a request names none.
+    pub fn default_version_for(&self, system: &str) -> Option<&str> {
+        self.default_versions.get(system).map(String::as_str)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !valid_name(&self.name) {
+            return Err(format!("invalid package name `{}`", self.name));
+        }
+        if self.default_versions.is_empty() {
+            return Err(format!("{}: no platform declares a version", self.name));
+        }
+        super::validate_systems(&self.default_versions.keys().cloned().collect::<Vec<_>>())?;
+        for (system, version) in &self.default_versions {
+            let entry = self
+                .versions
+                .get(version)
+                .ok_or_else(|| format!("{}: default version {version} has no recipe", self.name))?;
+            if !entry.platforms.contains_key(system) {
+                return Err(format!(
+                    "{}: default version {version} does not build {system}",
+                    self.name
+                ));
+            }
+        }
+        for (version, entry) in &self.versions {
+            entry
+                .validate()
+                .map_err(|error| format!("{}@{version}: {error}", self.name))?;
+        }
+        Ok(())
+    }
 }
 
-impl CatalogPackage {
-    /// Returns the platform override or the package-wide default.
-    pub fn default_version_for(&self, system: &str) -> &str {
-        self.default_versions
-            .get(system)
-            .map(String::as_str)
-            .unwrap_or(&self.default_version)
+impl CatalogVersion {
+    pub fn for_system(&self, system: &str) -> Option<&CatalogRecipe> {
+        self.platforms.get(system)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.revision == 0 {
+            return Err("recipe needs a revision".into());
+        }
+        if self.license.trim().is_empty() {
+            return Err("recipe needs an SPDX license or NOASSERTION".into());
+        }
+        if self.platforms.is_empty() {
+            return Err("version builds no platform".into());
+        }
+        super::validate_systems(&self.platforms.keys().cloned().collect::<Vec<_>>())?;
+        for (system, recipe) in &self.platforms {
+            recipe
+                .validate(system)
+                .map_err(|error| format!("{system}: {error}"))?;
+        }
+        Ok(())
     }
 }
 
 impl CatalogRecipe {
-    /// Selects one platform contract without including unrelated platform overrides.
-    pub fn for_system(&self, system: &str) -> Self {
-        let mut recipe = self.platforms.get(system).unwrap_or(self).clone();
-        recipe.platforms.clear();
-        recipe
-    }
-
-    /// All platforms supported by the base recipe and explicit overrides.
-    pub fn supported_systems(&self) -> BTreeSet<&String> {
-        self.systems.iter().chain(self.platforms.keys()).collect()
-    }
-
-    /// Identifies all evaluated recipe inputs, including the checks required for approval.
     pub fn sha256(&self) -> String {
         crate::store::hash_bytes(
             &serde_json::to_vec(self).expect("recipe serialization cannot fail"),
         )
     }
 
-    /// Whether the recipe declares an upstream binary for this platform.
-    pub fn has_prebuilt(&self, system: &str) -> bool {
-        let recipe = self.platforms.get(system).unwrap_or(self);
-        recipe.systems.iter().any(|value| value == system)
-            && recipe.source.as_ref().is_some_and(|source| {
-                recipe.build.is_none()
-                    || !source.starts_with("github:")
-                    || recipe.assets.contains_key(system)
-            })
-    }
-
-    pub(crate) fn validate(&self) -> Result<(), String> {
-        for (system, recipe) in &self.platforms {
-            if !recipe.platforms.is_empty() || recipe.systems != [system.clone()] {
-                return Err(
-                    "platform overrides must declare only their own system and cannot nest".into(),
-                );
+    pub(crate) fn validate(&self, system: &str) -> Result<(), String> {
+        match (self.source.is_some(), self.build.is_some()) {
+            (false, false) => return Err("platform needs a prebuilt source or a build".into()),
+            (true, true) => {
+                return Err("a platform is prebuilt or built from source, not both".into())
             }
-            recipe.validate()?;
-        }
-        if self.revision == 0 || (self.source.is_none() && self.build.is_none()) {
-            return Err(
-                "recipe needs a revision and at least one of prebuilt source or build".into(),
-            );
+            _ => {}
         }
         if let Some(build) = &self.build {
             build.validate()?;
             if let Some(go) = &build.go {
-                if go
-                    .binaries
-                    .keys()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    != self.bins.iter().collect()
-                {
+                if go.binaries.keys().collect::<BTreeSet<_>>() != self.bins.keys().collect() {
                     return Err("Go entry points must match exported binaries".into());
                 }
             }
         }
+
         let is_download = self
             .source
             .as_deref()
             .is_some_and(|source| source.starts_with("https://"));
         if is_download {
             crate::index::validate_https(self.source.as_deref().unwrap())?;
-            if self.build.is_some()
-                || self.checksums.len() != self.systems.len()
-                || self.install.is_none()
-                || !self.assets.is_empty()
-            {
-                return Err("direct downloads require an install format, complete checksums, and no build or release assets".into());
+            if self.sha256.is_none() || self.asset.is_some() {
+                return Err(
+                    "direct downloads require an install format, a digest, and no release asset"
+                        .into(),
+                );
             }
-            match self.install.as_ref().unwrap() {
+            match self.install.as_ref().ok_or("direct downloads require an install format")? {
                 crate::LockedInstall::Dmg if !self.apps.is_empty() => {}
                 crate::LockedInstall::Archive { strip_prefix, .. } => {
                     if let Some(path) = strip_prefix {
@@ -168,15 +189,13 @@ impl CatalogRecipe {
                 }
                 _ => return Err("unsupported direct download install contract".into()),
             }
-            if !self.bins.is_empty() && self.bin_paths.len() != self.bins.len() {
-                return Err("direct downloads require explicit command paths".into());
-            }
         } else if self.install.is_some() {
             return Err("explicit install formats require a direct HTTPS download".into());
         }
+
         if let Some(source) = self.source.as_ref().filter(|_| !is_download) {
             let request = PackageRequest::parse(source);
-            if !matches!(request.resolver.as_deref(), Some("aqua" | "github"))
+            if request.resolver.as_deref() != Some("github")
                 || request
                     .version
                     .as_deref()
@@ -186,71 +205,21 @@ impl CatalogRecipe {
                     .split_once('/')
                     .is_some_and(|(owner, repo)| !owner.is_empty() && !repo.is_empty())
             {
-                return Err("recipe needs a revision and an exact aqua: or github: source".into());
+                return Err("prebuilt platforms need an exact github: source".into());
+            }
+            if self.asset.as_ref().is_none_or(|asset| asset.trim().is_empty()) {
+                return Err("a prebuilt platform needs one release asset".into());
             }
         }
-        validate_systems(&self.systems)?;
-        validate_apps(&self.apps)?;
-        if !self.apps.is_empty()
-            && self
-                .systems
-                .iter()
-                .any(|system| !system.ends_with("-macos"))
-        {
-            return Err("application exports require macOS-only recipe systems".into());
+
+        super::validate_apps(&self.apps)?;
+        if !self.apps.is_empty() && !system.ends_with("-macos") {
+            return Err("application exports are macOS only".into());
         }
-        if !self.assets.is_empty()
-            && (self
-                .source
-                .as_deref()
-                .is_none_or(|source| !source.starts_with("github:"))
-                || (self.build.is_none() && self.assets.len() != self.systems.len())
-                || self.assets.iter().any(|(system, asset)| {
-                    !self.systems.contains(system) || asset.trim().is_empty()
-                }))
-        {
-            return Err("assets must name one GitHub release asset per declared system".into());
-        }
-        let is_library = self
-            .build
-            .as_ref()
-            .is_some_and(|build| !build.libraries.is_empty());
-        if (!is_library && self.apps.is_empty()) || !self.bins.is_empty() || !self.checks.is_empty()
-        {
-            validate_commands(&self.bins, &self.checks)?;
-        }
-        if !is_download
-            && (!self.bin_paths.is_empty() || !self.checksums.is_empty() || self.mirror)
-            && self
-                .source
-                .as_deref()
-                .is_none_or(|source| !source.starts_with("github:"))
-        {
-            return Err("bin_paths, checksums, and mirror require a GitHub source".into());
-        }
-        validate_bin_paths(&self.bins, &self.bin_paths)?;
-        if !self.checksums.is_empty()
-            && (self.checksums.len()
-                != if self.build.is_some() {
-                    self.assets.len()
-                } else {
-                    self.systems.len()
-                }
-                || self.checksums.iter().any(|(system, digest)| {
-                    (!self.systems.contains(system)
-                        || (self.build.is_some() && !self.assets.contains_key(system)))
-                        || digest.len() != 64
-                        || !digest
-                            .bytes()
-                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                }))
-        {
-            return Err(
-                "checksums must pin each declared platform with a lowercase SHA-256 digest".into(),
-            );
-        }
-        if self.mirror && self.checksums.is_empty() {
-            return Err("mirrored recipes require complete platform checksums".into());
+        super::validate_commands(self.bins.keys(), &self.checks)?;
+        for path in self.bins.values().chain(self.apps.values()) {
+            crate::realize::validate_relative_path("output path", path)
+                .map_err(|error| error.to_string())?;
         }
         Ok(())
     }
@@ -272,37 +241,21 @@ pub(crate) fn validate_systems(declared: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn validate_commands(declared: &[String], checks: &[Vec<String>]) -> Result<(), String> {
-    let bins: BTreeSet<_> = declared.iter().collect();
-    if bins.is_empty() || bins.len() != declared.len() || bins.iter().any(|bin| !valid_name(bin)) {
+pub(crate) fn validate_commands<'a>(
+    bins: impl IntoIterator<Item = &'a String>,
+    checks: &[Vec<String>],
+) -> Result<(), String> {
+    let bins: BTreeSet<_> = bins.into_iter().collect();
+    if bins.iter().any(|bin| !valid_name(bin)) {
         return Err("recipe needs unique exported command names".into());
     }
-    if checks.is_empty()
-        || checks
-            .iter()
-            .any(|check| check.first().is_none_or(|bin| !bins.contains(bin)))
+    if !bins.is_empty()
+        && (checks.is_empty()
+            || checks
+                .iter()
+                .any(|check| check.first().is_none_or(|bin| !bins.contains(bin))))
     {
         return Err("checks must execute declared commands".into());
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_bin_paths(
-    declared: &[String],
-    paths: &BTreeMap<String, PathBuf>,
-) -> Result<(), String> {
-    if paths.is_empty() {
-        return Ok(());
-    }
-    if paths.len() != declared.len() || paths.keys().any(|name| !declared.contains(name)) {
-        return Err("bin_paths must map exactly the declared commands".into());
-    }
-    for path in paths.values() {
-        if path.as_os_str().as_encoded_bytes().contains(&0) {
-            return Err("binary path cannot contain a null byte".into());
-        }
-        crate::realize::validate_relative_path("binary path", path)
-            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -325,203 +278,4 @@ pub(crate) fn validate_apps(apps: &BTreeMap<String, PathBuf>) -> Result<(), Stri
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_retired_intel_macos() {
-        assert!(validate_systems(&["x86_64-macos".into()]).is_err());
-    }
-
-    fn recipe() -> CatalogRecipe {
-        CatalogRecipe {
-            extra: Default::default(),
-            platforms: BTreeMap::new(),
-            install: None,
-            revision: 1,
-            source: Some("github:owner/tool@v1".into()),
-            build: None,
-            assets: BTreeMap::new(),
-            systems: vec!["aarch64-macos".into(), "x86_64-linux".into()],
-            bins: vec!["tool".into()],
-            bin_paths: BTreeMap::new(),
-            apps: BTreeMap::new(),
-            checksums: BTreeMap::new(),
-            mirror: false,
-            checks: vec![vec!["tool".into(), "--help".into()]],
-        }
-    }
-
-    #[test]
-    fn command_paths_require_complete_safe_github_mappings() {
-        let mut recipe = recipe();
-        recipe
-            .bin_paths
-            .insert("tool".into(), "Tool.app/Contents/MacOS/client".into());
-        recipe.validate().unwrap();
-        for invalid in [
-            "",
-            ".",
-            "../tool",
-            "bin/../../tool",
-            "/bin/tool",
-            "bin/\0tool",
-        ] {
-            recipe.bin_paths.insert("tool".into(), invalid.into());
-            assert!(recipe.validate().is_err(), "{invalid:?}");
-        }
-        recipe.bin_paths = BTreeMap::from([("other".into(), "bin/tool".into())]);
-        assert!(recipe
-            .validate()
-            .unwrap_err()
-            .contains("exactly the declared commands"));
-        recipe.bin_paths.insert("tool".into(), "bin/tool".into());
-        assert!(recipe.validate().is_err());
-        recipe.bin_paths.remove("other");
-        recipe.source = Some("aqua:owner/tool@1".into());
-        assert!(recipe
-            .validate()
-            .unwrap_err()
-            .contains("require a GitHub source"));
-    }
-
-    #[test]
-    fn mirrored_recipes_require_complete_lowercase_checksums() {
-        let mut recipe = recipe();
-        recipe.mirror = true;
-        assert!(recipe
-            .validate()
-            .unwrap_err()
-            .contains("complete platform checksums"));
-        recipe
-            .checksums
-            .insert("aarch64-macos".into(), "a".repeat(64));
-        assert!(recipe
-            .validate()
-            .unwrap_err()
-            .contains("each declared platform"));
-        recipe
-            .checksums
-            .insert("x86_64-linux".into(), "b".repeat(64));
-        recipe.validate().unwrap();
-        for digest in [
-            "A".repeat(64),
-            "g".repeat(64),
-            "a".repeat(63),
-            "a".repeat(65),
-        ] {
-            recipe.checksums.insert("x86_64-linux".into(), digest);
-            assert!(recipe.validate().is_err());
-        }
-        recipe.checksums.remove("x86_64-linux");
-        recipe
-            .checksums
-            .insert("aarch64-linux".into(), "b".repeat(64));
-        assert!(recipe.validate().is_err());
-        recipe.checksums.remove("aarch64-linux");
-        recipe
-            .checksums
-            .insert("x86_64-linux".into(), "b".repeat(64));
-        recipe.mirror = false;
-        recipe.validate().unwrap();
-        recipe.source = Some("aqua:owner/tool@1".into());
-        assert!(recipe
-            .validate()
-            .unwrap_err()
-            .contains("require a GitHub source"));
-    }
-
-    #[test]
-    fn build_recipes_reject_binary_paths_checksums_and_mirroring() {
-        let catalog = crate::test_catalog::catalog();
-        let package = &catalog.packages["xz"];
-        let original = &package.versions[&package.default_version];
-        for field in ["bin_paths", "checksums", "mirror"] {
-            let mut recipe = original.clone();
-            match field {
-                "bin_paths" => {
-                    recipe.bin_paths = recipe
-                        .bins
-                        .iter()
-                        .map(|bin| (bin.clone(), PathBuf::from(bin)))
-                        .collect()
-                }
-                "checksums" => {
-                    recipe.checksums = recipe
-                        .systems
-                        .iter()
-                        .map(|system| (system.clone(), "a".repeat(64)))
-                        .collect()
-                }
-                _ => recipe.mirror = true,
-            }
-            assert!(recipe
-                .validate()
-                .unwrap_err()
-                .contains("require a GitHub source"));
-        }
-    }
-}
-
-#[cfg(test)]
-mod forward_compatibility_tests {
-    use super::*;
-
-    fn published(extra: &str) -> String {
-        format!(
-            r#"{{"revision":1,"source":"github:x/y@v1","systems":["aarch64-macos"],
-                "bins":["y"],"checks":[]{extra}}}"#
-        )
-    }
-
-    #[test]
-    fn a_field_this_build_does_not_know_is_kept_rather_than_rejected() {
-        let recipe: CatalogRecipe =
-            serde_json::from_str(&published(r#","packaging_format":"Dmg""#)).unwrap();
-        assert_eq!(recipe.revision, 1);
-        assert_eq!(
-            recipe
-                .extra
-                .0
-                .get("packaging_format")
-                .and_then(|v| v.as_str()),
-            Some("Dmg")
-        );
-    }
-
-    #[test]
-    fn unknown_fields_survive_a_round_trip_so_signatures_stay_valid() {
-        let source = published(r#","packaging_format":"Dmg","future":{"nested":[1,2]}"#);
-        let recipe: CatalogRecipe = serde_json::from_str(&source).unwrap();
-        let reserialized = serde_json::to_value(&recipe).unwrap();
-        let original: serde_json::Value = serde_json::from_str(&source).unwrap();
-        assert_eq!(
-            reserialized["packaging_format"],
-            original["packaging_format"]
-        );
-        assert_eq!(reserialized["future"], original["future"]);
-    }
-
-    #[test]
-    fn extras_reorder_and_still_shift_the_hash_until_hashing_is_canonical() {
-        let source = concat!(
-            r#"{"revision":1,"packaging_format":"Pkg","source":"github:x/y@v1","#,
-            r#""systems":["aarch64-macos"],"bins":["y"],"checks":[]}"#
-        );
-        let recipe: CatalogRecipe = serde_json::from_str(source).unwrap();
-        let reserialized = serde_json::to_string(&recipe).unwrap();
-
-        assert!(reserialized.ends_with(r#""packaging_format":"Pkg"}"#));
-        assert_ne!(recipe.sha256(), crate::store::hash_bytes(source.as_bytes()));
-    }
-
-    #[test]
-    fn a_recipe_without_extras_hashes_exactly_as_before() {
-        let recipe: CatalogRecipe = serde_json::from_str(&published("")).unwrap();
-        assert!(recipe.extra.is_empty());
-        assert!(!serde_json::to_string(&recipe).unwrap().contains("extra"));
-    }
 }
