@@ -360,6 +360,24 @@ mod tests {
     }
 
     #[test]
+    fn a_rendered_source_build_reads_back() {
+        let source = r#"return {
+            name = "tool", description = "A tool", homepage = "https://example.com",
+            default_license = "MIT",
+            upstream = { github = "owner/tool", tag = "v{version}" },
+            source = { url = "https://example.com/{tag}.tar.gz", archive = "tar.gz", strip_prefix = "tool-{version}" },
+            build = { backend = "go", go = { binaries = { tool = "./cmd" } } },
+            outputs = { bins = { "tool" }, checks = { { "tool", "--version" } } },
+            platforms = { ["x86_64-linux"] = { default_version = "1" } },
+            versions = { ["1"] = { digests = { ["x86_64-linux"] = "DIGEST" } } },
+        }"#
+        .replace("DIGEST", &"a".repeat(64));
+        let definition = PackageDefinition::from_lua(&source).unwrap();
+        let again = PackageDefinition::from_lua(&definition.to_lua().unwrap()).unwrap();
+        assert_eq!(again.package, definition.package);
+    }
+
+    #[test]
     fn rendering_round_trips_through_the_authored_recipe() {
         let definition = PackageDefinition::from_lua(HELIUM).unwrap();
         let rendered = definition.to_lua().unwrap();
