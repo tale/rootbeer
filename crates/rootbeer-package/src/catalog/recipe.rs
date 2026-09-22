@@ -175,9 +175,7 @@ impl CatalogVersion {
 
 impl CatalogRecipe {
     pub fn sha256(&self) -> String {
-        crate::store::hash_bytes(
-            &serde_json::to_vec(self).expect("recipe serialization cannot fail"),
-        )
+        rootbeer_catalog::canonical_sha256(self).expect("recipe serialization cannot fail")
     }
 
     pub(crate) fn validate(&self, system: &str) -> Result<(), String> {
@@ -334,4 +332,40 @@ pub(crate) fn validate_apps(apps: &BTreeMap<String, PathBuf>) -> Result<(), Stri
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod forward_compatibility_tests {
+    use super::*;
+
+    /// A recipe as a newer publisher might emit it: an unknown field ahead of known ones.
+    const PUBLISHED: &str = concat!(
+        r#"{"packaging_format":"Pkg","future":{"nested":[2,1]},"source":"github:x/y@v1","#,
+        r#""asset":"y.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","#,
+        r#""bins":["y"],"checks":[["y","--version"]]}"#
+    );
+
+    #[test]
+    fn a_field_this_build_does_not_know_is_kept_rather_than_rejected() {
+        let recipe: CatalogRecipe = serde_json::from_str(PUBLISHED).unwrap();
+        let reserialized = serde_json::to_value(&recipe).unwrap();
+        let original: serde_json::Value = serde_json::from_str(PUBLISHED).unwrap();
+        assert_eq!(reserialized, original);
+    }
+
+    #[test]
+    fn a_decoded_recipe_hashes_to_what_its_publisher_recorded() {
+        let recipe: CatalogRecipe = serde_json::from_str(PUBLISHED).unwrap();
+        let original: serde_json::Value = serde_json::from_str(PUBLISHED).unwrap();
+
+        assert_ne!(
+            serde_json::to_string(&recipe).unwrap(),
+            PUBLISHED,
+            "decoding moves unknown fields"
+        );
+        assert_eq!(
+            recipe.sha256(),
+            rootbeer_catalog::canonical_sha256(&original).unwrap()
+        );
+    }
 }

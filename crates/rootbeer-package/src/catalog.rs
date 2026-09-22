@@ -7,7 +7,6 @@ use super::{
     PackageRequest, PackageRequestResolver, PackageResolution, PackageResolver,
     PackageResolverInputs, ResolutionProof, ResolveContext, ResolverStack,
 };
-use crate::store::hash_bytes;
 
 mod recipe;
 
@@ -166,9 +165,9 @@ impl PackageCatalog {
         })
     }
 
-    /// Returns a stable digest of the evaluated, ordered catalog data.
+    /// Returns a stable digest of the evaluated catalog data.
     pub fn sha256(&self) -> String {
-        hash_bytes(&serde_json::to_vec(self).expect("catalog serialization cannot fail"))
+        rootbeer_catalog::canonical_sha256(self).expect("catalog serialization cannot fail")
     }
 
     /// Exports the validated catalog as deterministic JSON for inspection or CI.
