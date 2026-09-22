@@ -86,13 +86,20 @@ fn render_field(value: &Value, depth: usize, prefix: usize) -> String {
             table(entries, depth)
         }
         Value::Object(values) => {
-            let entries = values.iter().map(|(key, value)| {
+            // A flattened recipe reads `{}` back as a map, so an empty list has no spelling
+            // that survives; every list field defaults, so omitting it means the same thing.
+            let entries = values.iter().filter(|(_, value)| !is_empty_list(value));
+            let entries = entries.map(|(key, value)| {
                 let key = field(key);
                 format!("{key} = {}", render_field(value, depth + 1, key.len() + 3))
             });
             table(entries, depth)
         }
     }
+}
+
+fn is_empty_list(value: &Value) -> bool {
+    value.as_array().is_some_and(Vec::is_empty)
 }
 
 fn field(key: &str) -> String {
