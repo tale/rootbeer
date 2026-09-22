@@ -31,10 +31,7 @@ mod sign;
 pub use sign::{sign_index, sign_package_record};
 
 pub mod upstream;
-pub use upstream::{
-    discover_definition_updates, discover_updates, import_github_packages, seed_upstreams,
-    UpdateReport,
-};
+pub use upstream::{discover_definition_updates, discover_updates, UpdateReport};
 
 #[cfg(test)]
 #[path = "../../rootbeer-package/tests/support/catalog.rs"]

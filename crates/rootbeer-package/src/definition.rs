@@ -6,7 +6,7 @@ use mlua::LuaSerdeExt;
 use serde::{Deserialize, Serialize};
 
 pub mod lua;
-use super::CatalogPackage;
+use super::{CatalogPackage, GitHubUpstream};
 
 mod recipe;
 
@@ -70,6 +70,76 @@ impl PackageDefinition {
             definitions.insert(definition.package.name.clone(), definition);
         }
         Ok(definitions)
+    }
+
+    /// Records a discovered version and the digest each platform published for it.
+    pub fn add_version(
+        &mut self,
+        version: &str,
+        digests: BTreeMap<String, String>,
+        license: Option<String>,
+    ) -> Result<(), String> {
+        let mut recipe = self
+            .authoring
+            .clone()
+            .ok_or("adding a version requires an authored recipe")?;
+        if digests.is_empty() {
+            return Err(format!("{version}: a version builds at least one platform"));
+        }
+        recipe.insert_version(version, digests, license);
+        *self = recipe.expand()?;
+        Ok(())
+    }
+
+    /// Points one platform at a version it already builds.
+    pub fn set_default_version(&mut self, system: &str, version: &str) -> Result<(), String> {
+        let mut recipe = self
+            .authoring
+            .clone()
+            .ok_or("setting a default requires an authored recipe")?;
+        recipe.set_default_version(system, version)?;
+        *self = recipe.expand()?;
+        Ok(())
+    }
+
+    /// Discovery rules for this package, when any platform declares a GitHub upstream.
+    pub fn github_rules(&self) -> Option<GitHubUpstream> {
+        let mut systems: Vec<String> = Vec::new();
+        let mut rules = None;
+        for (
+            system,
+            PackageUpstream::Github {
+                repository,
+                repository_id,
+                tag_prefix,
+                exclude_tags,
+            },
+        ) in &self.upstream
+        {
+            systems.push(system.clone());
+            rules.get_or_insert_with(|| {
+                let mut upstream =
+                    GitHubUpstream::new(self.package.name.clone(), repository.clone());
+                upstream.repository_id = *repository_id;
+                upstream.tag_prefix = tag_prefix.clone();
+                upstream.exclude_tags = exclude_tags.clone();
+                upstream.aliases = self.package.aliases.clone();
+                upstream.description = Some(self.package.description.clone());
+                upstream.homepage = Some(self.package.homepage.clone());
+                upstream
+            });
+        }
+        let mut upstream = rules?;
+        upstream.systems = systems;
+        Some(upstream)
+    }
+
+    /// Every platform this recipe declares, whether or not a version covers it.
+    pub fn platforms(&self) -> Vec<String> {
+        self.authoring
+            .as_ref()
+            .map(|recipe| recipe.platform_names())
+            .unwrap_or_default()
     }
 
     /// Renders one complete package file, including its update rules when configured.

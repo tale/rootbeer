@@ -158,6 +158,13 @@ pub struct Asset {
     digest: Option<String>,
 }
 
+impl Asset {
+    /// The digest GitHub publishes for this asset, without its algorithm prefix.
+    pub fn sha256(&self) -> Option<&str> {
+        self.digest.as_deref()?.strip_prefix("sha256:")
+    }
+}
+
 pub fn repository(name: &str) -> Result<(&str, &str), String> {
     let Some((owner, repo)) = name.split_once('/') else {
         return Err("GitHub packages require `github:owner/repo@tag`".to_string());

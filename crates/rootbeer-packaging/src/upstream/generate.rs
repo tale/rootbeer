@@ -2,8 +2,9 @@ use rootbeer_package::PackageRequest;
 use std::collections::BTreeMap;
 
 use super::{GitHubUpstream, Repository};
-use crate::{CatalogPackage, CatalogRecipe, ResolveContext};
+use crate::ResolveContext;
 use rootbeer_package::github::{select_asset, Release};
+use rootbeer_package::PackageDefinition;
 
 fn version_key(version: &str) -> Result<Vec<u64>, String> {
     if version.is_empty()
@@ -54,35 +55,24 @@ fn pattern(asset: &str, tag: &str, version: &str) -> String {
     asset.replace(version, "{version}")
 }
 
+/// Selects the newest release each platform can install, and records its digest.
+///
+/// Version selection is unchanged: drafts, prereleases and excluded tags are skipped, tags
+/// that normalize to the same version are rejected rather than guessed between, and a
+/// platform whose asset disappeared keeps the version it already had. What changed is the
+/// output — a version entry naming each platform and the digest it published, instead of a
+/// synthesized recipe carrying a copy of the package's contract.
 pub(super) fn package(
     upstream: &mut GitHubUpstream,
     repository: &Repository,
     releases: &[Release],
-    existing: Option<&CatalogPackage>,
-) -> Result<CatalogPackage, String> {
+    definition: &mut PackageDefinition,
+) -> Result<(), String> {
     if upstream.mirror {
         return Err(format!(
             "{}: mirrored updates require manual checksum qualification",
             upstream.name
         ));
-    }
-    if let Some(existing) = existing {
-        for system in &upstream.systems {
-            let version = existing.default_version_for(system);
-            let recipe = &existing.versions[version];
-            let Some(asset) = recipe.assets.get(system) else {
-                continue;
-            };
-            let Some(source) = recipe.source.as_deref() else {
-                continue;
-            };
-            let request = crate::PackageRequest::parse(source);
-            let Some(tag) = request.version else { continue };
-            upstream
-                .assets
-                .entry(system.clone())
-                .or_insert_with(|| pattern(asset, &tag, version));
-        }
     }
     let mut ordered = BTreeMap::new();
     for release in releases {
@@ -101,67 +91,35 @@ pub(super) fn package(
     if ordered.is_empty() {
         return Err(format!("{}: no matching stable releases", upstream.name));
     }
-    let mut package = match existing {
-        Some(package) => package.clone(),
-        None => CatalogPackage {
-            extra: Default::default(),
-            name: upstream.name.clone(),
-            aliases: upstream.aliases.clone(),
-            description: upstream
-                .description
-                .clone()
-                .or_else(|| repository.description.clone())
-                .unwrap_or_default(),
-            homepage: upstream
-                .homepage
-                .clone()
-                .or_else(|| {
-                    repository
-                        .homepage
-                        .clone()
-                        .filter(|url| url.starts_with("https://"))
-                })
-                .unwrap_or_else(|| format!("https://github.com/{}", upstream.repository)),
-            default_version: String::new(),
-            default_versions: BTreeMap::new(),
-            versions: BTreeMap::new(),
-        },
-    };
-    if let Some(description) = &upstream.description {
-        package.description = description.clone();
+    if upstream.description.is_none() {
+        upstream.description = repository.description.clone();
     }
-    if let Some(homepage) = &upstream.homepage {
-        package.homepage = homepage.clone();
+    if upstream.homepage.is_none() {
+        upstream.homepage = repository
+            .homepage
+            .clone()
+            .filter(|url| url.starts_with("https://"));
     }
-    for alias in &upstream.aliases {
-        if !package.aliases.contains(alias) {
-            package.aliases.push(alias.clone());
+
+    let platforms = definition.platforms();
+    let mut selected: BTreeMap<String, (String, BTreeMap<String, String>)> = BTreeMap::new();
+    for system in &platforms {
+        if !upstream.systems.is_empty() && !upstream.systems.contains(system) {
+            continue;
         }
-    }
-    package.aliases.sort();
-    let mut defaults = BTreeMap::new();
-    let mut generated: BTreeMap<String, CatalogRecipe> = BTreeMap::new();
-    for system in &upstream.systems {
-        let previous = existing.and_then(|package| {
-            let version = package.default_version_for(system);
-            package
-                .versions
-                .get(version)
-                .filter(|recipe| recipe.systems.contains(system))
-                .map(|_| version)
-        });
+        let previous = definition.package.default_version_for(system);
         let minimum = previous.map(version_key).transpose()?;
-        let mut selection = None;
+        let mut choice = None;
         for (key, (version, release)) in ordered.iter().rev() {
             if minimum.as_ref().is_some_and(|minimum| key < minimum) {
                 break;
             }
-            let selected = upstream.assets.get(system).map(|pattern| {
+            let expected = upstream.assets.get(system).map(|pattern| {
                 pattern
                     .replace("{tag}", &release.tag_name)
                     .replace("{version}", version)
             });
-            if selected
+            if expected
                 .as_ref()
                 .is_some_and(|name| !release.assets.iter().any(|asset| &asset.name == name))
             {
@@ -169,7 +127,7 @@ pub(super) fn package(
             }
             let asset = match select_asset(
                 &release.assets,
-                selected.as_deref(),
+                expected.as_deref(),
                 &ResolveContext::new(system),
             ) {
                 Ok(asset) => asset,
@@ -181,108 +139,55 @@ pub(super) fn package(
                     ))
                 }
             };
-            selection = Some((*version, *release, asset));
+            choice = Some((*version, *release, asset));
             break;
         }
-        let Some((version, release, asset)) = selection else {
-            let Some(previous) = previous else {
+        let Some((version, release, asset)) = choice else {
+            if previous.is_none() {
                 return Err(format!("{}: no supported release for {system}; provide an asset rule or explicitly narrow systems", upstream.name));
-            };
-            defaults.insert(system.clone(), previous.to_string());
+            }
             continue;
         };
-        let recipe = generated
+        // Pinning the digest upstream published closes the window where an asset is
+        // replaced between discovery proposing a version and CI qualifying it.
+        let digest = asset.sha256().ok_or_else(|| {
+            format!(
+                "{}@{version} on {system}: release asset publishes no sha256 digest",
+                upstream.name
+            )
+        })?;
+        selected
             .entry(version.to_string())
-            .or_insert_with(|| CatalogRecipe {
-                extra: Default::default(),
-                platforms: BTreeMap::new(),
-                install: None,
-                revision: 1,
-                source: Some(format!(
-                    "github:{}@{}",
-                    upstream.repository, release.tag_name
-                )),
-                build: None,
-                assets: BTreeMap::new(),
-                systems: Vec::new(),
-                bins: upstream.bins.clone(),
-                bin_paths: upstream.bin_paths.clone(),
-                apps: upstream.apps.clone(),
-                checksums: BTreeMap::new(),
-                mirror: upstream.mirror,
-                checks: upstream.checks.clone(),
-            });
-        recipe.systems.push(system.clone());
-        recipe.assets.insert(system.clone(), asset.name.clone());
-        defaults.insert(system.clone(), version.to_string());
+            .or_default()
+            .1
+            .insert(system.clone(), digest.to_string());
         upstream
             .assets
             .entry(system.clone())
             .or_insert_with(|| pattern(&asset.name, &release.tag_name, version));
     }
-    for (version, mut recipe) in generated {
-        recipe.systems.sort();
-        if let Some(previous) = package.versions.get(&version) {
-            if previous.source != recipe.source
-                || recipe.assets.iter().any(|(system, asset)| {
-                    previous.assets.get(system) != Some(asset) || !previous.systems.contains(system)
-                })
-            {
-                return Err(format!(
-                    "{}@{version}: existing recipe would change; review and revise it manually",
-                    upstream.name
-                ));
-            }
-            continue;
-        }
-        package.versions.insert(version, recipe);
-    }
-    let newest = defaults
-        .values()
-        .map(|version| Ok((version_key(version)?, version.clone())))
-        .collect::<Result<Vec<_>, String>>()?
-        .into_iter()
-        .max()
-        .unwrap()
-        .1;
-    if package.default_version.is_empty()
-        || version_key(&newest)? > version_key(&package.default_version)?
-    {
-        package.default_version = newest;
-    }
-    for (system, version) in defaults {
-        if version == package.default_version {
-            package.default_versions.remove(&system);
-        } else {
-            package.default_versions.insert(system, version);
+
+    for (version, (_, digests)) in &selected {
+        definition.add_version(version, digests.clone(), None)?;
+        for system in digests.keys() {
+            definition.set_default_version(system, version)?;
         }
     }
-    // Preserve defaults for existing targets excluded from this discovery pass.
-    if let Some(existing) = existing {
-        for system in existing
-            .versions
-            .values()
-            .flat_map(|recipe| &recipe.systems)
-        {
-            if !upstream.systems.contains(system) {
-                package
-                    .default_versions
-                    .insert(system.clone(), existing.default_version_for(system).into());
-            }
-        }
-    }
-    upstream.description = Some(package.description.clone());
-    upstream.homepage = Some(package.homepage.clone());
-    upstream.aliases = package.aliases.clone();
-    Ok(package)
+    upstream.aliases = definition.package.aliases.clone();
+    Ok(())
 }
 
+/// Advances a source-built package to the newest release, hashing its archive.
+///
+/// The build template still drives `{version}`/`{tag}` substitution and a retained release
+/// is left alone. The digest now lives on the version entry, one per platform, because a
+/// source build produces one archive that every platform compiles.
 pub(super) fn source_package(
     upstream: &GitHubUpstream,
     releases: &[Release],
-    existing: &CatalogPackage,
+    definition: &mut PackageDefinition,
     mut hash_source: impl FnMut(&str) -> Result<String, String>,
-) -> Result<CatalogPackage, String> {
+) -> Result<(), String> {
     let mut ordered = BTreeMap::new();
     for release in releases {
         let Some(version) = release_version(upstream, release)? else {
@@ -300,9 +205,23 @@ pub(super) fn source_package(
     let (key, (version, release)) = ordered
         .last_key_value()
         .ok_or("no matching stable source releases")?;
-    if *key <= version_key(&existing.default_version)? {
-        return Ok(existing.clone());
+
+    let platforms: Vec<String> = definition
+        .platforms()
+        .into_iter()
+        .filter(|system| upstream.systems.is_empty() || upstream.systems.contains(system))
+        .collect();
+    let current = platforms
+        .iter()
+        .filter_map(|system| definition.package.default_version_for(system))
+        .map(version_key)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .max();
+    if current.is_some_and(|current| *key <= current) {
+        return Ok(());
     }
+
     let mut build = upstream
         .build
         .clone()
@@ -330,75 +249,17 @@ pub(super) fn source_package(
     if build.url.contains(['{', '}']) || build.strip_prefix.to_string_lossy().contains(['{', '}']) {
         return Err("unsupported placeholder in source discovery template".into());
     }
-    let mut package = existing.clone();
-    if let Some(recipe) = package.versions.get(*version) {
-        if upstream
-            .systems
-            .iter()
-            .any(|system| !recipe.systems.contains(system))
-        {
-            return Err("retained source release needs explicit platform qualification".into());
-        }
-    } else {
-        build.sha256 = hash_source(&build.url)?;
-        build.validate()?;
-        let mut assets = BTreeMap::new();
-        let can_use_prebuilt = existing
-            .versions
-            .values()
-            .filter_map(|recipe| recipe.source.as_deref())
-            .any(|source| {
-                let request = PackageRequest::parse(source);
-                request.resolver.as_deref() == Some("github")
-                    && request.name.eq_ignore_ascii_case(&upstream.repository)
-            });
-        if can_use_prebuilt {
-            for (system, pattern) in &upstream.assets {
-                let name = pattern
-                    .replace("{tag}", &release.tag_name)
-                    .replace("{version}", version);
-                if release.assets.iter().any(|asset| asset.name == name) {
-                    assets.insert(system.clone(), name);
-                }
-            }
-        }
-        let source = (!assets.is_empty())
-            .then(|| format!("github:{}@{}", upstream.repository, release.tag_name));
-        package.versions.insert(
-            (*version).into(),
-            CatalogRecipe {
-                extra: Default::default(),
-                platforms: BTreeMap::new(),
-                install: None,
-                revision: 1,
-                source,
-                build: Some(build),
-                assets,
-                systems: upstream.systems.clone(),
-                bins: upstream.bins.clone(),
-                bin_paths: upstream.bin_paths.clone(),
-                apps: upstream.apps.clone(),
-                checksums: BTreeMap::new(),
-                mirror: false,
-                checks: upstream.checks.clone(),
-            },
-        );
+
+    let digest = hash_source(&build.url)?;
+    let digests = platforms
+        .iter()
+        .map(|system| (system.clone(), digest.clone()))
+        .collect::<BTreeMap<_, _>>();
+    definition.add_version(version, digests, None)?;
+    for system in &platforms {
+        definition.set_default_version(system, version)?;
     }
-    package.default_version = (*version).into();
-    for system in existing
-        .versions
-        .values()
-        .flat_map(|recipe| &recipe.systems)
-    {
-        if upstream.systems.contains(system) {
-            package.default_versions.remove(system);
-        } else {
-            package
-                .default_versions
-                .insert(system.clone(), existing.default_version_for(system).into());
-        }
-    }
-    Ok(package)
+    Ok(())
 }
 
 #[cfg(test)]
