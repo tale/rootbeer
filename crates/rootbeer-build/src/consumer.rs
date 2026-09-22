@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::process::Command;
 
@@ -116,7 +117,7 @@ impl PackageResolver for SourceResolver {
             .map(|discovery| {
                 let catalog = discovery.manifest()?.catalog.clone();
                 Ok::<_, String>(ArtifactIndex {
-                    schema: ArtifactIndex::schema_for(&catalog),
+                    schema: 7,
                     catalog_sha256: catalog.sha256(),
                     catalog,
                     artifacts: Default::default(),
@@ -148,10 +149,12 @@ impl PackageResolver for SourceResolver {
         let package = catalog
             .find(&request.name)
             .ok_or_else(|| format!("unknown index package `{}`", request.name))?;
-        let version = request
-            .version
-            .as_deref()
-            .unwrap_or_else(|| package.default_version_for(&context.system));
+        let version = match request.version.as_deref() {
+            Some(version) => version,
+            None => package
+                .default_version_for(&context.system)
+                .ok_or_else(|| format!("{} does not support {}", package.name, context.system))?,
+        };
         let key = format!("{}@{version}", package.name);
         if local.is_none()
             && request.source.is_none()
@@ -166,10 +169,11 @@ impl PackageResolver for SourceResolver {
         }
         if local.is_some()
             && request.source.is_none()
-            && package
-                .versions
-                .get(version)
-                .is_some_and(|recipe| recipe.for_system(&context.system).build.is_none())
+            && package.versions.get(version).is_some_and(|entry| {
+                entry
+                    .for_system(&context.system)
+                    .is_some_and(|recipe| recipe.build.is_none())
+            })
         {
             return catalog::CatalogResolver::new(
                 &catalog,
@@ -181,15 +185,19 @@ impl PackageResolver for SourceResolver {
         if context != &ResolveContext::current() {
             return Err("local source builds require the host platform".into());
         }
-        let original = package
+        let entry = package
             .versions
             .get(version)
-            .ok_or_else(|| format!("{key}: no approved recipe"))?
-            .for_system(&context.system);
-        if !original.systems.contains(&context.system) {
-            return Err(format!("{key}: no source recipe for {}", context.system));
-        }
-        let mut recipe = original.clone();
+            .ok_or_else(|| format!("{key}: no approved recipe"))?;
+        let mut recipe = entry
+            .for_system(&context.system)
+            .ok_or_else(|| format!("{key}: no source recipe for {}", context.system))?
+            .clone();
+        let original = recipe.clone();
+        let published = rootbeer_package::CatalogVersion {
+            platforms: BTreeMap::new(),
+            ..entry.clone()
+        };
         let build = recipe
             .build
             .as_mut()
@@ -222,18 +230,18 @@ impl PackageResolver for SourceResolver {
         let source_url = build.url.clone();
         let source_sha256 = build.sha256.clone();
         recipe.source = None;
-        recipe.assets.clear();
-        recipe.checksums.clear();
-        recipe.bin_paths.clear();
+        recipe.asset = None;
+        recipe.sha256 = None;
         recipe.mirror = false;
         let name = package.name.clone();
         let catalog_sha256 = catalog.sha256();
-        catalog
-            .packages
-            .get_mut(&name)
-            .unwrap()
-            .versions
-            .insert(version.clone(), recipe);
+        catalog.packages.get_mut(&name).unwrap().versions.insert(
+            version.clone(),
+            rootbeer_package::CatalogVersion {
+                platforms: BTreeMap::from([(context.system.clone(), recipe)]),
+                ..published
+            },
+        );
         catalog.validate()?;
         let runs = state.join("source-builds");
         fs::create_dir_all(&runs).map_err(|error| error.to_string())?;

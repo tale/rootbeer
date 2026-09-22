@@ -1,4 +1,6 @@
 use super::*;
+#[allow(unused_imports)]
+use crate::test_catalog::VersionTestExt;
 use std::process::Command;
 
 fn compile(args: &[String]) {

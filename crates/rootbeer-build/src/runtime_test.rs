@@ -1,4 +1,6 @@
 use super::*;
+#[allow(unused_imports)]
+use crate::test_catalog::VersionTestExt;
 use rootbeer_package::lockfile::RootbeerLock;
 
 #[test]

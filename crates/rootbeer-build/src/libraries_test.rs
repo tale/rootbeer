@@ -1,4 +1,6 @@
 use super::*;
+#[allow(unused_imports)]
+use crate::test_catalog::VersionTestExt;
 
 #[test]
 fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
@@ -217,6 +219,7 @@ fn library_recipes_separate_inputs_builds_and_exports() {
     let catalog = load(source).unwrap();
     assert_eq!(ArtifactIndex::schema_for(&catalog), 4);
     let build = catalog.packages["library"].versions["1"]
+        .any()
         .build
         .as_ref()
         .unwrap();
