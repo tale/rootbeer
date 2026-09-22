@@ -1,12 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use mlua::LuaSerdeExt;
 use serde::{Deserialize, Serialize};
 
 pub mod lua;
-use super::{CatalogPackage, GitHubUpstream};
+use super::CatalogPackage;
 
 mod recipe;
 
@@ -46,8 +46,7 @@ impl PackageDefinition {
     /// Evaluates a package in the same bounded, I/O-free sandbox as catalog recipes.
     pub fn from_lua(source: &str) -> Result<Self, String> {
         let (lua, value) = lua::evaluate(source)?;
-        let recipe: recipe::Recipe =
-            lua.from_value(value).map_err(|error| error.to_string())?;
+        let recipe: recipe::Recipe = lua.from_value(value).map_err(|error| error.to_string())?;
         recipe.expand()
     }
 
@@ -119,7 +118,10 @@ mod tests {
             .values()
             .map(|PackageUpstream::Github { repository, .. }| repository.as_str())
             .collect();
-        assert_eq!(repositories, ["imputnet/helium-macos", "imputnet/helium-linux"]);
+        assert_eq!(
+            repositories,
+            ["imputnet/helium-macos", "imputnet/helium-linux"]
+        );
     }
 
     #[test]
@@ -132,8 +134,11 @@ mod tests {
         assert!(macos.apps.contains_key("Helium.app") && macos.bins.is_empty());
 
         let linux = entry.for_system("x86_64-linux").unwrap();
-        assert_eq!(linux.asset.as_deref(), Some("helium-0.17.2.1-x86_64.AppImage"));
-        assert!(linux.bins.contains_key("helium") && linux.apps.is_empty());
+        assert_eq!(
+            linux.asset.as_deref(),
+            Some("helium-0.17.2.1-x86_64.AppImage")
+        );
+        assert!(linux.bins.names().contains(&"helium".to_string()) && linux.apps.is_empty());
     }
 
     #[test]

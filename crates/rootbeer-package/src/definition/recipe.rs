@@ -106,18 +106,11 @@ pub(super) struct Upstream {
     pub exclude_tags: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub(super) enum Bins {
-    Names(Vec<String>),
-    Paths(BTreeMap<String, PathBuf>),
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Outputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bins: Option<Bins>,
+    pub bins: Option<crate::Bins>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apps: Option<BTreeMap<String, PathBuf>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -144,10 +137,13 @@ fn is_one(value: &u32) -> bool {
     *value == 1
 }
 
-fn substitute(pattern: &str, version: &str, tag: &str, target: Option<&str>) -> Result<String, String> {
-    let mut value = pattern
-        .replace("{version}", version)
-        .replace("{tag}", tag);
+fn substitute(
+    pattern: &str,
+    version: &str,
+    tag: &str,
+    target: Option<&str>,
+) -> Result<String, String> {
+    let mut value = pattern.replace("{version}", version).replace("{tag}", tag);
     if let Some(target) = target {
         value = value.replace("{target}", target);
     }
@@ -182,19 +178,6 @@ impl Outputs {
     }
 }
 
-impl Bins {
-    /// Every exported command resolved to its path in the installed tree.
-    fn resolved(&self) -> BTreeMap<String, PathBuf> {
-        match self {
-            Self::Names(names) => names
-                .iter()
-                .map(|name| (name.clone(), PathBuf::from("bin").join(name)))
-                .collect(),
-            Self::Paths(paths) => paths.clone(),
-        }
-    }
-}
-
 impl Recipe {
     pub(super) fn expand(&self) -> Result<super::PackageDefinition, String> {
         if self.platforms.is_empty() {
@@ -205,7 +188,10 @@ impl Recipe {
             let mut platforms = BTreeMap::new();
             for (system, digest) in &entry.digests {
                 let platform = self.platforms.get(system).ok_or_else(|| {
-                    format!("{}@{version}: {system} has a digest but no platform", self.name)
+                    format!(
+                        "{}@{version}: {system} has a digest but no platform",
+                        self.name
+                    )
                 })?;
                 let spec = self
                     .shared
@@ -281,7 +267,7 @@ impl Recipe {
             build: None,
             asset: None,
             sha256: Some(digest.to_string()),
-            bins: outputs.bins.as_ref().map(Bins::resolved).unwrap_or_default(),
+            bins: outputs.bins.clone().unwrap_or_default(),
             apps: outputs.apps.clone().unwrap_or_default(),
             checks: outputs.checks.clone().unwrap_or_default(),
             mirror: false,
@@ -310,11 +296,17 @@ impl Recipe {
                 }
             }
         } else if let Some(source) = &spec.source {
-            let build = spec.build.as_ref().ok_or("a source platform needs a build")?;
+            let build = spec
+                .build
+                .as_ref()
+                .ok_or("a source platform needs a build")?;
             let mut build = build.clone();
             build.sha256 = digest.to_string();
             build.url = substitute(
-                source.url.as_deref().ok_or("a source platform needs a URL")?,
+                source
+                    .url
+                    .as_deref()
+                    .ok_or("a source platform needs a URL")?,
                 version,
                 &tag,
                 target,
@@ -351,30 +343,6 @@ impl Recipe {
                 ))
             })
             .collect()
-    }
-}
-
-/// The outputs a package declares before any platform narrows them.
-pub(super) struct SharedOutputs {
-    pub bins: BTreeMap<String, PathBuf>,
-    pub apps: BTreeMap<String, PathBuf>,
-    pub checks: Vec<Vec<String>>,
-    pub mirror: bool,
-}
-
-impl Recipe {
-    pub(super) fn shared_outputs(&self) -> SharedOutputs {
-        let outputs = self.shared.outputs.clone().unwrap_or_default();
-        SharedOutputs {
-            bins: outputs.bins.as_ref().map(Bins::resolved).unwrap_or_default(),
-            apps: outputs.apps.unwrap_or_default(),
-            checks: outputs.checks.unwrap_or_default(),
-            mirror: self.shared.prebuilt.as_ref().is_some_and(|p| p.mirror),
-        }
-    }
-
-    pub(super) fn shared_build(&self) -> Option<crate::SourceBuild> {
-        self.shared.build.clone()
     }
 }
 
@@ -468,11 +436,11 @@ mod tests {
     #[test]
     fn bins_accept_a_list_or_a_map_of_paths() {
         let named: Outputs = serde_json::from_str(r#"{"bins":["fd"]}"#).unwrap();
-        assert!(matches!(named.bins, Some(Bins::Names(ref v)) if v == &["fd"]));
+        assert!(matches!(named.bins, Some(crate::Bins::Names(ref v)) if v == &["fd"]));
 
         let located: Outputs =
             serde_json::from_str(r#"{"bins":{"kitty":"kitty.app/Contents/MacOS/kitty"}}"#).unwrap();
-        assert!(matches!(located.bins, Some(Bins::Paths(ref m)) if m.contains_key("kitty")));
+        assert!(matches!(located.bins, Some(crate::Bins::Paths(ref m)) if m.contains_key("kitty")));
     }
 
     #[test]

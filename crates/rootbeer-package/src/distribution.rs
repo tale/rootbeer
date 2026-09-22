@@ -14,6 +14,8 @@ pub const RECORD_LIMIT: usize = 1024 * 1024;
 pub struct PackageRecord {
     pub schema: u32,
     pub system: String,
+    /// The catalog revision this qualification was produced for.
+    pub revision: u32,
     pub recipe: CatalogRecipe,
     pub artifact: PublishedArtifact,
     pub provenance: PackageProvenance,
@@ -157,7 +159,7 @@ impl PackageRecord {
         match (&self.recipe.build, &self.provenance) {
             (_, PackageProvenance::Retained(provenance)) => {
                 self.artifact
-                    .validate(&package.id(), &self.system, &self.recipe)?;
+                    .validate(&package.id(), &self.system, self.revision, &self.recipe)?;
                 crate::runtime::closure(package)?;
                 provenance.approval.index.validate()?;
                 provenance.receipt.validate()?;
@@ -169,7 +171,7 @@ impl PackageRecord {
             }
             (Some(_), PackageProvenance::Source(provenance)) => {
                 self.artifact
-                    .validate(&package.id(), &self.system, &self.recipe)?;
+                    .validate(&package.id(), &self.system, self.revision, &self.recipe)?;
                 provenance.validate(&self.system)
             }
             (None, PackageProvenance::Upstream(provenance)) => {
@@ -179,14 +181,14 @@ impl PackageRecord {
                     package: provenance.upstream.clone(),
                     ..self.artifact.clone()
                 }
-                .validate(&package.id(), &self.system, &recipe)?;
+                .validate(&package.id(), &self.system, self.revision, &recipe)?;
                 if !matches!(&provenance.upstream.source, crate::LockedSource::Url { url, .. } if url.starts_with("https://"))
                 {
                     return Err("upstream evidence requires an HTTPS artifact".into());
                 }
                 recipe.mirror = true;
                 self.artifact
-                    .validate(&package.id(), &self.system, &recipe)?;
+                    .validate(&package.id(), &self.system, self.revision, &recipe)?;
                 let mut expected = provenance.upstream.clone();
                 expected.source = package.source.clone();
                 expected.install = crate::LockedInstall::Archive {
@@ -332,6 +334,7 @@ mod tests {
             extra: Default::default(),
             schema: 1,
             system: "aarch64-linux".into(),
+            revision: index.catalog.packages[&package.name].versions[&package.version].revision,
             recipe: index.catalog.packages[&package.name].versions[&package.version]
                 .for_system("aarch64-linux")
                 .unwrap()
