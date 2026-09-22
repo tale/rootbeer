@@ -53,7 +53,8 @@ fn search(args: Args) -> Result<(), String> {
             package.description,
             versions
                 .iter()
-                .flat_map(|version| package.versions[*version].for_system(&system).bins)
+                .filter_map(|version| package.versions[*version].for_system(&system))
+                .flat_map(|recipe| recipe.bins.names().into_iter().cloned())
                 .collect::<Vec<_>>()
                 .join(" ")
         )

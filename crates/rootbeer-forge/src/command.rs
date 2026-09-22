@@ -430,16 +430,17 @@ fn execute(args: Args) -> Result<(), String> {
         Command::List => {
             let system = rootbeer_packaging::ResolveContext::current().system;
             for package in catalog()?.packages.values() {
-                let version = package.default_version_for(&system);
+                let Some(version) = package.default_version_for(&system) else {
+                    continue;
+                };
                 writeln!(
                     output,
                     "{}\t{}\t{}\t{}",
                     package.name,
                     version,
-                    if package.versions[version].build.is_some() {
-                        "source"
-                    } else {
-                        "binary"
+                    match package.versions[version].for_system(&system) {
+                        Some(recipe) if recipe.build.is_some() => "source",
+                        _ => "binary",
                     },
                     package.description
                 )
@@ -452,35 +453,37 @@ fn execute(args: Args) -> Result<(), String> {
                 .ok_or_else(|| format!("unknown catalog package `{name}`"))?;
             writeln!(
                 output,
-                "{} — {}\n{}\ndefault: {}\naliases: {}",
+                "{} — {}\n{}\naliases: {}",
                 package.name,
                 package.description,
                 package.homepage,
-                package.default_version,
                 package.aliases.join(", ")
             )
             .map_err(|e| e.to_string())?;
             for (system, version) in &package.default_versions {
                 writeln!(output, "default for {system}: {version}").map_err(|e| e.to_string())?;
             }
-            for (version, recipe) in &package.versions {
-                writeln!(
-                    output,
-                    "\n{version} (revision {})\n  source: {}\n  systems: {}\n  commands: {}",
-                    recipe.revision,
-                    recipe
-                        .source
-                        .as_deref()
-                        .unwrap_or("source build (binary not published)"),
-                    recipe
-                        .supported_systems()
-                        .into_iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    recipe.bins.join(", ")
-                )
-                .map_err(|e| e.to_string())?;
+            for (version, entry) in &package.versions {
+                writeln!(output, "\n{version} (revision {})", entry.revision)
+                    .map_err(|e| e.to_string())?;
+                for (system, recipe) in &entry.platforms {
+                    writeln!(
+                        output,
+                        "  {system}: {}\n    commands: {}",
+                        recipe
+                            .source
+                            .as_deref()
+                            .unwrap_or("source build (binary not published)"),
+                        recipe
+                            .bins
+                            .names()
+                            .into_iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
             }
         }
         Command::Check => {
