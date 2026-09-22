@@ -6,7 +6,7 @@ use mlua::LuaSerdeExt;
 use serde::{Deserialize, Serialize};
 
 pub mod lua;
-use super::{CatalogPackage, GitHubUpstream};
+use super::CatalogPackage;
 
 mod recipe;
 
@@ -18,19 +18,88 @@ pub struct PackageDefinition {
     authoring: Option<recipe::Recipe>,
 }
 
-/// Authoring metadata excluded from published catalogs and qualification fingerprints.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "provider", rename_all = "lowercase", deny_unknown_fields)]
-pub enum PackageUpstream {
-    Github {
-        repository: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        repository_id: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        tag_prefix: Option<String>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        exclude_tags: Vec<String>,
-    },
+/// Where discovery finds new versions for one or more platforms.
+///
+/// Authoring metadata only: it never reaches a published catalog, so a new provider is an
+/// engine change rather than a client break.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackageUpstream {
+    #[serde(flatten)]
+    pub provider: UpstreamProvider,
+    /// Pins the GitHub repository's identity so a rename or takeover is noticed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_id: Option<u64>,
+    /// Release tag for a version, such as `v{version}`; `{version}` alone when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// Replaces the dots of a version inside its tag, for tags such as `curl-8_22_0`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub separator: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamProvider {
+    Github(String),
+}
+
+impl PackageUpstream {
+    pub fn repository(&self) -> &str {
+        let UpstreamProvider::Github(repository) = &self.provider;
+        repository
+    }
+
+    fn tag_template(&self) -> &str {
+        self.tag.as_deref().unwrap_or("{version}")
+    }
+
+    /// The release tag that publishes `version`.
+    pub fn tag_for(&self, version: &str) -> String {
+        let version = match &self.separator {
+            Some(separator) => version.replace('.', separator),
+            None => version.to_string(),
+        };
+        self.tag_template().replace("{version}", &version)
+    }
+
+    /// The version a release tag publishes, when the tag belongs to this upstream.
+    pub fn version_of(&self, tag: &str) -> Option<String> {
+        let (prefix, suffix) = self.tag_template().split_once("{version}")?;
+        let version = tag.strip_prefix(prefix)?.strip_suffix(suffix)?;
+        if version.is_empty() {
+            return None;
+        }
+        Some(match &self.separator {
+            Some(separator) => version.replace(separator.as_str(), "."),
+            None => version.to_string(),
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        super::github::repository(self.repository())?;
+        if self.repository_id == Some(0) {
+            return Err("invalid repository ID".into());
+        }
+        let template = self.tag_template();
+        if template.matches("{version}").count() != 1
+            || template.replace("{version}", "").contains(['{', '}'])
+        {
+            return Err(format!(
+                "upstream tag `{template}` must contain `{{version}}` exactly once"
+            ));
+        }
+        if self
+            .separator
+            .as_deref()
+            .is_some_and(|separator| separator.is_empty() || separator == ".")
+        {
+            return Err("an upstream separator replaces `.` with something else".into());
+        }
+        Ok(())
+    }
 }
 
 impl PackageDefinition {
@@ -102,36 +171,38 @@ impl PackageDefinition {
         Ok(())
     }
 
-    /// Discovery rules for this package, when any platform declares a GitHub upstream.
-    pub fn github_rules(&self) -> Option<GitHubUpstream> {
-        let mut systems: Vec<String> = Vec::new();
-        let mut rules = None;
-        for (
-            system,
-            PackageUpstream::Github {
-                repository,
-                repository_id,
-                tag_prefix,
-                exclude_tags,
-            },
-        ) in &self.upstream
-        {
-            systems.push(system.clone());
-            rules.get_or_insert_with(|| {
-                let mut upstream =
-                    GitHubUpstream::new(self.package.name.clone(), repository.clone());
-                upstream.repository_id = *repository_id;
-                upstream.tag_prefix = tag_prefix.clone();
-                upstream.exclude_tags = exclude_tags.clone();
-                upstream.aliases = self.package.aliases.clone();
-                upstream.description = Some(self.package.description.clone());
-                upstream.homepage = Some(self.package.homepage.clone());
-                upstream
-            });
+    /// Each distinct upstream and the platforms it discovers versions for.
+    pub fn upstreams(&self) -> Vec<(PackageUpstream, Vec<String>)> {
+        let mut groups: Vec<(PackageUpstream, Vec<String>)> = Vec::new();
+        for (system, upstream) in &self.upstream {
+            match groups.iter_mut().find(|(known, _)| known == upstream) {
+                Some((_, systems)) => systems.push(system.clone()),
+                None => groups.push((upstream.clone(), vec![system.clone()])),
+            }
         }
-        let mut upstream = rules?;
-        upstream.systems = systems;
-        Some(upstream)
+        groups
+    }
+
+    /// What `system` would download for a version not yet recorded, from its templates.
+    ///
+    /// Discovery pins the digest of exactly this asset or archive, so the digest and the
+    /// download cannot come from different templates.
+    pub fn candidate(&self, system: &str, version: &str) -> Result<super::CatalogRecipe, String> {
+        self.authoring
+            .as_ref()
+            .ok_or("resolving a candidate requires an authored recipe")?
+            .candidate(system, version)
+    }
+
+    /// Pins a repository ID wherever `repository` is declared without one.
+    pub fn pin_repository_id(&mut self, repository: &str, id: u64) -> Result<(), String> {
+        let mut recipe = self
+            .authoring
+            .clone()
+            .ok_or("pinning an upstream requires an authored recipe")?;
+        recipe.pin_repository_id(repository, id);
+        *self = recipe.expand()?;
+        Ok(())
     }
 
     /// Every platform this recipe declares, whether or not a version covers it.
@@ -186,7 +257,7 @@ mod tests {
         let repositories: Vec<_> = definition
             .upstream
             .values()
-            .map(|PackageUpstream::Github { repository, .. }| repository.as_str())
+            .map(PackageUpstream::repository)
             .collect();
         assert_eq!(
             repositories,
@@ -219,6 +290,73 @@ mod tests {
         );
         let definition = PackageDefinition::from_lua(&source).unwrap_err();
         assert!(definition.contains("x86_64-linux"), "{definition}");
+    }
+
+    fn upstream(fields: &str) -> Result<PackageUpstream, String> {
+        let (lua, value) =
+            lua::evaluate(&format!("return {{ github = \"owner/tool\", {fields} }}"))?;
+        let upstream: PackageUpstream = lua.from_value(value).map_err(|error| error.to_string())?;
+        upstream.validate().map(|()| upstream)
+    }
+
+    #[test]
+    fn a_tag_template_round_trips_versions_through_tags() {
+        let curl = upstream(r#"tag = "curl-{version}", separator = "_""#).unwrap();
+        assert_eq!(curl.tag_for("8.22.0"), "curl-8_22_0");
+        assert_eq!(curl.version_of("curl-8_22_0").as_deref(), Some("8.22.0"));
+        assert_eq!(curl.version_of("tiny-curl-8_4_0"), None);
+        assert_eq!(curl.version_of("curl-"), None);
+
+        let bare = upstream("").unwrap();
+        assert_eq!(bare.tag_for("1.2"), "1.2");
+        assert_eq!(
+            bare.version_of("v1.2").as_deref(),
+            Some("v1.2"),
+            "no implicit v"
+        );
+    }
+
+    #[test]
+    fn upstream_authoring_is_strict() {
+        for invalid in [
+            r#"tag_prefix = "v""#,
+            r#"tag = "v""#,
+            r#"tag = "{version}-{version}""#,
+            r#"tag = "{tag}{version}""#,
+            r#"separator = ".""#,
+            "repository_id = 0",
+        ] {
+            assert!(upstream(invalid).is_err(), "accepted `{invalid}`");
+        }
+    }
+
+    #[test]
+    fn a_platform_upstream_overrides_the_shared_one() {
+        let source = HELIUM
+            .replace(r#"upstream = { github = "imputnet/helium-linux" },"#, "")
+            .replace(
+                r#"default_license = "GPL-3.0-only","#,
+                r#"default_license = "GPL-3.0-only", upstream = { github = "imputnet/helium-linux" },"#,
+            );
+        let definition = PackageDefinition::from_lua(&source).unwrap();
+        let groups: Vec<_> = definition
+            .upstreams()
+            .into_iter()
+            .map(|(upstream, systems)| (upstream.repository().to_string(), systems))
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                (
+                    "imputnet/helium-macos".to_string(),
+                    vec!["aarch64-macos".to_string()]
+                ),
+                (
+                    "imputnet/helium-linux".to_string(),
+                    vec!["x86_64-linux".to_string()]
+                ),
+            ]
+        );
     }
 
     #[test]

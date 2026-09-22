@@ -38,7 +38,7 @@ pub use build_spec::{
 pub use catalog::{
     Bins, CatalogPackage, CatalogProof, CatalogRecipe, CatalogVersion, ExtraFields, PackageCatalog,
 };
-pub use definition::{PackageDefinition, PackageUpstream};
+pub use definition::{PackageDefinition, PackageUpstream, UpstreamProvider};
 pub use github::GitHubResolver;
 pub use index::{PackageIndexPin, PublishedIndexProof};
 pub use inputs::{GitHubRepositoryPin, PackageResolverInputs, ResolverInput};
@@ -54,7 +54,6 @@ pub use resolve::{
 pub use spec::{
     ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRealizationInput, Provides,
 };
-pub use upstream::GitHubUpstream;
 
 pub fn default_resolver_stack() -> ResolverStack {
     resolver_stack_for_inputs(&PackageResolverInputs::default())

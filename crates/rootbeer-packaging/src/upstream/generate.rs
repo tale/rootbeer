@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
 
-use super::{GitHubUpstream, Repository};
-use crate::ResolveContext;
-use rootbeer_package::github::{select_asset, Release};
-use rootbeer_package::PackageDefinition;
+use rootbeer_package::github::Release;
+use rootbeer_package::{PackageDefinition, PackageUpstream};
 
 fn version_key(version: &str) -> Result<Vec<u64>, String> {
     if version.is_empty()
@@ -28,273 +26,180 @@ fn version_key(version: &str) -> Result<Vec<u64>, String> {
     Ok(parts)
 }
 
-fn release_version<'a>(
-    upstream: &GitHubUpstream,
-    release: &'a Release,
-) -> Result<Option<&'a str>, String> {
-    if release.draft || release.prerelease || upstream.exclude_tags.contains(&release.tag_name) {
-        return Ok(None);
-    }
-    let version = match &upstream.tag_prefix {
-        Some(prefix) => release.tag_name.strip_prefix(prefix),
-        None => Some(
-            release
-                .tag_name
-                .strip_prefix('v')
-                .unwrap_or(&release.tag_name),
-        ),
-    };
-    Ok(version.filter(|version| version_key(version).is_ok()))
-}
-
-fn pattern(asset: &str, tag: &str, version: &str) -> String {
-    if asset.contains(tag) {
-        return asset.replace(tag, "{tag}");
-    }
-    asset.replace(version, "{version}")
-}
-
-/// Selects the newest release each platform can install, and records its digest.
-///
-/// Version selection is unchanged: drafts, prereleases and excluded tags are skipped, tags
-/// that normalize to the same version are rejected rather than guessed between, and a
-/// platform whose asset disappeared keeps the version it already had. What changed is the
-/// output — a version entry naming each platform and the digest it published, instead of a
-/// synthesized recipe carrying a copy of the package's contract.
-pub(super) fn package(
-    upstream: &mut GitHubUpstream,
-    repository: &Repository,
+/// Stable versions an upstream publishes, ordered oldest to newest.
+fn stable_versions(
+    upstream: &PackageUpstream,
     releases: &[Release],
-    definition: &mut PackageDefinition,
-) -> Result<(), String> {
-    if upstream.mirror {
-        return Err(format!(
-            "{}: mirrored updates require manual checksum qualification",
-            upstream.name
-        ));
-    }
+) -> Result<BTreeMap<Vec<u64>, String>, String> {
     let mut ordered = BTreeMap::new();
     for release in releases {
-        let Some(version) = release_version(upstream, release)? else {
+        if release.draft || release.prerelease || upstream.exclude_tags.contains(&release.tag_name)
+        {
+            continue;
+        }
+        let Some(version) = upstream.version_of(&release.tag_name) else {
             continue;
         };
-        if ordered
-            .insert(version_key(version)?, (version, release))
-            .is_some()
-        {
+        let Ok(key) = version_key(&version) else {
+            continue;
+        };
+        if ordered.insert(key, version.clone()).is_some() {
             return Err(format!(
-                "multiple release tags normalize to version `{version}`; restrict tag_prefix"
+                "multiple release tags normalize to version `{version}`; narrow the upstream tag"
             ));
         }
     }
-    if ordered.is_empty() {
-        return Err(format!("{}: no matching stable releases", upstream.name));
+    Ok(ordered)
+}
+
+/// The digest of exactly what `system` downloads for `version`, or None when that release
+/// does not publish it.
+fn pin(
+    definition: &PackageDefinition,
+    upstream: &PackageUpstream,
+    system: &str,
+    version: &str,
+    releases: &[Release],
+    hash: &mut impl FnMut(&str) -> Result<String, String>,
+) -> Result<Option<String>, String> {
+    let candidate = definition.candidate(system, version)?;
+    if let Some(build) = &candidate.build {
+        return hash(&build.url).map(Some);
     }
-    if upstream.description.is_none() {
-        upstream.description = repository.description.clone();
+    let source = candidate
+        .source
+        .as_deref()
+        .ok_or("a candidate downloads nothing")?;
+    let Some(name) = &candidate.asset else {
+        return hash(source).map(Some);
+    };
+    let (repository, tag) = source
+        .strip_prefix("github:")
+        .and_then(|reference| reference.rsplit_once('@'))
+        .ok_or_else(|| format!("unsupported release source `{source}`"))?;
+    if !repository.eq_ignore_ascii_case(upstream.repository()) {
+        return Err(format!(
+            "downloads from {repository}, but discovers from {}",
+            upstream.repository()
+        ));
     }
-    if upstream.homepage.is_none() {
-        upstream.homepage = repository
-            .homepage
-            .clone()
-            .filter(|url| url.starts_with("https://"));
+    let Some(asset) = releases
+        .iter()
+        .find(|release| release.tag_name == tag)
+        .and_then(|release| release.assets.iter().find(|asset| &asset.name == name))
+    else {
+        return Ok(None);
+    };
+    // Pinning the digest upstream published closes the window where an asset is replaced
+    // between discovery proposing a version and CI qualifying it.
+    let digest = asset
+        .sha256()
+        .ok_or_else(|| format!("release asset `{name}` publishes no sha256 digest"))?;
+    Ok(Some(digest.to_string()))
+}
+
+/// Advances each platform to the newest release that publishes what it downloads.
+///
+/// A platform never moves below its current version, and one whose asset is missing from
+/// newer releases stays where it is. Errors are returned per platform rather than raised,
+/// so one platform's failure cannot hold the others back.
+pub(super) fn discover(
+    upstream: &PackageUpstream,
+    systems: &[String],
+    releases: &[Release],
+    definition: &mut PackageDefinition,
+    mut hash: impl FnMut(&str) -> Result<String, String>,
+) -> Result<Vec<String>, String> {
+    let versions = stable_versions(upstream, releases)?;
+    if versions.is_empty() {
+        return Err("no matching stable releases".into());
     }
 
-    let platforms = definition.platforms();
-    let mut selected: BTreeMap<String, (String, BTreeMap<String, String>)> = BTreeMap::new();
-    for system in &platforms {
-        if !upstream.systems.is_empty() && !upstream.systems.contains(system) {
-            continue;
+    let mut hashed: BTreeMap<String, String> = BTreeMap::new();
+    let mut hash_once = |url: &str| {
+        if let Some(digest) = hashed.get(url) {
+            return Ok(digest.clone());
         }
-        let previous = definition.package.default_version_for(system);
-        let minimum = previous.map(version_key).transpose()?;
-        let mut choice = None;
-        for (key, (version, release)) in ordered.iter().rev() {
-            if minimum.as_ref().is_some_and(|minimum| key < minimum) {
-                break;
-            }
-            let expected = upstream.assets.get(system).map(|pattern| {
-                pattern
-                    .replace("{tag}", &release.tag_name)
-                    .replace("{version}", version)
-            });
-            if expected
-                .as_ref()
-                .is_some_and(|name| !release.assets.iter().any(|asset| &asset.name == name))
-            {
+        let digest = hash(url)?;
+        hashed.insert(url.to_string(), digest.clone());
+        Ok(digest)
+    };
+    let mut selected: BTreeMap<&str, BTreeMap<String, String>> = BTreeMap::new();
+    let mut errors = Vec::new();
+    for system in systems {
+        let current = definition
+            .package
+            .default_version_for(system)
+            .map(version_key)
+            .transpose();
+        let current = match current {
+            Ok(current) => current,
+            Err(error) => {
+                errors.push(format!("{system}: {error}"));
                 continue;
             }
-            let asset = match select_asset(
-                &release.assets,
-                expected.as_deref(),
-                &ResolveContext::new(system),
-            ) {
-                Ok(asset) => asset,
-                Err(error) if error.starts_with("no GitHub release asset matches") => continue,
-                Err(error) => {
-                    return Err(format!(
-                        "{}@{} on {system}: {error}",
-                        upstream.name, release.tag_name
-                    ))
-                }
-            };
-            choice = Some((*version, *release, asset));
-            break;
-        }
-        let Some((version, release, asset)) = choice else {
-            if previous.is_none() {
-                return Err(format!("{}: no supported release for {system}; provide an asset rule or explicitly narrow systems", upstream.name));
-            }
-            continue;
         };
-        // Pinning the digest upstream published closes the window where an asset is
-        // replaced between discovery proposing a version and CI qualifying it.
-        let digest = asset.sha256().ok_or_else(|| {
-            format!(
-                "{}@{version} on {system}: release asset publishes no sha256 digest",
-                upstream.name
-            )
-        })?;
-        selected
-            .entry(version.to_string())
-            .or_default()
-            .1
-            .insert(system.clone(), digest.to_string());
-        upstream
-            .assets
-            .entry(system.clone())
-            .or_insert_with(|| pattern(&asset.name, &release.tag_name, version));
+        for (key, version) in versions.iter().rev() {
+            if current.as_ref().is_some_and(|current| key <= current) {
+                break;
+            }
+            match pin(
+                definition,
+                upstream,
+                system,
+                version,
+                releases,
+                &mut hash_once,
+            ) {
+                Ok(Some(digest)) => {
+                    selected
+                        .entry(version)
+                        .or_default()
+                        .insert(system.clone(), digest);
+                    break;
+                }
+                Ok(None) => continue,
+                Err(error) => {
+                    errors.push(format!("{system}: {error}"));
+                    break;
+                }
+            }
+        }
     }
 
-    for (version, (_, digests)) in &selected {
-        definition.add_version(version, digests.clone(), None)?;
-        for system in digests.keys() {
+    for (version, digests) in selected {
+        let systems: Vec<String> = digests.keys().cloned().collect();
+        definition.add_version(version, digests, None)?;
+        for system in &systems {
             definition.set_default_version(system, version)?;
         }
     }
-    upstream.aliases = definition.package.aliases.clone();
-    Ok(())
-}
-
-/// Advances a source-built package to the newest release, hashing its archive.
-///
-/// The build template still drives `{version}`/`{tag}` substitution and a retained release
-/// is left alone. The digest now lives on the version entry, one per platform, because a
-/// source build produces one archive that every platform compiles.
-pub(super) fn source_package(
-    upstream: &GitHubUpstream,
-    releases: &[Release],
-    definition: &mut PackageDefinition,
-    mut hash_source: impl FnMut(&str) -> Result<String, String>,
-) -> Result<(), String> {
-    let mut ordered = BTreeMap::new();
-    for release in releases {
-        let Some(version) = release_version(upstream, release)? else {
-            continue;
-        };
-        if ordered
-            .insert(version_key(version)?, (version, release))
-            .is_some()
-        {
-            return Err(format!(
-                "multiple release tags normalize to version `{version}`; restrict tag_prefix"
-            ));
-        }
-    }
-    let (key, (version, release)) = ordered
-        .last_key_value()
-        .ok_or("no matching stable source releases")?;
-
-    let platforms: Vec<String> = definition
-        .platforms()
-        .into_iter()
-        .filter(|system| upstream.systems.is_empty() || upstream.systems.contains(system))
-        .collect();
-    let current = platforms
-        .iter()
-        .filter_map(|system| definition.package.default_version_for(system))
-        .map(version_key)
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .max();
-    if current.is_some_and(|current| *key <= current) {
-        return Ok(());
-    }
-
-    let mut build = upstream
-        .build
-        .clone()
-        .ok_or("source discovery requires a build template")?;
-    build.url = build
-        .url
-        .replace("{version}", version)
-        .replace("{tag}", &release.tag_name);
-    build.strip_prefix = build
-        .strip_prefix
-        .to_string_lossy()
-        .replace("{version}", version)
-        .replace("{tag}", &release.tag_name)
-        .into();
-    if let Some(go) = &mut build.go {
-        for value in go.variables.values_mut() {
-            *value = value
-                .replace("{version}", version)
-                .replace("{tag}", &release.tag_name);
-            if value.contains(['{', '}']) {
-                return Err("unsupported placeholder in Go discovery template".into());
-            }
-        }
-    }
-    if build.url.contains(['{', '}']) || build.strip_prefix.to_string_lossy().contains(['{', '}']) {
-        return Err("unsupported placeholder in source discovery template".into());
-    }
-
-    let digest = hash_source(&build.url)?;
-    let digests = platforms
-        .iter()
-        .map(|system| (system.clone(), digest.clone()))
-        .collect::<BTreeMap<_, _>>();
-    definition.add_version(version, digests, None)?;
-    for system in &platforms {
-        definition.set_default_version(system, version)?;
-    }
-    Ok(())
+    Ok(errors)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rootbeer_package::PackageDefinition;
 
-    /// Digests are mandatory, so every release asset must publish one.
+    /// A distinct digest per asset name, so a test can tell which asset was pinned.
+    fn digest_of(name: &str) -> String {
+        let hex: String = name.bytes().map(|byte| format!("{byte:02x}")).collect();
+        format!("{hex:0<64}")[..64].to_string()
+    }
+
     fn release(tag: &str, assets: &[&str]) -> Release {
         serde_json::from_value(serde_json::json!({
             "id": 1, "tag_name": tag,
             "assets": assets.iter().map(|name| serde_json::json!({
                 "name": name,
                 "browser_download_url": "https://example.com/archive",
-                "digest": format!("sha256:{}", "a".repeat(64)),
+                "digest": format!("sha256:{}", digest_of(name)),
             })).collect::<Vec<_>>()
         }))
         .unwrap()
     }
 
-    fn repository() -> Repository {
-        Repository {
-            id: 42,
-            full_name: "owner/tool".into(),
-            description: Some("A tool".into()),
-            homepage: None,
-        }
-    }
-
-    fn upstream() -> GitHubUpstream {
-        let mut upstream = GitHubUpstream::new("tool".into(), "owner/tool".into());
-        upstream.systems = vec!["aarch64-macos".into(), "x86_64-linux".into()];
-        upstream
-    }
-
-    fn definition(version: &str, systems: &[&str]) -> PackageDefinition {
+    fn definition(upstream: &str, version: &str, systems: &[&str]) -> PackageDefinition {
         let platforms = systems
             .iter()
             .map(|system| {
@@ -311,6 +216,7 @@ mod tests {
             r#"return {{
                 name = "tool", description = "A tool", homepage = "https://example.com",
                 default_license = "MIT",
+                upstream = {upstream},
                 prebuilt = {{ github = "owner/tool", asset = "tool-{{version}}-{{target}}.tar.gz" }},
                 outputs = {{ bins = {{ "tool" }}, checks = {{ {{ "tool", "--version" }} }} }},
                 platforms = {{ {platforms} }},
@@ -320,9 +226,25 @@ mod tests {
         .unwrap()
     }
 
+    const UPSTREAM: &str = r#"{ github = "owner/tool" }"#;
+
+    fn run(recipe: &mut PackageDefinition, releases: &[Release]) -> Vec<String> {
+        let upstream = recipe.upstreams().remove(0);
+        discover(&upstream.0, &upstream.1, releases, recipe, |url| {
+            panic!("a prebuilt must not download {url}")
+        })
+        .unwrap()
+    }
+
+    fn pinned(recipe: &PackageDefinition, version: &str, system: &str) -> Option<String> {
+        recipe.package.versions[version].platforms[system]
+            .sha256
+            .clone()
+    }
+
     #[test]
     fn selects_the_highest_version_each_platform_can_install() {
-        let mut recipe = definition("1", &["aarch64-macos", "x86_64-linux"]);
+        let mut recipe = definition(UPSTREAM, "1", &["aarch64-macos", "x86_64-linux"]);
         let releases = [
             release(
                 "2",
@@ -333,16 +255,15 @@ mod tests {
                 &["tool-1-aarch64-macos.tar.gz", "tool-1-x86_64-linux.tar.gz"],
             ),
         ];
-        package(&mut upstream(), &repository(), &releases, &mut recipe).unwrap();
+        assert!(run(&mut recipe, &releases).is_empty());
 
-        assert_eq!(
-            recipe.package.default_version_for("aarch64-macos"),
-            Some("2")
-        );
-        assert_eq!(
-            recipe.package.default_version_for("x86_64-linux"),
-            Some("2")
-        );
+        for system in ["aarch64-macos", "x86_64-linux"] {
+            assert_eq!(recipe.package.default_version_for(system), Some("2"));
+            assert_eq!(
+                pinned(&recipe, "2", system),
+                Some(digest_of(&format!("tool-2-{system}.tar.gz")))
+            );
+        }
         assert!(
             recipe.package.versions.contains_key("1"),
             "retains the old version"
@@ -350,8 +271,26 @@ mod tests {
     }
 
     #[test]
+    fn pins_the_asset_its_template_names_rather_than_a_lookalike() {
+        let mut recipe = definition(UPSTREAM, "1", &["aarch64-macos"]);
+        let releases = [release(
+            "2",
+            &[
+                "tool-2-aarch64-macos-debug.tar.gz",
+                "tool-2-aarch64-macos.tar.gz",
+                "tool-2-aarch64-macos.tar.gz.sha256",
+            ],
+        )];
+        run(&mut recipe, &releases);
+        assert_eq!(
+            pinned(&recipe, "2", "aarch64-macos"),
+            Some(digest_of("tool-2-aarch64-macos.tar.gz"))
+        );
+    }
+
+    #[test]
     fn a_platform_whose_asset_disappeared_keeps_the_version_it_had() {
-        let mut recipe = definition("1", &["aarch64-macos", "x86_64-linux"]);
+        let mut recipe = definition(UPSTREAM, "1", &["aarch64-macos", "x86_64-linux"]);
         let releases = [
             release("2", &["tool-2-aarch64-macos.tar.gz"]),
             release(
@@ -359,8 +298,7 @@ mod tests {
                 &["tool-1-aarch64-macos.tar.gz", "tool-1-x86_64-linux.tar.gz"],
             ),
         ];
-        package(&mut upstream(), &repository(), &releases, &mut recipe).unwrap();
-
+        assert!(run(&mut recipe, &releases).is_empty());
         assert_eq!(
             recipe.package.default_version_for("aarch64-macos"),
             Some("2")
@@ -370,55 +308,89 @@ mod tests {
             Some("1"),
             "a platform without an asset must not be dragged forward"
         );
+        assert!(!recipe.package.versions["2"]
+            .platforms
+            .contains_key("x86_64-linux"));
     }
 
     #[test]
-    fn updating_one_platform_leaves_the_others_alone() {
-        let mut recipe = definition("1", &["aarch64-macos", "x86_64-linux"]);
-        let mut rules = upstream();
-        rules.systems = vec!["aarch64-macos".into()];
-        let releases = [
-            release(
-                "2",
-                &["tool-2-aarch64-macos.tar.gz", "tool-2-x86_64-linux.tar.gz"],
-            ),
-            release(
-                "1",
-                &["tool-1-aarch64-macos.tar.gz", "tool-1-x86_64-linux.tar.gz"],
-            ),
-        ];
-        package(&mut rules, &repository(), &releases, &mut recipe).unwrap();
+    fn a_failing_platform_does_not_hold_back_the_others() {
+        let mut recipe = definition(UPSTREAM, "1", &["aarch64-macos", "x86_64-linux"]);
+        let mut releases = [release(
+            "2",
+            &["tool-2-aarch64-macos.tar.gz", "tool-2-x86_64-linux.tar.gz"],
+        )];
+        releases[0].assets[1] = serde_json::from_value(serde_json::json!({
+            "name": "tool-2-x86_64-linux.tar.gz",
+            "browser_download_url": "https://example.com/archive"
+        }))
+        .unwrap();
+        let errors = run(&mut recipe, &releases);
 
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].starts_with("x86_64-linux: "), "{errors:?}");
+        assert!(errors[0].contains("no sha256 digest"), "{errors:?}");
         assert_eq!(
             recipe.package.default_version_for("aarch64-macos"),
             Some("2")
         );
         assert_eq!(
             recipe.package.default_version_for("x86_64-linux"),
-            Some("1"),
-            "an untargeted platform must not move"
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn a_tag_template_maps_versions_and_their_separators() {
+        let mut recipe = definition(
+            r#"{ github = "owner/tool", tag = "tool-{version}", separator = "_" }"#,
+            "8.21.0",
+            &["aarch64-macos"],
+        );
+        let releases = [
+            release("tool-8_22_0", &["tool-8.22.0-aarch64-macos.tar.gz"]),
+            release("other-9_0_0", &["tool-9.0.0-aarch64-macos.tar.gz"]),
+            release("tool-8_21_0", &["tool-8.21.0-aarch64-macos.tar.gz"]),
+        ];
+        run(&mut recipe, &releases);
+        assert_eq!(
+            recipe.package.default_version_for("aarch64-macos"),
+            Some("8.22.0")
+        );
+        assert_eq!(
+            recipe.package.versions["8.22.0"].platforms["aarch64-macos"]
+                .source
+                .as_deref(),
+            Some("github:owner/tool@tool-8_22_0")
         );
     }
 
     #[test]
     fn tags_that_normalize_to_one_version_are_rejected_rather_than_guessed() {
-        let mut recipe = definition("1", &["aarch64-macos"]);
-        let mut rules = upstream();
-        rules.systems = vec!["aarch64-macos".into()];
+        let mut recipe = definition(UPSTREAM, "1", &["aarch64-macos"]);
         let releases = [
             release("2", &["tool-2-aarch64-macos.tar.gz"]),
-            release("v2", &["tool-2-aarch64-macos.tar.gz"]),
+            release("2.0", &["tool-2.0-aarch64-macos.tar.gz"]),
         ];
-        let error = package(&mut rules, &repository(), &releases, &mut recipe).unwrap_err();
-        assert!(error.contains("restrict tag_prefix"), "{error}");
+        let (upstream, systems) = recipe.upstreams().remove(0);
+        let error = discover(
+            &upstream,
+            &systems,
+            &releases,
+            &mut recipe,
+            |_| unreachable!(),
+        )
+        .unwrap_err();
+        assert!(error.contains("narrow the upstream tag"), "{error}");
     }
 
     #[test]
-    fn drafts_prereleases_and_foreign_prefixes_are_skipped() {
-        let mut recipe = definition("1", &["aarch64-macos"]);
-        let mut rules = upstream();
-        rules.systems = vec!["aarch64-macos".into()];
-        rules.tag_prefix = Some("v".into());
+    fn drafts_prereleases_and_foreign_tags_are_skipped() {
+        let mut recipe = definition(
+            r#"{ github = "owner/tool", tag = "v{version}" }"#,
+            "1",
+            &["aarch64-macos"],
+        );
         let mut draft = release("v3", &["tool-3-aarch64-macos.tar.gz"]);
         draft.draft = true;
         let mut prerelease = release("v4", &["tool-4-aarch64-macos.tar.gz"]);
@@ -429,7 +401,7 @@ mod tests {
             release("nightly-9", &["tool-9-aarch64-macos.tar.gz"]),
             release("v2", &["tool-2-aarch64-macos.tar.gz"]),
         ];
-        package(&mut rules, &repository(), &releases, &mut recipe).unwrap();
+        run(&mut recipe, &releases);
         assert_eq!(
             recipe.package.default_version_for("aarch64-macos"),
             Some("2")
@@ -437,54 +409,47 @@ mod tests {
     }
 
     #[test]
-    fn an_asset_without_a_published_digest_is_refused() {
-        let mut recipe = definition("1", &["aarch64-macos"]);
-        let mut rules = upstream();
-        rules.systems = vec!["aarch64-macos".into()];
-        let mut releases = [release("2", &["tool-2-aarch64-macos.tar.gz"])];
-        releases[0].assets[0] = serde_json::from_value(serde_json::json!({
-            "name": "tool-2-aarch64-macos.tar.gz",
-            "browser_download_url": "https://example.com/archive"
-        }))
+    fn source_discovery_hashes_one_archive_for_every_platform() {
+        let mut recipe = PackageDefinition::from_lua(&format!(
+            r#"return {{
+                name = "tool", description = "A tool", homepage = "https://example.com",
+                default_license = "MIT",
+                upstream = {{ github = "owner/tool", tag = "v{{version}}" }},
+                source = {{ url = "https://example.com/tool-{{tag}}.tar.gz", archive = "tar.gz",
+                            strip_prefix = "tool-{{version}}" }},
+                build = {{ backend = "autotools" }},
+                outputs = {{ bins = {{ "tool" }}, checks = {{ {{ "tool", "--version" }} }} }},
+                platforms = {{
+                    ["aarch64-macos"] = {{ default_version = "98" }},
+                    ["x86_64-linux"] = {{ default_version = "98" }},
+                }},
+                versions = {{ ["98"] = {{ digests = {{
+                    ["aarch64-macos"] = "{digest}", ["x86_64-linux"] = "{digest}",
+                }} }} }},
+            }}"#,
+            digest = "b".repeat(64)
+        ))
         .unwrap();
-        let error = package(&mut rules, &repository(), &releases, &mut recipe).unwrap_err();
-        assert!(error.contains("no sha256 digest"), "{error}");
-    }
-
-    #[test]
-    fn source_discovery_hashes_the_new_archive_once_and_skips_retained_releases() {
-        let mut recipe = definition("1", &["aarch64-macos"]);
-        let mut rules = upstream();
-        rules.systems = vec!["aarch64-macos".into()];
-        rules.tag_prefix = Some("v".into());
-        rules.build = Some(
-            serde_json::from_value(serde_json::json!({
-                "backend": "autotools",
-                "url": "https://example.com/tool-{tag}.tar.gz",
-                "sha256": "b".repeat(64),
-                "archive": "tar.gz", "strip_prefix": "tool-{version}"
-            }))
-            .unwrap(),
-        );
         let releases = [release("v99", &[]), release("v98", &[])];
+        let (upstream, systems) = recipe.upstreams().remove(0);
 
         let mut fetched = Vec::new();
-        source_package(&rules, &releases, &mut recipe, |url| {
+        discover(&upstream, &systems, &releases, &mut recipe, |url| {
             fetched.push(url.to_string());
             Ok("c".repeat(64))
         })
         .unwrap();
         assert_eq!(fetched, ["https://example.com/tool-v99.tar.gz"]);
-        assert_eq!(
-            recipe.package.default_version_for("aarch64-macos"),
-            Some("99")
-        );
-        assert!(
-            recipe.package.versions.contains_key("1"),
-            "retains the old version"
-        );
+        for system in &systems {
+            assert_eq!(recipe.package.default_version_for(system), Some("99"));
+            let build = recipe.package.versions["99"].platforms[system]
+                .build
+                .as_ref()
+                .unwrap();
+            assert_eq!(build.sha256, "c".repeat(64));
+        }
 
-        source_package(&rules, &releases, &mut recipe, |_| {
+        discover(&upstream, &systems, &releases, &mut recipe, |_| {
             panic!("an unchanged source must not be downloaded again")
         })
         .unwrap();
