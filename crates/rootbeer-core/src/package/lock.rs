@@ -596,12 +596,12 @@ mod tests {
     fn local_recipe_edits_reconcile_only_local_requests_and_cannot_replay_offline() {
         let definition = crate::package::PackageDefinition::from_lua(
             r#"return {
-            schema = 2, name = "demo", description = "Local demo",
-            homepage = "https://example.invalid/demo", default_version = "1",
-            systems = { "aarch64-macos" },
-            inputs = { prebuilt = { github = "owner/demo", tag = "v{version}", assets = { ["aarch64-macos"] = "demo.tar.gz" } } },
+            name = "demo", description = "Local demo",
+            homepage = "https://example.invalid/demo", default_license = "MIT",
+            prebuilt = { github = "owner/demo", tag = "v{version}", asset = "demo.tar.gz" },
             outputs = { bins = { "demo" }, checks = { { "demo", "--version" } } },
-            versions = { ["1"] = {} },
+            platforms = { ["aarch64-macos"] = { default_version = "1" } },
+            versions = { ["1"] = { digests = { ["aarch64-macos"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } } },
         }"#,
         )
         .unwrap();

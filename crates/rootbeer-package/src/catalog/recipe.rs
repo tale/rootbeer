@@ -254,6 +254,14 @@ impl CatalogRecipe {
             }
         }
 
+        let exports_libraries = self
+            .build
+            .as_ref()
+            .is_some_and(|build| !build.libraries.is_empty());
+        if self.bins.is_empty() && self.apps.is_empty() && !exports_libraries {
+            return Err("a platform exports binaries, applications, or libraries".into());
+        }
+
         super::validate_apps(&self.apps)?;
         if !self.apps.is_empty() && !system.ends_with("-macos") {
             return Err("application exports are macOS only".into());

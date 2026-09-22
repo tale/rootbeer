@@ -126,6 +126,7 @@ fn prepare_binary(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_catalog::VersionTestExt;
     use ring::signature::{Ed25519KeyPair, KeyPair};
     use rootbeer_package::distribution::{verify_record, PackageProvenance};
     use rootbeer_package::{
@@ -194,13 +195,13 @@ mod tests {
             .unwrap();
         let system = ResolveContext::current().system;
         let catalog: PackageCatalog = serde_json::from_value(serde_json::json!({
-            "schema": 1, "packages": {"demo": {
+            "packages": {"demo": {
                 "name": "demo", "description": "DMG qualification fixture", "homepage": "https://example.com",
-                "default_version": "1", "versions": {"1": {
-                    "revision": 1, "source": "github:example/demo@v1", "systems": [system],
-                    "assets": {system.clone(): "demo.dmg"}, "checksums": {system.clone(): cached.sha256},
-                    "bins": [],
-                    "apps": {"Demo.app": "Demo.app"}, "checks": []
+                "default_versions": {system.clone(): "1"}, "versions": {"1": {
+                    "license": "MIT", "revision": 1, "platforms": {system.clone(): {
+                        "source": "github:example/demo@v1", "asset": "demo.dmg",
+                        "sha256": cached.sha256, "apps": {"Demo.app": "Demo.app"}
+                    }}
                 }}
             }}
         })).unwrap();
@@ -323,13 +324,14 @@ mod tests {
                 .unwrap();
             let system = ResolveContext::current().system;
             let catalog: PackageCatalog = serde_json::from_value(serde_json::json!({
-                "schema": 1, "packages": {"demo": {
+                "packages": {"demo": {
                     "name": "demo", "description": "Binary qualification fixture", "homepage": "https://example.com",
-                    "default_version": "1", "versions": {"1": {
-                        "revision": 1, "source": "github:example/demo@v1",
-                        "systems": [system], "assets": {system.clone(): "demo"},
-                        "checksums": {system.clone(): cached.sha256},
-                        "bins": ["demo"], "checks": [["demo", "--version"]]
+                    "default_versions": {system.clone(): "1"}, "versions": {"1": {
+                        "license": "MIT", "revision": 1, "platforms": {system.clone(): {
+                            "source": "github:example/demo@v1", "asset": "demo",
+                            "sha256": cached.sha256,
+                            "bins": ["demo"], "checks": [["demo", "--version"]]
+                        }}
                     }}
                 }}
             })).unwrap();
@@ -404,10 +406,7 @@ mod tests {
             );
             assert!(!String::from_utf8(bytes).unwrap().contains("toolchain"));
             let mut changed = record.clone();
-            changed
-                .recipe
-                .checksums
-                .insert(system.clone(), "f".repeat(64));
+            changed.recipe.sha256 = Some("f".repeat(64));
             assert!(changed.validate().unwrap_err().contains("checksum"));
             changed = record.clone();
             changed.artifact.package.output_sha256 = Some("f".repeat(64));
@@ -430,7 +429,10 @@ mod tests {
                 .versions
                 .get_mut("1")
                 .unwrap()
-                .checks = vec![vec!["demo".into(), "fail".into()]];
+                .all_mut()
+                .for_each(|platform| {
+                    platform.checks = vec![vec!["demo".into(), "fail".into()]];
+                });
             assert!(prepare_binary(
                 &failing,
                 "demo@1",

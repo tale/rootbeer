@@ -31,6 +31,7 @@ pub fn plan_packages(
     let mut environments = std::collections::BTreeMap::new();
     for request in requests {
         let (package, version, recipe) = find_recipe(catalog, request)?;
+        let revision = package.versions[version].revision;
         let id = format!("{}@{version}", package.name);
         if *request != id {
             return Err(format!("use the exact canonical request {id}"));
@@ -56,7 +57,7 @@ pub fn plan_packages(
         tasks.insert(
             id.clone(),
             PackageTask {
-                key: input_key(&id, &system, &recipe, &engine, environment),
+                key: input_key(&id, &system, revision, &recipe, &engine, environment),
                 package: id,
                 name: package.name.clone(),
                 system: system.clone(),

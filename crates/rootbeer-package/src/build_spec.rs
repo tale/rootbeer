@@ -91,13 +91,18 @@ pub struct SourceBuild {
     pub rust: Option<RustBuild>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go: Option<GoBuild>,
+    /// Resolved from the recipe's source and version digest, not authored on the build.
+    #[serde(default)]
     pub url: String,
+    #[serde(default)]
     pub sha256: String,
     #[serde(
+        default,
         serialize_with = "serialize_archive",
         deserialize_with = "deserialize_archive"
     )]
     pub archive: ArchiveFormat,
+    #[serde(default)]
     pub strip_prefix: PathBuf,
     #[serde(default)]
     pub configure: Vec<String>,
@@ -260,9 +265,13 @@ impl RustBuild {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuildSteps {
+    #[serde(default)]
     pub configure: Vec<Vec<String>>,
+    #[serde(default)]
     pub build: Vec<Vec<String>>,
+    #[serde(default)]
     pub check: Vec<Vec<String>>,
+    #[serde(default)]
     pub install: Vec<Vec<String>>,
 }
 

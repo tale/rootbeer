@@ -42,23 +42,23 @@ fn local_source_recipes_build_lock_replay_offline_and_reconcile_edits() {
     fs::create_dir(&recipes).unwrap();
     let recipe = format!(
         r#"return {{
-        schema = 2, name = "local-tool", description = "Local integration tool",
-        homepage = "https://example.invalid/local-tool", default_version = "1",
-        systems = {{ "{}" }},
-        inputs = {{ source = {{
+        name = "local-tool", description = "Local integration tool",
+        homepage = "https://example.invalid/local-tool", default_license = "MIT",
+        source = {{
             url = "https://unavailable.invalid/tool.tar.gz",
             archive = "tar.gz", strip_prefix = "tool",
-        }} }},
+        }},
         build = {{ backend = "custom", steps = {{
-            configure = {{}}, build = {{ {{ "chmod", "+x", "local-tool" }} }},
+            build = {{ {{ "chmod", "+x", "local-tool" }} }},
             check = {{ {{ "./local-tool" }} }},
             install = {{ {{ "mkdir", "-p", "{{prefix}}/bin" }}, {{ "cp", "local-tool", "{{prefix}}/bin/local-tool" }} }},
         }} }},
         outputs = {{ bins = {{ "local-tool" }}, checks = {{ {{ "local-tool" }} }} }},
-        versions = {{ ["1"] = {{ revision = 1, inputs = {{ source = {{ sha256 = "{}" }} }} }} }},
+        platforms = {{ ["{system}"] = {{ default_version = "1" }} }},
+        versions = {{ ["1"] = {{ revision = 1, digests = {{ ["{system}"] = "{digest}" }} }} }},
     }}"#,
-        ResolveContext::current().system,
-        cached.sha256
+        system = ResolveContext::current().system,
+        digest = cached.sha256
     );
     let path = recipes.join("local-tool.lua");
     fs::write(&path, &recipe).unwrap();

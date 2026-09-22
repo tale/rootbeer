@@ -117,7 +117,7 @@ pub(super) struct Outputs {
     pub checks: Option<Vec<Vec<String>>>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Version {
     pub digests: BTreeMap<String, String>,
@@ -127,6 +127,17 @@ pub(super) struct Version {
     pub revision: u32,
     #[serde(flatten)]
     pub overrides: Spec,
+}
+
+impl Default for Version {
+    fn default() -> Self {
+        Self {
+            digests: BTreeMap::new(),
+            license: None,
+            revision: one(),
+            overrides: Spec::default(),
+        }
+    }
 }
 
 fn one() -> u32 {
@@ -186,7 +197,7 @@ impl Recipe {
         license: Option<String>,
     ) {
         let entry = self.versions.entry(version.to_string()).or_default();
-        entry.digests = digests;
+        entry.digests.extend(digests);
         if license.is_some() {
             entry.license = license;
         }
@@ -332,6 +343,14 @@ impl Recipe {
                 .ok_or("a source platform needs a build")?;
             let mut build = build.clone();
             build.sha256 = digest.to_string();
+            if let Some(archive) = &source.archive {
+                build.archive = match archive.as_str() {
+                    "tar.gz" => crate::ArchiveFormat::TarGz,
+                    "tar.xz" => crate::ArchiveFormat::TarXz,
+                    "zip" => crate::ArchiveFormat::Zip,
+                    other => return Err(format!("unsupported source archive `{other}`")),
+                };
+            }
             build.url = substitute(
                 source
                     .url

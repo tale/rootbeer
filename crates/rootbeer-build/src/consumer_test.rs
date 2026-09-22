@@ -196,20 +196,11 @@ EOF
         .get_mut("5.8.3")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .build = None;
-    let recipe = index
-        .catalog
-        .packages
-        .get_mut("xz")
-        .unwrap()
-        .versions
-        .get_mut("5.8.3")
-        .unwrap();
-    recipe
-        .all_mut()
-        .for_each(|platform| platform.source = Some("github:owner/xz@5.8.3".into()));
+        .for_each(|platform| {
+            platform.build = None;
+            platform.source = Some("github:owner/xz@5.8.3".into());
+            platform.asset = Some("xz-5.8.3.tar.gz".into());
+        });
     index.catalog_sha256 = index.catalog.sha256();
     let resolver = SourceResolver::new(&save(&index), &state);
     assert!(resolver

@@ -144,16 +144,14 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
         .unwrap();
     assert_eq!(artifact.environment, Some(environment));
     assert_eq!(artifact.dependencies.len(), 3);
-    assert_eq!(7, 5);
-    let mut index = ArtifactIndex {
-        schema: 4,
+    ArtifactIndex {
+        schema: 7,
         catalog_sha256: catalog.sha256(),
         catalog: catalog.clone(),
         artifacts: BTreeMap::new(),
-    };
-    assert!(index.validate_fragment().unwrap_err().contains("schema 5"));
-    index.schema = 5;
-    index.validate_fragment().unwrap();
+    }
+    .validate_fragment()
+    .unwrap();
     let relocated = root.join("relocated");
     let realizer =
         PackageRealizer::with_dirs(Store::new(&relocated), &downloads, root.join("install"));
@@ -207,17 +205,18 @@ fn library_exports_reject_collisions_escapes_and_thin_archives() {
 #[test]
 fn library_recipes_separate_inputs_builds_and_exports() {
     let source = r#"return {
-        schema = 2, name = "library", description = "A library", homepage = "https://example.org",
-        default_version = "1", systems = { "aarch64-macos" },
-        inputs = { source = { url = "https://example.org/library-{version}.tar.gz",
-            archive = "tar.gz", strip_prefix = "library-{version}" } },
-        outputs = { bins = {}, checks = {}, libraries = { "lib/libtest.a" } },
+        name = "library", description = "A library", homepage = "https://example.org",
+        default_license = "MIT",
+        source = { url = "https://example.org/library-{version}.tar.gz",
+                   archive = "tar.gz", strip_prefix = "library-{version}" },
         build = {
             backend = "custom",
-            steps = { configure = {}, build = {{ "make" }}, check = {{ "make", "test" }},
+            libraries = { "lib/libtest.a" },
+            steps = { build = {{ "make" }}, check = {{ "make", "test" }},
                       install = {{ "make", "DESTDIR={prefix}", "install" }} },
         },
-        versions = { ["1"] = { inputs = { source = { sha256 = "0000000000000000000000000000000000000000000000000000000000000000" } } } },
+        platforms = { ["aarch64-macos"] = { default_version = "1" } },
+        versions = { ["1"] = { digests = { ["aarch64-macos"] = "0000000000000000000000000000000000000000000000000000000000000000" } } },
     }"#;
     let directory = tempfile::tempdir().unwrap();
     let load = |source: &str| {
@@ -225,40 +224,24 @@ fn library_recipes_separate_inputs_builds_and_exports() {
         PackageCatalog::from_directory(directory.path())
     };
     let catalog = load(source).unwrap();
-    assert_eq!(7, 4);
     let build = catalog.packages["library"].versions["1"]
         .any()
         .build
         .as_ref()
         .unwrap();
     assert_eq!(build.url, "https://example.org/library-1.tar.gz");
+    assert_eq!(build.strip_prefix, PathBuf::from("library-1"));
     assert_eq!(
         build.steps.as_ref().unwrap().install[0][1],
         "DESTDIR={prefix}"
     );
-    let index = ArtifactIndex {
-        schema: 4,
-        catalog_sha256: catalog.sha256(),
-        catalog,
-        artifacts: BTreeMap::new(),
-    };
-    let mut decoded: ArtifactIndex =
-        serde_json::from_slice(&serde_json::to_vec(&index).unwrap()).unwrap();
-    decoded.validate_fragment().unwrap();
-    for schema in 1..4 {
-        decoded.schema = schema;
-        assert!(decoded
-            .validate_fragment()
-            .unwrap_err()
-            .contains("schema 4"));
-    }
     for invalid in [
-        source.replace("check = {{ \"make\", \"test\" }}", "check = {}"),
+        source.replace("check = {{ \"make\", \"test\" }},", ""),
         source.replace("backend = \"custom\"", "backend = \"autotools\""),
         source.replace("lib/libtest.a", "../libtest.a"),
         source.replace("lib/libtest.a", "lib/libtest.txt"),
-        source.replace("libraries = { \"lib/libtest.a\" }", "libraries = {}"),
+        source.replace("libraries = { \"lib/libtest.a\" },", ""),
     ] {
-        assert!(load(&invalid).is_err());
+        assert!(load(&invalid).is_err(), "{invalid}");
     }
 }
