@@ -104,6 +104,7 @@ impl BuildCache {
 
 pub(crate) fn key(
     name: &str,
+    revision: u32,
     recipe: &CatalogRecipe,
     system: &str,
     dependencies: &BTreeMap<String, LockedPackage>,
@@ -127,6 +128,7 @@ pub(crate) fn key(
         "rootbeer-build-v4",
         engine,
         name,
+        revision,
         compilation_recipe,
         system,
         outputs,
@@ -208,12 +210,15 @@ impl Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::test_catalog::VersionTestExt;
     use rootbeer_package::{LockedInstall, Provides};
 
     #[test]
     fn keys_track_build_inputs_without_tracking_dependency_locations() {
         let catalog = crate::test_catalog::catalog();
-        let recipe = catalog.packages["xz"].versions.values().next().unwrap();
+        let version = catalog.packages["xz"].versions.values().next().unwrap();
+        let recipe = version.any();
         let mut dependencies = BTreeMap::from([(
             "compiler@1".into(),
             LockedPackage {
@@ -273,9 +278,12 @@ mod tests {
             .go_compiler_cache(&environment, &dependencies)
             .is_err());
         dependencies.get_mut("compiler@1").unwrap().output_sha256 = Some("b".repeat(64));
-        let digest = |recipe: &CatalogRecipe, dependencies: &BTreeMap<String, LockedPackage>| {
+        let digest = |revision: u32,
+                      recipe: &CatalogRecipe,
+                      dependencies: &BTreeMap<String, LockedPackage>| {
             key(
                 "xz@1",
+                revision,
                 recipe,
                 "aarch64-macos",
                 dependencies,
@@ -284,19 +292,24 @@ mod tests {
             )
             .unwrap()
         };
-        let original = digest(recipe, &dependencies);
+        let original = digest(version.revision, recipe, &dependencies);
         let mut checks_changed = recipe.clone();
         checks_changed
             .checks
             .push(vec!["xz".into(), "--help".into()]);
-        assert_eq!(original, digest(&checks_changed, &dependencies));
-        checks_changed.revision += 1;
-        assert_ne!(original, digest(&checks_changed, &dependencies));
+        assert_eq!(
+            original,
+            digest(version.revision, &checks_changed, &dependencies)
+        );
+        assert_ne!(
+            original,
+            digest(version.revision + 1, &checks_changed, &dependencies)
+        );
         dependencies.get_mut("compiler@1").unwrap().source = LockedSource::File {
             path: "/second/compiler.tar.gz".into(),
             sha256: "c".repeat(64),
         };
-        assert_eq!(original, digest(recipe, &dependencies));
+        assert_eq!(original, digest(version.revision, recipe, &dependencies));
         let libraries = BTreeMap::from([(
             "compiler@1".into(),
             rootbeer_package::graph::DependencyExports {
@@ -309,6 +322,7 @@ mod tests {
             original,
             key(
                 "xz@1",
+                version.revision,
                 recipe,
                 "aarch64-macos",
                 &dependencies,
@@ -318,10 +332,11 @@ mod tests {
             .unwrap()
         );
         dependencies.get_mut("compiler@1").unwrap().output_sha256 = Some("d".repeat(64));
-        assert_ne!(original, digest(recipe, &dependencies));
+        assert_ne!(original, digest(version.revision, recipe, &dependencies));
         dependencies.get_mut("compiler@1").unwrap().output_sha256 = None;
         assert!(key(
             "xz@1",
+            version.revision,
             recipe,
             "aarch64-macos",
             &dependencies,
@@ -337,8 +352,8 @@ mod tests {
             .patches
             .push("different patch".into());
         assert_ne!(
-            digest(recipe, &BTreeMap::new()),
-            digest(&changed, &BTreeMap::new())
+            digest(version.revision, recipe, &BTreeMap::new()),
+            digest(version.revision, &changed, &BTreeMap::new())
         );
     }
 

@@ -136,13 +136,15 @@ EOF
         .versions
         .get_mut("5.8.3")
         .unwrap()
+        .all_mut()
+        .next()
+        .unwrap()
         .build
         .as_mut()
         .unwrap()
         .dependencies = vec![BuildDependency::from("xz@5.8.3")];
     let local = PackageCatalog {
         extra: Default::default(),
-        schema: 1,
         packages: BTreeMap::from([("local-tool".into(), local_tool)]),
     };
     assert!(local.requires_index());
@@ -188,6 +190,9 @@ EOF
         .unwrap()
         .versions
         .get_mut("5.8.3")
+        .unwrap()
+        .all_mut()
+        .next()
         .unwrap()
         .build = None;
     let recipe = index

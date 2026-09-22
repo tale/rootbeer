@@ -3,12 +3,13 @@ use rootbeer_package::graph::DependencyGraph;
 use std::os::unix::fs::PermissionsExt;
 
 use super::*;
+#[allow(unused_imports)]
+use crate::test_catalog::VersionTestExt;
 
 fn source_catalog() -> PackageCatalog {
     let catalog = crate::test_catalog::catalog();
     PackageCatalog {
         extra: Default::default(),
-        schema: 1,
         packages: BTreeMap::from([("xz".into(), catalog.packages["xz"].clone())]),
     }
 }
@@ -17,6 +18,7 @@ fn source_catalog() -> PackageCatalog {
 fn validates_backend_options_and_patch_inputs() {
     let catalog = source_catalog();
     let mut build = catalog.packages["xz"].versions["5.8.3"]
+        .any()
         .build
         .clone()
         .unwrap();
@@ -47,6 +49,9 @@ fn build_graph_orders_dependencies_once_and_rejects_cycles() {
         .versions
         .get_mut("5.8.3")
         .unwrap()
+        .all_mut()
+        .next()
+        .unwrap()
         .build
         .as_mut()
         .unwrap()
@@ -62,6 +67,9 @@ fn build_graph_orders_dependencies_once_and_rejects_cycles() {
         .unwrap()
         .versions
         .get_mut("5.8.3")
+        .unwrap()
+        .all_mut()
+        .next()
         .unwrap()
         .build
         .as_mut()
@@ -79,6 +87,9 @@ fn invalid_build_inputs_fail_before_creating_output() {
         .unwrap()
         .versions
         .get_mut("5.8.3")
+        .unwrap()
+        .all_mut()
+        .next()
         .unwrap()
         .build
         .as_mut()
@@ -99,6 +110,9 @@ fn invalid_build_inputs_fail_before_creating_output() {
         .unwrap()
         .versions
         .get_mut("5.8.3")
+        .unwrap()
+        .all_mut()
+        .next()
         .unwrap()
         .build
         .as_mut()
@@ -143,6 +157,9 @@ fn pinned_build_rejects_missing_catalog_and_dependency_inputs_before_io() {
         .unwrap()
         .versions
         .get_mut("5.8.3")
+        .unwrap()
+        .all_mut()
+        .next()
         .unwrap()
         .build
         .as_mut()
@@ -371,6 +388,9 @@ EOF
         .versions
         .get_mut("5.8.3")
         .unwrap()
+        .all_mut()
+        .next()
+        .unwrap()
         .build
         .as_mut()
         .unwrap()
@@ -546,6 +566,9 @@ EOF
         .unwrap()
         .versions
         .get_mut("5.8.3")
+        .unwrap()
+        .all_mut()
+        .next()
         .unwrap()
         .build
         .as_mut()

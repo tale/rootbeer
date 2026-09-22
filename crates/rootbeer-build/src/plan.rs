@@ -12,6 +12,8 @@ pub struct BuildPlan {
     pub(crate) graph: DependencyGraph,
     pub(crate) binaries: BTreeMap<String, LockedPackage>,
     pub(crate) recipes: BTreeMap<String, CatalogRecipe>,
+    /// Catalog revision per key; a recipe is one platform and no longer carries it.
+    pub(crate) revisions: BTreeMap<String, u32>,
     pub(crate) inputs: PackageResolverInputs,
 }
 
@@ -84,8 +86,11 @@ impl BuildPlan {
         resolver.push(CatalogResolver::new(catalog, inputs, backends));
         let mut binaries = BTreeMap::new();
         let mut recipes = BTreeMap::new();
+        let mut revisions = BTreeMap::new();
         for key in &graph.order {
             let (_, _, recipe) = graph::find_recipe(catalog, key)?;
+            let (_, _, entry) = graph::find_recipe_definition(catalog, key)?;
+            revisions.insert(key.clone(), entry.revision);
             let is_prebuilt = key != root && recipe.build.is_none();
             if is_prebuilt
                 && recipe
@@ -110,6 +115,7 @@ impl BuildPlan {
             graph,
             binaries,
             recipes,
+            revisions,
             inputs: inputs.clone(),
         })
     }

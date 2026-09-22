@@ -294,6 +294,7 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
                 .map(|cache| {
                     let key = cache::key(
                         key,
+                        plan.revisions[key],
                         recipe,
                         &graph.system,
                         &dependencies,
@@ -627,7 +628,7 @@ fn compile(
             prefix: &prefix,
             downloads: &downloads_directory,
             host_tools,
-            bins: &recipe.bins,
+            bins: &recipe.bins.names().into_iter().cloned().collect::<Vec<_>>(),
             dependencies: &dependency_prefix,
             tools,
             workspace: &workspace_path,
@@ -660,11 +661,15 @@ fn compile(
             }
         }
     }
-    let bins: BTreeMap<String, PathBuf> = recipe
-        .bins
-        .iter()
-        .map(|bin| (bin.clone(), PathBuf::from("bin").join(bin)))
-        .collect();
+    // A source build owns its prefix layout, so names without paths install under bin/.
+    let bins: BTreeMap<String, PathBuf> = recipe.bins.paths().cloned().unwrap_or_else(|| {
+        recipe
+            .bins
+            .names()
+            .into_iter()
+            .map(|bin| (bin.clone(), PathBuf::from("bin").join(bin)))
+            .collect()
+    });
     for (name, path) in &bins {
         let path = prefix
             .join(path)
@@ -696,7 +701,7 @@ fn compile(
         isolation: None,
         runtime_audit_sha256: Some(runtime_audit),
         catalog_sha256: plan.catalog_sha256.clone(),
-        revision: recipe.revision,
+        revision: plan.revisions[key],
         system: plan.graph.system.clone(),
         build: build.clone(),
         dependencies,

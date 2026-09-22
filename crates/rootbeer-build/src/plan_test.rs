@@ -1,11 +1,12 @@
 use super::*;
+#[allow(unused_imports)]
+use crate::test_catalog::VersionTestExt;
 use std::fs;
 use std::path::PathBuf;
 
 fn catalog(system: &str) -> PackageCatalog {
     let mut catalog = PackageCatalog {
         extra: Default::default(),
-        schema: 1,
         packages: BTreeMap::new(),
     };
     for name in ["root", "tool", "compiler", "runtime"] {
@@ -110,6 +111,9 @@ fn source_dependencies_build_and_reuse_our_outputs_despite_upstream_binaries() {
             .versions
             .get_mut("1")
             .unwrap()
+            .all_mut()
+            .next()
+            .unwrap()
             .build
             .as_mut()
             .unwrap();
@@ -200,6 +204,9 @@ fn source_roots_and_dependencies_keep_source_edges() {
         .versions
         .get_mut("1")
         .unwrap()
+        .all_mut()
+        .next()
+        .unwrap()
         .assets
         .clear();
     let graph = DependencyGraph::new(&catalog, &["root".into()], &system).unwrap();
@@ -235,6 +242,9 @@ fn source_libraries_preserve_transitive_link_exports() {
         .versions
         .get_mut("1")
         .unwrap()
+        .all_mut()
+        .next()
+        .unwrap()
         .build
         .as_mut()
         .unwrap();
@@ -249,6 +259,9 @@ fn source_libraries_preserve_transitive_link_exports() {
         .unwrap()
         .versions
         .get_mut("1")
+        .unwrap()
+        .all_mut()
+        .next()
         .unwrap()
         .build
         .as_mut()
