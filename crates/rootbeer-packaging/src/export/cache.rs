@@ -540,6 +540,8 @@ fn inputs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::test_catalog::VersionTestExt;
     use crate::{bundle_artifacts, ArtifactIndex, LockedSource, ResolveContext};
 
     #[test]
@@ -584,8 +586,8 @@ mod tests {
             .versions
             .get_mut("5.8.3")
             .unwrap()
-            .checks
-            .push(vec!["xz".into(), "--help".into()]);
+            .all_mut()
+            .for_each(|platform| platform.checks.push(vec!["xz".into(), "--help".into()]));
         assert_ne!(original, digest(&changed));
 
         let mut dependent = catalog.clone();
@@ -596,11 +598,15 @@ mod tests {
             .versions
             .get_mut("5.8.3")
             .unwrap()
-            .build
-            .as_mut()
-            .unwrap()
-            .dependencies
-            .push("fd@10.5.0".into());
+            .all_mut()
+            .for_each(|platform| {
+                platform
+                    .build
+                    .as_mut()
+                    .unwrap()
+                    .dependencies
+                    .push("fd@10.5.0".into())
+            });
         let before = digest(&dependent);
         dependent
             .packages
@@ -612,6 +618,7 @@ mod tests {
             .revision += 1;
         assert_ne!(before, digest(&dependent));
         let mut build = catalog.packages["xz"].versions["5.8.3"]
+            .any()
             .build
             .clone()
             .unwrap();
@@ -623,12 +630,13 @@ mod tests {
             .versions
             .get_mut("10.5.0")
             .unwrap();
-        dependency.source = None;
-        dependency.assets.clear();
-        dependency.checksums.clear();
-        dependency.bin_paths.clear();
-        dependency.mirror = false;
-        dependency.build = Some(build);
+        for platform in dependency.all_mut() {
+            platform.source = None;
+            platform.asset = None;
+            platform.sha256 = None;
+            platform.mirror = false;
+            platform.build = Some(build.clone());
+        }
         let before = digest(&dependent);
         dependent
             .packages
@@ -660,6 +668,7 @@ mod tests {
         let mut catalog = crate::test_catalog::catalog().clone();
         let original = engine_identity(&catalog, "xz@5.8.3", "aarch64-linux").unwrap();
         let mut rust = catalog.packages["xz"].versions["5.8.3"]
+            .any()
             .build
             .clone()
             .unwrap();
@@ -678,12 +687,13 @@ mod tests {
             .versions
             .get_mut("10.5.0")
             .unwrap();
-        dependency.build = Some(rust);
-        dependency.source = None;
-        dependency.mirror = false;
-        dependency.assets.clear();
-        dependency.checksums.clear();
-        dependency.bin_paths.clear();
+        for platform in dependency.all_mut() {
+            platform.build = Some(rust.clone());
+            platform.source = None;
+            platform.mirror = false;
+            platform.asset = None;
+            platform.sha256 = None;
+        }
         assert_eq!(
             original,
             engine_identity(&catalog, "xz@5.8.3", "aarch64-linux").unwrap()
@@ -695,11 +705,15 @@ mod tests {
             .versions
             .get_mut("5.8.3")
             .unwrap()
-            .build
-            .as_mut()
-            .unwrap()
-            .dependencies
-            .push("fd@10.5.0".into());
+            .all_mut()
+            .for_each(|platform| {
+                platform
+                    .build
+                    .as_mut()
+                    .unwrap()
+                    .dependencies
+                    .push("fd@10.5.0".into())
+            });
         assert_ne!(
             original,
             engine_identity(&catalog, "xz@5.8.3", "aarch64-linux").unwrap()
@@ -722,7 +736,8 @@ mod tests {
             .versions
             .get_mut("5.8.3")
             .unwrap()
-            .systems = vec!["aarch64-linux".into(), "x86_64-linux".into()];
+            .platforms
+            .retain(|system, _| system != "aarch64-macos");
         index.catalog_sha256 = index.catalog.sha256();
         let first = index.artifacts["xz@5.8.3"]["aarch64-linux"].clone();
         let mut second = first.clone();
@@ -900,7 +915,7 @@ mod tests {
             changed.environment.push_str("-changed");
             assert!(cache.inspect(&changed).unwrap().is_none());
             changed = inputs.clone();
-            changed.recipes.get_mut(key).unwrap().revision += 1;
+            *changed.revisions.get_mut(key).unwrap() += 1;
             assert!(cache.inspect(&changed).unwrap().is_none());
             changed = inputs.clone();
             changed
