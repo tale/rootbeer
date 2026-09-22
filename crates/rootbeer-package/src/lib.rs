@@ -20,6 +20,7 @@ pub mod index;
 mod inputs;
 mod intent;
 pub mod official;
+pub mod pdr;
 pub mod realize;
 mod resolve;
 pub mod self_update;
