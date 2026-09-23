@@ -231,6 +231,27 @@ impl Recipe {
         Ok(())
     }
 
+    /// The same recipe with an upstream every platform repeats declared once, at the top.
+    pub(super) fn with_shared_upstream(&self) -> Self {
+        let mut recipe = self.clone();
+        if recipe.upstream.is_none() {
+            let mut declared = recipe.platforms.values().map(|platform| &platform.upstream);
+            if let Some(Some(first)) = declared.next() {
+                if declared.all(|upstream| upstream.as_ref() == Some(first)) {
+                    recipe.upstream = Some(first.clone());
+                }
+            }
+        }
+        if let Some(shared) = &recipe.upstream {
+            for platform in recipe.platforms.values_mut() {
+                if platform.upstream.as_ref() == Some(shared) {
+                    platform.upstream = None;
+                }
+            }
+        }
+        recipe
+    }
+
     pub(super) fn platform_names(&self) -> Vec<String> {
         self.platforms.keys().cloned().collect()
     }
