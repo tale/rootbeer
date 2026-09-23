@@ -149,14 +149,14 @@ mod tests {
 
     #[test]
     fn applies_locked_resolution_to_package_request_op() {
-        let request = PackageRequest::new("demo").resolver("aqua");
+        let request = PackageRequest::new("demo").resolver("registry");
         let context = ResolveContext::current();
         let mut locked = package();
         locked.output_sha256 = Some("out".to_string());
         let lock = RootbeerLock::from_package_entries([PackageLockEntry::resolved(
             &request,
             &context,
-            PackageResolution::new(locked, proof("aqua")),
+            PackageResolution::new(locked, proof("registry")),
         )
         .unwrap()])
         .unwrap();
@@ -178,11 +178,11 @@ mod tests {
     #[test]
     fn explicit_resolver_entries_are_namespaced_by_resolver() {
         let context = ResolveContext::current();
-        let aqua_request = PackageRequest::new("demo").resolver("aqua");
+        let registry_request = PackageRequest::new("demo").resolver("registry");
         let other_request = PackageRequest::new("demo").resolver("other");
-        let mut aqua_package = package();
-        aqua_package.source = LockedSource::Url {
-            url: "file:///tmp/aqua.tar.gz".to_string(),
+        let mut registry_package = package();
+        registry_package.source = LockedSource::Url {
+            url: "file:///tmp/registry.tar.gz".to_string(),
             sha256: "abc123".to_string(),
         };
         let mut other_package = package();
@@ -193,9 +193,9 @@ mod tests {
 
         let lock = RootbeerLock::from_package_entries([
             PackageLockEntry::resolved(
-                &aqua_request,
+                &registry_request,
                 &context,
-                PackageResolution::new(aqua_package, proof("aqua")),
+                PackageResolution::new(registry_package, proof("registry")),
             )
             .unwrap(),
             PackageLockEntry::resolved(
@@ -207,12 +207,12 @@ mod tests {
         ])
         .unwrap();
 
-        assert!(lock.packages.contains_key("aqua:demo@1.0.0"));
+        assert!(lock.packages.contains_key("registry:demo@1.0.0"));
         assert!(lock.packages.contains_key("other:demo@1.0.0"));
         assert!(lock
             .resolutions
             .values()
-            .any(|resolution| resolution.proof == proof("aqua")));
+            .any(|resolution| resolution.proof == proof("registry")));
     }
 
     #[test]
@@ -254,12 +254,12 @@ mod tests {
     fn writes_and_reads_resolution_proofs() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("rootbeer.lock");
-        let request = PackageRequest::new("demo").resolver("aqua");
+        let request = PackageRequest::new("demo").resolver("registry");
         let context = ResolveContext::current();
         let lock = RootbeerLock::from_package_entries([PackageLockEntry::resolved(
             &request,
             &context,
-            PackageResolution::new(package(), proof("aqua")),
+            PackageResolution::new(package(), proof("registry")),
         )
         .unwrap()])
         .unwrap();
@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(read, lock);
         assert_eq!(
             read.resolutions.values().next().unwrap().proof,
-            proof("aqua")
+            proof("registry")
         );
     }
 }

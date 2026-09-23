@@ -121,7 +121,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::{GitHubRepositoryPin, LockedInstall, LockedSource, Provides, ResolverInput};
+    use crate::{LockedInstall, LockedSource, Provides, ResolverInput};
 
     fn package(output_sha256: Option<&str>) -> LockedPackage {
         LockedPackage {
@@ -166,12 +166,10 @@ mod tests {
             context,
             PackageResolverInputs {
                 resolvers: BTreeMap::from([(
-                    "aqua".to_string(),
-                    ResolverInput::AquaRegistry(GitHubRepositoryPin {
-                        owner: "aquaproj".to_string(),
-                        repo: "aqua-registry".to_string(),
-                        rev: "abc123".to_string(),
-                    }),
+                    "rootbeer".to_string(),
+                    ResolverInput::Catalog {
+                        sha256: "a".repeat(64),
+                    },
                 )]),
             },
             vec![PackageIntent::locked(package(None))],

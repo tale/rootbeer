@@ -337,8 +337,8 @@ mod tests {
 
     use super::*;
     use crate::package::{
-        ArchiveFormat, ExternalManagerProof, GitHubRepositoryPin, LockedInstall, LockedSource,
-        Provides, ResolutionProof, ResolverInput,
+        ArchiveFormat, ExternalManagerProof, LockedInstall, LockedSource, Provides,
+        ResolutionProof, ResolverInput,
     };
     use crate::store::StoreEntry;
 
@@ -457,12 +457,10 @@ mod tests {
     fn builder_uses_injected_resolver_and_realizer() {
         let inputs = PackageResolverInputs {
             resolvers: BTreeMap::from([(
-                "aqua".to_string(),
-                ResolverInput::AquaRegistry(GitHubRepositoryPin {
-                    owner: "aquaproj".to_string(),
-                    repo: "aqua-registry".to_string(),
-                    rev: "abc123".to_string(),
-                }),
+                "rootbeer".to_string(),
+                ResolverInput::Catalog {
+                    sha256: "a".repeat(64),
+                },
             )]),
         };
         let builder = PackageLockBuilder::new_with_inputs(

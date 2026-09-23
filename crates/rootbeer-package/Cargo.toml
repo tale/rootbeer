@@ -12,7 +12,6 @@ serde_json = { version = "1", features = ["raw_value"] }
 tempfile = "3"
 rootbeer-store = { path = "../rootbeer-store" }
 rootbeer-catalog = { path = "../rootbeer-catalog" }
-aqua-registry = "=2026.9.1"
 flate2 = "1"
 lzma-rust2 = { version = "0.20", default-features = false, features = ["std", "xz"] }
 mlua = { version = "0.11.5", features = ["luau-jit", "serialize"] }

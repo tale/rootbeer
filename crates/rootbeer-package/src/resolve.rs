@@ -9,7 +9,7 @@ use super::{GitHubRepositoryPin, LockedPackage};
 
 /// A high-level package request before it has been lowered to a locked package
 /// fact. The resolver prefix is optional: `ripgrep` is implicit, while
-/// `aqua:ripgrep` or `github:BurntSushi/ripgrep` is explicit.
+/// `github:BurntSushi/ripgrep` is explicit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -565,9 +565,9 @@ mod tests {
             PackageRequest::new("ripgrep").version("14.1.1")
         );
         assert_eq!(
-            PackageRequest::parse("aqua:BurntSushi/ripgrep@14.1.1"),
+            PackageRequest::parse("registry:BurntSushi/ripgrep@14.1.1"),
             PackageRequest::new("BurntSushi/ripgrep")
-                .resolver("aqua")
+                .resolver("registry")
                 .version("14.1.1")
         );
         assert_eq!(
@@ -592,7 +592,7 @@ mod tests {
 
     #[test]
     fn package_resolution_input_fingerprint_includes_request_and_context() {
-        let request = PackageRequest::new("ripgrep").resolver("aqua");
+        let request = PackageRequest::new("ripgrep").resolver("registry");
         let darwin = ResolveContext::new("aarch64-macos");
         let linux = ResolveContext::new("x86_64-linux");
 
@@ -605,7 +605,7 @@ mod tests {
     #[test]
     fn implicit_resolution_tries_resolvers_in_order() {
         let mut stack = ResolverStack::new();
-        stack.push(FakeResolver::miss("aqua"));
+        stack.push(FakeResolver::miss("registry"));
         stack.push(FakeResolver::hit("ubi", package("ripgrep")));
         stack.push(FakeResolver::hit("github", package("wrong")));
 
@@ -622,7 +622,7 @@ mod tests {
     #[test]
     fn explicit_resolution_only_uses_named_resolver() {
         let mut stack = ResolverStack::new();
-        stack.push(FakeResolver::hit("aqua", package("wrong")));
+        stack.push(FakeResolver::hit("registry", package("wrong")));
         stack.push(FakeResolver::hit("github", package("ripgrep")));
 
         let resolved = stack
@@ -638,7 +638,7 @@ mod tests {
     #[test]
     fn unknown_explicit_resolver_lists_available_resolvers() {
         let mut stack = ResolverStack::new();
-        stack.push(FakeResolver::miss("aqua"));
+        stack.push(FakeResolver::miss("registry"));
         stack.push(FakeResolver::miss("github"));
 
         let err = stack
@@ -650,14 +650,14 @@ mod tests {
 
         assert_eq!(
             err.to_string(),
-            "unknown package resolver `ubi` (available: aqua, github)"
+            "unknown package resolver `ubi` (available: registry, github)"
         );
     }
 
     #[test]
     fn failed_implicit_resolution_surfaces_each_attempt() {
         let mut stack = ResolverStack::new();
-        stack.push(FakeResolver::miss("aqua"));
+        stack.push(FakeResolver::miss("registry"));
         stack.push(FakeResolver::error("ubi", "unsupported platform"));
         stack.push(FakeResolver::miss("github"));
 
@@ -670,7 +670,7 @@ mod tests {
 
         assert_eq!(
             err.to_string(),
-            "package `ripgrep` not found; attempted aqua (not found), ubi (unsupported platform), github (not found)"
+            "package `ripgrep` not found; attempted registry (not found), ubi (unsupported platform), github (not found)"
         );
     }
 }

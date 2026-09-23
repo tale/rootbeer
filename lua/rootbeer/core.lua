@@ -112,7 +112,7 @@ function rootbeer.exec(cmd, args) end
 --- @field tag? string Build this literal Git tag from the recipe's source repository.
 --- @field rev? string Build this full lowercase Git commit SHA from the recipe's source repository.
 --- @field branch? string Build this Git branch, resolved to a commit in the lock.
---- @field request string Package name, name@version, github:owner/repo@tag, or aqua:owner/repo@version.
+--- @field request string Package name, name@version, or github:owner/repo@tag.
 --- @field asset? string Exact release asset filename for an explicit github: request.
 --- @field bins? table<string, string> Exported command name → relative path for an explicit github: request.
 
@@ -136,8 +136,8 @@ function rootbeer.package_repository(spec) end
 
 --- Installs a command-line tool, such as `"ripgrep"`. Use `"name@version"`
 --- to choose an exact version. Package versions are saved in `rootbeer.lock`.
---- You can also use `github:owner/repo@tag`, `aqua:owner/repo@version`,
---- or a table describing an exact download and installation.
+--- You can also use `github:owner/repo@tag`, or a table describing an exact
+--- download and installation.
 --- @param spec string|rootbeer.PackageRequestSpec|rootbeer.PackageSpec Package name, source request with options, or exact package specification.
 --- @param opts? rootbeer.PackageOptions Source selection for canonical packages, or asset options for explicit `github:` requests.
 function rootbeer.package(spec, opts) end
