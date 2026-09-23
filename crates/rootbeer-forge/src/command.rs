@@ -97,6 +97,12 @@ enum Command {
     Show { name: String },
     /// Validate the selected catalog and print its digest
     Check,
+    /// Rewrite every recipe in the layout discovery writes, so its updates never reflow a file
+    Format {
+        /// Fail, listing the recipes that differ, instead of rewriting them
+        #[arg(long)]
+        check: bool,
+    },
     /// Write the expanded catalog as deterministic JSON to stdout
     Catalog,
     /// Hash a build environment specification and write its lock to stdout
@@ -362,6 +368,36 @@ fn execute(args: Args) -> Result<(), String> {
                 catalog.sha256()
             )
             .map_err(|e| e.to_string())?;
+        }
+        Command::Format { check } => {
+            let directory = args
+                .catalog
+                .as_deref()
+                .ok_or("format requires --catalog pointing to a PDR recipe directory")?;
+            let definitions = definitions
+                .as_ref()
+                .ok_or("format requires --catalog pointing to a PDR recipe directory")?;
+            let mut differing = Vec::new();
+            for (name, definition) in definitions {
+                let path = directory.join(format!("{name}.lua"));
+                let rendered = definition.to_lua()?;
+                if std::fs::read_to_string(&path).map_err(|e| e.to_string())? == rendered {
+                    continue;
+                }
+                if !check {
+                    std::fs::write(&path, rendered).map_err(|e| e.to_string())?;
+                }
+                differing.push(name.as_str());
+            }
+            if check && !differing.is_empty() {
+                return Err(format!(
+                    "{} recipes are not formatted; run rootbeer-forge format: {}",
+                    differing.len(),
+                    differing.join(", ")
+                ));
+            }
+            writeln!(output, "{} recipes reformatted", differing.len())
+                .map_err(|e| e.to_string())?;
         }
         Command::Catalog => {
             writeln!(output, "{}", catalog()?.to_json()?).map_err(|e| e.to_string())?

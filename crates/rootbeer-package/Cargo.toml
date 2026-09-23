@@ -8,7 +8,7 @@ rust-version.workspace = true
 sha2 = "0.10"
 libc = "0.2.182"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 tempfile = "3"
 rootbeer-store = { path = "../rootbeer-store" }
 rootbeer-catalog = { path = "../rootbeer-catalog" }
