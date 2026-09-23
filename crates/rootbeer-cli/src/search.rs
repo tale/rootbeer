@@ -69,6 +69,23 @@ fn search(args: Args) -> Result<(), String> {
             "needs_newer_rb": package.min_engine_level.is_some_and(|level| level > ENGINE_LEVEL),
         }));
     }
+    for (name, package) in &root.unreadable {
+        let text = format!(
+            "{name} {} {}",
+            package.aliases.join(" "),
+            package.description
+        )
+        .to_lowercase();
+        if !query.split_whitespace().all(|term| text.contains(term)) {
+            continue;
+        }
+        matches.push(serde_json::json!({
+            "name": name,
+            "description": package.description,
+            "needs_newer_rb": true,
+        }));
+    }
+    matches.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     if args.json {
         println!(
             "{}",

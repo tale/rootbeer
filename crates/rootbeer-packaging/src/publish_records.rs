@@ -45,7 +45,13 @@ pub fn publish_records(
     let current = site.join("current.json");
     let previous = if current.exists() {
         let bytes = fs::read(&current).map_err(|error| error.to_string())?;
-        Some(Root::from_bytes(&bytes, public_key)?)
+        let previous = Root::from_bytes(&bytes, public_key)?;
+        if let Some(name) = previous.unreadable.keys().next() {
+            return Err(format!(
+                "{name}: the previous root was published by a newer engine than this one"
+            ));
+        }
+        Some(previous)
     } else {
         None
     };
@@ -192,6 +198,11 @@ fn previous_documents(
             ));
         }
         let document = PackageDocument::from_bytes(&bytes)?;
+        if !document.unreadable.is_empty() {
+            return Err(format!(
+                "{name}: the previous document was published by a newer engine than this one"
+            ));
+        }
         package.check_document(name, &document)?;
         documents.insert(name.clone(), document);
     }
@@ -247,6 +258,7 @@ fn assemble(
         schema: ROOT_SCHEMA,
         sequence,
         packages: BTreeMap::new(),
+        unreadable: BTreeMap::new(),
         signature: String::new(),
     };
     let mut documents = BTreeMap::new();
@@ -356,6 +368,7 @@ fn document(package: &CatalogPackage, published: &BTreeMap<Key, Published>) -> P
     PackageDocument {
         name: package.name.clone(),
         versions,
+        unreadable: Default::default(),
     }
 }
 
@@ -561,5 +574,43 @@ mod tests {
         published.extend(release(&catalog, "2", &[MAC], 100));
         let error = assemble(&catalog, None, &published, 1).unwrap_err();
         assert!(error.contains("license"), "{error}");
+    }
+
+    #[test]
+    fn refuses_to_build_on_a_root_it_cannot_fully_read() {
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+
+        let site = tempfile::tempdir().unwrap();
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
+        let key = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let hex = |bytes: &[u8]| {
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        let packages = serde_json::json!({ "newer": { "description": "From a newer engine" } });
+        let message = rootbeer_package::pdr::signing_message(1, &packages).unwrap();
+        let root = serde_json::json!({
+            "schema": ROOT_SCHEMA,
+            "sequence": 1,
+            "packages": packages,
+            "signature": hex(key.sign(&message).as_ref()),
+        });
+        fs::write(
+            site.path().join("current.json"),
+            serde_json::to_vec(&root).unwrap(),
+        )
+        .unwrap();
+
+        let error = publish_records(
+            &catalog(),
+            &[],
+            site.path(),
+            pkcs8.as_ref(),
+            &hex(key.public_key().as_ref()),
+        )
+        .unwrap_err();
+        assert!(error.contains("newer engine"), "{error}");
     }
 }

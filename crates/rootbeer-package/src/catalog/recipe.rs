@@ -279,16 +279,16 @@ impl CatalogRecipe {
     }
 }
 
+/// Every platform this build can install on.
+pub(crate) const SYSTEMS: [&str; 3] = ["aarch64-macos", "aarch64-linux", "x86_64-linux"];
+
 pub(crate) fn validate_systems(declared: &[String]) -> Result<(), String> {
     let systems: BTreeSet<_> = declared.iter().collect();
     if systems.is_empty()
         || systems.len() != declared.len()
-        || systems.iter().any(|system| {
-            !matches!(
-                system.as_str(),
-                "aarch64-macos" | "aarch64-linux" | "x86_64-linux"
-            )
-        })
+        || systems
+            .iter()
+            .any(|system| !SYSTEMS.contains(&system.as_str()))
     {
         return Err("recipe needs unique supported systems".into());
     }

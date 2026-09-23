@@ -261,11 +261,6 @@ impl RepositoryResolver {
             .map_err(Clone::clone)
     }
 
-    /// The pinned root with its signature verified but its packages left undecoded.
-    pub fn verified_root(&self) -> Result<serde_json::Value, String> {
-        crate::pdr::verify_root(&self.root_bytes()?, &self.pin.public_key)
-    }
-
     fn root_bytes(&self) -> Result<Vec<u8>, String> {
         self.read(
             &self.pin.locate("roots", &self.pin.root),
@@ -276,15 +271,18 @@ impl RepositoryResolver {
 
     /// The package a request names, refusing one this build is too old to install.
     pub fn package(&self, name: &str) -> Result<(&str, &RootPackage), String> {
-        let (name, package) = self
-            .root()?
-            .find(name)
-            .ok_or_else(|| format!("unknown package {name}"))?;
+        let root = self.root()?;
+        let Some((name, package)) = root.find(name) else {
+            return Err(match root.find_unreadable(name) {
+                Some(name) => needs_newer(name),
+                None => format!("unknown package {name}"),
+            });
+        };
         if package
             .min_engine_level
             .is_some_and(|level| level > ENGINE_LEVEL)
         {
-            return Err(format!("{name} needs a newer rb; run rb self-update"));
+            return Err(needs_newer(name));
         }
         Ok((name, package))
     }
@@ -364,6 +362,12 @@ impl RepositoryResolver {
         };
         let id = format!("{name}@{version}");
         let document = self.document(name, package)?;
+        if document
+            .unreadable
+            .contains(&(version.to_string(), context.system.clone()))
+        {
+            return Err(needs_newer(&id));
+        }
         let published = document
             .versions
             .get(version)
@@ -422,6 +426,10 @@ impl PackageResolver for RepositoryResolver {
             }),
         )))
     }
+}
+
+fn needs_newer(package: &str) -> String {
+    format!("{package} needs a newer rb; run rb self-update")
 }
 
 fn catalog_package(name: &str, package: &RootPackage, document: PackageDocument) -> CatalogPackage {
@@ -552,6 +560,17 @@ mod tests {
             sequence: u64,
             change: impl FnOnce(&mut RootPackage, &mut PackageDocument),
         ) {
+            self.publish_raw(sequence, change, |_, _| {});
+        }
+
+        /// Like [`Site::publish`], then `raw` edits the published JSON as a newer publisher
+        /// might, with fields and values this build's types cannot express.
+        fn publish_raw(
+            &self,
+            sequence: u64,
+            change: impl FnOnce(&mut RootPackage, &mut PackageDocument),
+            raw: impl FnOnce(&mut serde_json::Value, &mut serde_json::Value),
+        ) {
             let record = self.record();
             let (bytes, _, _) = crate::distribution::tests::signed();
             let mut document = PackageDocument {
@@ -571,6 +590,7 @@ mod tests {
                         )]),
                     },
                 )]),
+                unreadable: Default::default(),
             };
             let mut package = RootPackage {
                 aliases: Vec::new(),
@@ -592,30 +612,31 @@ mod tests {
                 document: String::new(),
             };
             change(&mut package, &mut document);
+            let mut package = serde_json::to_value(&package).unwrap();
+            let mut document = serde_json::to_value(&document).unwrap();
+            raw(&mut package, &mut document);
 
             let document = rootbeer_catalog::canonical_json(&document).unwrap();
-            package.document = hash_bytes(&document);
+            let digest = hash_bytes(&document);
+            package["document"] = digest.clone().into();
             let packages = self.directory.path().join("packages");
             fs::create_dir_all(&packages).unwrap();
-            fs::write(
-                packages.join(format!("{}.json", package.document)),
-                document,
-            )
-            .unwrap();
+            fs::write(packages.join(format!("{digest}.json")), document).unwrap();
 
-            let mut root = Root {
-                schema: ROOT_SCHEMA,
-                sequence,
-                packages: BTreeMap::from([(self.name.clone(), package)]),
-                signature: String::new(),
-            };
+            let packages = serde_json::json!({ self.name.clone(): package });
             let key = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
-            root.signature = key
-                .sign(&root.signing_message().unwrap())
+            let signature: String = key
+                .sign(&crate::pdr::signing_message(sequence, &packages).unwrap())
                 .as_ref()
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect();
+            let root = serde_json::json!({
+                "schema": ROOT_SCHEMA,
+                "sequence": sequence,
+                "packages": packages,
+                "signature": signature,
+            });
             let bytes = serde_json::to_vec(&root).unwrap();
             let roots = self.directory.path().join("roots");
             fs::create_dir_all(&roots).unwrap();
@@ -735,5 +756,48 @@ mod tests {
         let pin = site.repository.select(&site.state(), false).unwrap().pin;
         let error = site.resolve(&pin).unwrap_err();
         assert!(error.contains("differs"), "{error}");
+    }
+
+    #[test]
+    fn a_package_this_build_cannot_read_needs_a_newer_rb() {
+        let site = Site::new();
+        site.publish_raw(
+            1,
+            |_, _| {},
+            |package, _| {
+                package["platforms"][SYSTEM]["kind"] = "font".into();
+            },
+        );
+        let pin = site.repository.select(&site.state(), false).unwrap().pin;
+        let error = site.resolve(&pin).unwrap_err();
+        assert!(error.contains("needs a newer rb"), "{error}");
+    }
+
+    #[test]
+    fn a_retained_version_this_build_cannot_read_costs_only_that_version() {
+        let site = Site::new();
+        site.publish_raw(
+            1,
+            |_, _| {},
+            |_, document| {
+                let versions = document["versions"].as_object_mut().unwrap();
+                let mut newer = versions.values().next().unwrap().clone();
+                newer["platforms"][SYSTEM]["recipe"]["install"] = "Pkg".into();
+                versions.insert("0.0.1".into(), newer);
+            },
+        );
+        let pin = site.repository.select(&site.state(), false).unwrap().pin;
+        assert!(
+            site.resolve(&pin).is_ok(),
+            "the default version is unaffected"
+        );
+
+        let error = RepositoryResolver::with_cache(&pin, site.state().join("downloads"), false)
+            .resolve(
+                &PackageRequest::parse(&format!("{}@0.0.1", site.name)),
+                &ResolveContext::new(SYSTEM),
+            )
+            .unwrap_err();
+        assert!(error.contains("needs a newer rb"), "{error}");
     }
 }

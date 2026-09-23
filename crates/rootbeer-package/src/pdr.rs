@@ -4,13 +4,18 @@
 //! Only the root is signed. Package documents and records are addressed by digest, beside the
 //! root (`packages/<digest>.json`, `records/<digest>.json`), so trust never depends on where
 //! the bytes were fetched from and a mirror is a copy of the directory.
+//!
+//! Clients decode one entry at a time. Something a newer publisher added that this build cannot
+//! read costs only the entry that carries it, which is then reported as needing a newer rb; it
+//! never makes the rest of the repository unreadable. Signatures and digests still cover every
+//! byte, so tolerance never extends to tampering.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::valid_name;
+use crate::catalog::{valid_name, SYSTEMS};
 use crate::index::is_sha256;
 use crate::CatalogRecipe;
 use rootbeer_catalog::decode_hex;
@@ -22,12 +27,22 @@ pub const DOCUMENT_LIMIT: usize = 1024 * 1024;
 const SIGNING_TAG: &str = "rootbeer-pdr-v3";
 
 /// Everything search and listing need, plus a digest for each package's detail.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Root {
     pub schema: u32,
     pub sequence: u64,
     pub packages: BTreeMap<String, RootPackage>,
+    /// Packages this build cannot read, kept so they are explained rather than missing.
+    #[serde(skip)]
+    pub unreadable: BTreeMap<String, Unreadable>,
     pub signature: String,
+}
+
+/// What can still be said about a package this build cannot read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Unreadable {
+    pub aliases: Vec<String>,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,10 +82,13 @@ pub enum PackageKind {
 }
 
 /// Every retained version of one package and what each platform installs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PackageDocument {
     pub name: String,
     pub versions: BTreeMap<String, DocumentVersion>,
+    /// Version and system of entries this build cannot read.
+    #[serde(skip)]
+    pub unreadable: BTreeSet<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,10 +150,31 @@ pub fn verify_root(bytes: &[u8], public_key: &str) -> Result<serde_json::Value, 
 }
 
 impl Root {
-    /// Verifies the signature over the document as published, then decodes it.
+    /// Verifies the signature over the document as published, then decodes each package on
+    /// its own.
     pub fn from_bytes(bytes: &[u8], public_key: &str) -> Result<Self, String> {
-        let root: Self = serde_json::from_value(verify_root(bytes, public_key)?)
-            .map_err(|error| error.to_string())?;
+        let value = verify_root(bytes, public_key)?;
+        let entries = value["packages"]
+            .as_object()
+            .ok_or("PDR root has no packages")?;
+        let mut root = Self {
+            schema: ROOT_SCHEMA,
+            sequence: value["sequence"].as_u64().unwrap_or_default(),
+            packages: BTreeMap::new(),
+            unreadable: BTreeMap::new(),
+            signature: value["signature"].as_str().unwrap_or_default().to_string(),
+        };
+        for (name, entry) in entries {
+            match RootPackage::decode(entry) {
+                Ok(package) => {
+                    root.packages.insert(name.clone(), package);
+                }
+                Err(_) => {
+                    root.unreadable
+                        .insert(name.clone(), Unreadable::describe(entry));
+                }
+            }
+        }
         root.validate()?;
         Ok(root)
     }
@@ -149,14 +188,25 @@ impl Root {
             return Err("invalid PDR root schema or sequence".into());
         }
         let mut names = BTreeSet::new();
-        for (name, package) in &self.packages {
-            for identity in std::iter::once(name).chain(&package.aliases) {
+        let identities = self
+            .packages
+            .iter()
+            .map(|(name, package)| (name, &package.aliases))
+            .chain(
+                self.unreadable
+                    .iter()
+                    .map(|(name, entry)| (name, &entry.aliases)),
+            );
+        for (name, aliases) in identities {
+            for identity in std::iter::once(name).chain(aliases) {
                 if !valid_name(identity) || !names.insert(identity) {
                     return Err(format!(
                         "{name}: invalid or duplicate package name `{identity}`"
                     ));
                 }
             }
+        }
+        for (name, package) in &self.packages {
             package
                 .validate()
                 .map_err(|error| format!("{name}: {error}"))?;
@@ -175,9 +225,48 @@ impl Root {
             })
             .map(|(name, package)| (name.as_str(), package))
     }
+
+    /// The canonical name of a package this build cannot read, by name or alias.
+    pub fn find_unreadable(&self, name: &str) -> Option<&str> {
+        self.unreadable
+            .iter()
+            .find(|(canonical, entry)| {
+                *canonical == name || entry.aliases.iter().any(|alias| alias == name)
+            })
+            .map(|(canonical, _)| canonical.as_str())
+    }
+}
+
+impl Unreadable {
+    fn describe(entry: &serde_json::Value) -> Self {
+        let aliases = entry["aliases"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|alias| alias.as_str().map(str::to_string))
+            .collect();
+        Self {
+            aliases,
+            description: entry["description"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+        }
+    }
 }
 
 impl RootPackage {
+    /// Decodes one entry, ignoring platforms this build does not know.
+    fn decode(entry: &serde_json::Value) -> Result<Self, String> {
+        let mut package: Self =
+            serde_json::from_value(entry.clone()).map_err(|error| error.to_string())?;
+        package
+            .platforms
+            .retain(|system, _| SYSTEMS.contains(&system.as_str()));
+        package.validate()?;
+        Ok(package)
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.description.trim().is_empty()
             || !self.homepage.starts_with("https://")
@@ -223,7 +312,10 @@ impl RootPackage {
                 .versions
                 .get(&platform.version)
                 .and_then(|version| version.platforms.get(system));
-            if published.is_none() {
+            let is_unreadable = document
+                .unreadable
+                .contains(&(platform.version.clone(), system.clone()));
+            if published.is_none() && !is_unreadable {
                 return Err(format!(
                     "{name}@{} has no published {system} entry in its document",
                     platform.version
@@ -235,18 +327,69 @@ impl RootPackage {
 }
 
 impl PackageDocument {
-    /// Decodes a document whose bytes the caller already matched against the root's digest.
+    /// Decodes a document whose bytes the caller already matched against the root's digest,
+    /// one version and platform at a time.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() > DOCUMENT_LIMIT {
             return Err("package document exceeds 1 MiB".into());
         }
-        let document: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        let value: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        let mut document = Self {
+            name: value["name"]
+                .as_str()
+                .ok_or("package document has no name")?
+                .to_string(),
+            versions: BTreeMap::new(),
+            unreadable: BTreeSet::new(),
+        };
+        let versions = value["versions"]
+            .as_object()
+            .ok_or("package document has no versions")?;
+        for (version, entry) in versions {
+            let license = entry["license"].as_str();
+            let revision = entry["revision"]
+                .as_u64()
+                .and_then(|revision| u32::try_from(revision).ok());
+            let platforms = entry["platforms"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter(|(system, _)| SYSTEMS.contains(&system.as_str()));
+            let mut readable = BTreeMap::new();
+            for (system, platform) in platforms {
+                let decoded = serde_json::from_value::<DocumentPlatform>(platform.clone())
+                    .map_err(|error| error.to_string())
+                    .and_then(|platform| platform.validate(system).map(|()| platform));
+                match (license, revision, decoded) {
+                    (Some(_), Some(_), Ok(platform)) => {
+                        readable.insert(system.clone(), platform);
+                    }
+                    _ => {
+                        document
+                            .unreadable
+                            .insert((version.clone(), system.clone()));
+                    }
+                }
+            }
+            if let (Some(license), Some(revision), false) = (license, revision, readable.is_empty())
+            {
+                document.versions.insert(
+                    version.clone(),
+                    DocumentVersion {
+                        license: license.to_string(),
+                        revision,
+                        platforms: readable,
+                    },
+                );
+            }
+        }
         document.validate()?;
         Ok(document)
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if !valid_name(&self.name) || self.versions.is_empty() {
+        if !valid_name(&self.name) || (self.versions.is_empty() && self.unreadable.is_empty()) {
             return Err("invalid package document identity".into());
         }
         for (version, entry) in &self.versions {
@@ -255,15 +398,21 @@ impl PackageDocument {
                 return Err(format!("{id}: invalid version entry"));
             }
             for (system, platform) in &entry.platforms {
-                crate::catalog::validate_systems(std::slice::from_ref(system))?;
                 platform
-                    .recipe
                     .validate(system)
                     .map_err(|error| format!("{id} {system}: {error}"))?;
-                if !is_sha256(&platform.record) || platform.published == 0 {
-                    return Err(format!("{id} {system}: invalid record reference"));
-                }
             }
+        }
+        Ok(())
+    }
+}
+
+impl DocumentPlatform {
+    fn validate(&self, system: &str) -> Result<(), String> {
+        crate::catalog::validate_systems(&[system.to_string()])?;
+        self.recipe.validate(system)?;
+        if !is_sha256(&self.record) || self.published == 0 {
+            return Err("invalid record reference".into());
         }
         Ok(())
     }
@@ -316,6 +465,7 @@ mod tests {
                     )]),
                 },
             )]),
+            unreadable: BTreeSet::new(),
         }
     }
 
@@ -323,6 +473,7 @@ mod tests {
         Root {
             schema: ROOT_SCHEMA,
             sequence: 1,
+            unreadable: BTreeMap::new(),
             packages: BTreeMap::from([(
                 "fd".into(),
                 RootPackage {
@@ -449,8 +600,56 @@ mod tests {
             .get_mut("aarch64-macos")
             .unwrap()
             .record = "https://example.com/records/b.json".into();
-        assert!(document.validate().is_err());
+        assert!(document.validate().is_err(), "a publisher never writes one");
         let bytes = serde_json::to_vec(&document).unwrap();
-        assert!(PackageDocument::from_bytes(&bytes).is_err());
+        let decoded = PackageDocument::from_bytes(&bytes).unwrap();
+        assert!(
+            decoded.versions.is_empty() && decoded.unreadable.len() == 1,
+            "a client reads it as an entry it cannot use"
+        );
+    }
+
+    #[test]
+    fn a_package_this_build_cannot_read_is_listed_rather_than_fatal() {
+        let mut value = serde_json::to_value(root()).unwrap();
+        let mut newer = value["packages"]["fd"].clone();
+        newer["aliases"] = serde_json::json!(["newer-alias"]);
+        newer["platforms"]["aarch64-macos"]["kind"] = "font".into();
+        value["packages"]["newer"] = newer;
+        let (bytes, key) = sign(value);
+
+        let root = Root::from_bytes(&bytes, &key).unwrap();
+        assert!(root.find("fd").is_some());
+        assert!(root.find("newer").is_none());
+        assert_eq!(root.find_unreadable("newer-alias"), Some("newer"));
+        assert_eq!(root.unreadable["newer"].description, "Find entries");
+    }
+
+    #[test]
+    fn a_platform_this_build_does_not_know_is_ignored() {
+        let mut value = serde_json::to_value(root()).unwrap();
+        let platform = value["packages"]["fd"]["platforms"]["aarch64-macos"].clone();
+        value["packages"]["fd"]["platforms"]["riscv64-linux"] = platform;
+        let (bytes, key) = sign(value);
+
+        let root = Root::from_bytes(&bytes, &key).unwrap();
+        let platforms: Vec<_> = root.packages["fd"].platforms.keys().collect();
+        assert_eq!(platforms, ["aarch64-macos"]);
+    }
+
+    #[test]
+    fn an_unreadable_document_entry_is_recorded_and_still_satisfies_the_root() {
+        let mut value = serde_json::to_value(document()).unwrap();
+        value["versions"]["10.5.0"]["platforms"]["aarch64-macos"]["recipe"]["install"] =
+            "Pkg".into();
+        let document = PackageDocument::from_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
+
+        assert!(document.versions.is_empty());
+        assert!(document
+            .unreadable
+            .contains(&("10.5.0".to_string(), "aarch64-macos".to_string())));
+        assert!(root().packages["fd"]
+            .check_document("fd", &document)
+            .is_ok());
     }
 }
