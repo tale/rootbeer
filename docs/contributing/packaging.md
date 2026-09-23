@@ -670,7 +670,7 @@ hash its source archive, and retain existing version recipes. Index qualificatio
 still builds and checks the new package on each supported platform. The package
 update does not advance `engine-revision`.
 
-The notification workflow uses `INDEX_UPDATE_SSH_KEY`, a writable deploy key scoped
+The notification workflow uses `PDR_UPDATE_SSH_KEY`, a writable deploy key scoped
 to the index repository. It only commits the update request; discovery independently
 checks the current source revision and CI result. The index also accepts a
 `rootbeer-update` repository dispatch. Without the key, polling remains active. The

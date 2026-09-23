@@ -19,9 +19,9 @@ jobs:
       - name: Check notification key
         id: key
         env:
-          INDEX_KEY: ${{ secrets.INDEX_UPDATE_SSH_KEY }}
+          PDR_KEY: ${{ secrets.PDR_UPDATE_SSH_KEY }}
         run: |
-          if [ -n "$INDEX_KEY" ]; then
+          if [ -n "$PDR_KEY" ]; then
             echo 'available=true' >> "$GITHUB_OUTPUT"
           else
             echo 'PDR polling will pick up this successful build.'
@@ -31,7 +31,7 @@ jobs:
         with:
           repository: rootbeer-org/pdr
           ref: main
-          ssh-key: ${{ secrets.INDEX_UPDATE_SSH_KEY }}
+          ssh-key: ${{ secrets.PDR_UPDATE_SSH_KEY }}
       - name: Request a Rootbeer update
         if: steps.key.outputs.available == 'true'
         env:
