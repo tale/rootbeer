@@ -66,6 +66,27 @@ pub struct BuildProvenance {
     pub isolation: String,
     pub toolchain: BTreeMap<String, String>,
     pub runtime_audit_sha256: String,
+    /// Everything in the build closure, by canonical `name@version`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dependencies: BTreeMap<String, BuiltDependency>,
+}
+
+/// What identifies a build dependency before it is built: part of its dependent's input key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DependencyInputs {
+    pub revision: u32,
+    pub recipe_sha256: String,
+    pub engine_sha256: String,
+}
+
+/// A build dependency as it was compiled for this package.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuiltDependency {
+    #[serde(flatten)]
+    pub inputs: DependencyInputs,
+    pub output_sha256: String,
 }
 
 /// Signs the exact embedded JSON bytes, avoiding reserialization during verification.
@@ -80,6 +101,14 @@ impl PackageRecord {
     /// Identifies the exact qualified inputs, independently of publication time and storage.
     pub fn input_key(&self) -> String {
         let (engine, environment) = self.provenance.qualification();
+        let dependencies = match &self.provenance {
+            PackageProvenance::Source(provenance) => provenance
+                .dependencies
+                .iter()
+                .map(|(id, dependency)| (id.clone(), dependency.inputs.clone()))
+                .collect(),
+            PackageProvenance::Upstream(_) => BTreeMap::new(),
+        };
         input_key(
             &self.artifact.package.id(),
             &self.system,
@@ -87,10 +116,12 @@ impl PackageRecord {
             &self.recipe,
             engine,
             environment,
+            &dependencies,
         )
     }
 
-    /// Validates the dependency-free package contract supported by this schema.
+    /// Validates the package contract supported by this schema: build dependencies are
+    /// recorded in provenance, and nothing is needed from another package at runtime.
     pub fn validate(&self) -> Result<(), String> {
         let package = &self.artifact.package;
         if self.schema != 2 {
@@ -106,14 +137,25 @@ impl PackageRecord {
             return Err("invalid package record identity".into());
         }
         self.recipe.validate(&self.system)?;
-        if self
-            .recipe
-            .build
-            .as_ref()
-            .is_some_and(|build| !build.dependencies.is_empty())
-            || !package.runtime_dependencies.is_empty()
+        if !package.runtime_dependencies.is_empty() {
+            return Err("package records with runtime dependencies are not supported yet".into());
+        }
+        if let (Some(build), PackageProvenance::Source(provenance)) =
+            (&self.recipe.build, &self.provenance)
         {
-            return Err("package records with dependencies are not supported yet".into());
+            let direct = build
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.package());
+            if let Some(missing) = direct
+                .into_iter()
+                .find(|id| !provenance.dependencies.contains_key(*id))
+            {
+                return Err(format!(
+                    "{}: provenance omits build dependency {missing}",
+                    package.id()
+                ));
+            }
         }
         let (engine, environment) = self.provenance.qualification();
         if !rootbeer_catalog::is_sha256(engine) || !rootbeer_catalog::is_sha256(environment) {
@@ -180,6 +222,21 @@ impl BuildProvenance {
         {
             return Err("invalid package build evidence".into());
         }
+        for (id, dependency) in &provenance.dependencies {
+            let request = crate::PackageRequest::parse(id);
+            if request.resolver.is_some()
+                || request.version.is_none()
+                || [
+                    &dependency.inputs.recipe_sha256,
+                    &dependency.inputs.engine_sha256,
+                    &dependency.output_sha256,
+                ]
+                .iter()
+                .any(|hash| !rootbeer_catalog::is_sha256(hash))
+            {
+                return Err(format!("invalid build dependency evidence for {id}"));
+            }
+        }
         Ok(())
     }
 }
@@ -192,6 +249,7 @@ pub fn input_key(
     recipe: &CatalogRecipe,
     engine: &str,
     environment: &str,
+    dependencies: &BTreeMap<String, DependencyInputs>,
 ) -> String {
     rootbeer_catalog::canonical_sha256(&(
         "rootbeer-package-inputs-v1",
@@ -201,6 +259,7 @@ pub fn input_key(
         recipe,
         engine,
         environment,
+        dependencies,
     ))
     .expect("package inputs serialize")
 }
@@ -310,6 +369,7 @@ pub(crate) mod tests {
                 isolation: "host".into(),
                 toolchain: BTreeMap::from([("cc".into(), "test compiler".into())]),
                 runtime_audit_sha256: "e".repeat(64),
+                dependencies: BTreeMap::new(),
             })),
         };
         let key = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
@@ -373,9 +433,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn records_reject_dependencies_and_missing_build_evidence() {
+    fn build_dependencies_must_be_recorded_and_bind_the_input_key() {
         let (bytes, key, id) = signed();
         let mut record = verify_record(&bytes, &key, &id, "aarch64-linux").unwrap();
+        let unbuilt = record.input_key();
         record
             .recipe
             .build
@@ -383,8 +444,56 @@ pub(crate) mod tests {
             .unwrap()
             .dependencies
             .push("dependency@1".into());
-        assert!(record.validate().unwrap_err().contains("dependencies"));
-        record.recipe.build.as_mut().unwrap().dependencies.clear();
+        assert!(record
+            .validate()
+            .unwrap_err()
+            .contains("omits build dependency"));
+
+        let dependency = BuiltDependency {
+            inputs: DependencyInputs {
+                revision: 1,
+                recipe_sha256: "a".repeat(64),
+                engine_sha256: "b".repeat(64),
+            },
+            output_sha256: "c".repeat(64),
+        };
+        let PackageProvenance::Source(provenance) = &mut record.provenance else {
+            panic!()
+        };
+        provenance
+            .dependencies
+            .insert("dependency@1".into(), dependency);
+        record.validate().unwrap();
+        let built = record.input_key();
+        assert_ne!(built, unbuilt);
+
+        let mut change = |edit: fn(&mut BuiltDependency)| {
+            let PackageProvenance::Source(provenance) = &mut record.provenance else {
+                panic!()
+            };
+            edit(provenance.dependencies.get_mut("dependency@1").unwrap());
+            record.input_key()
+        };
+        let rebuilt = change(|dependency| dependency.output_sha256 = "d".repeat(64));
+        assert_eq!(rebuilt, built, "outputs are evidence, not inputs");
+        let revised = change(|dependency| dependency.inputs.revision = 2);
+        assert_ne!(revised, built);
+
+        record
+            .artifact
+            .package
+            .runtime_dependencies
+            .insert("runtime@1".into(), record.artifact.package.clone());
+        assert!(record
+            .validate()
+            .unwrap_err()
+            .contains("runtime dependencies"));
+    }
+
+    #[test]
+    fn records_reject_missing_build_evidence() {
+        let (bytes, key, id) = signed();
+        let mut record = verify_record(&bytes, &key, &id, "aarch64-linux").unwrap();
         let PackageProvenance::Source(provenance) = &mut record.provenance else {
             panic!()
         };

@@ -400,7 +400,7 @@ mod tests {
                 .collect();
             let release = root.path().join("release");
             crate::release_package(
-                &catalog.packages["demo"],
+                &catalog,
                 &prepared.join("receipt.json"),
                 "example/demo",
                 &release,
@@ -431,7 +431,7 @@ mod tests {
             changed.artifact.package.output_sha256 = Some("f".repeat(64));
             assert!(changed.validate().unwrap_err().contains("upstream output"));
             assert!(crate::release_package(
-                &catalog.packages["demo"],
+                &catalog,
                 &prepared.join("receipt.json"),
                 "example/demo",
                 &root.path().join("wrong-inputs"),
@@ -467,7 +467,7 @@ mod tests {
             assert!(!root.path().join("failed").exists());
             fs::write(prepared.join("package.tar.gz"), b"tampered").unwrap();
             assert!(crate::release_package(
-                &catalog.packages["demo"],
+                &catalog,
                 &prepared.join("receipt.json"),
                 "example/demo",
                 &root.path().join("tampered"),

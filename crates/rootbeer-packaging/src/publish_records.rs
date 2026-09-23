@@ -56,7 +56,9 @@ pub fn publish_records(
         None
     };
     let mut published = match &previous {
-        Some(previous) => retained(catalog, &previous_documents(previous, site)?),
+        Some(previous) => retained(catalog, &previous_documents(previous, site)?, |digest| {
+            record_closure(site, digest)
+        })?,
         None => BTreeMap::new(),
     };
     for entry in published.values() {
@@ -209,11 +211,19 @@ fn previous_documents(
     Ok(documents)
 }
 
-/// Previous records the catalog still approves exactly.
+/// Revision and recipe digest of each package a build was compiled with.
+type Closure = BTreeMap<String, (u32, String)>;
+
+/// Previous records the catalog still approves exactly, including everything they were built
+/// with. `built_with` reads a record's closure by its digest.
+///
+/// Builder identity is deliberately not compared: an engine change alone keeps a package's own
+/// record, so it keeps its dependents' too.
 fn retained(
     catalog: &PackageCatalog,
     documents: &BTreeMap<String, PackageDocument>,
-) -> BTreeMap<Key, Published> {
+    built_with: impl Fn(&str) -> Result<Closure, String>,
+) -> Result<BTreeMap<Key, Published>, String> {
     let mut retained = BTreeMap::new();
     for (name, document) in documents {
         for (version, entry) in &document.versions {
@@ -229,6 +239,22 @@ fn retained(
                 if !is_unchanged {
                     continue;
                 }
+                let has_dependencies = platform
+                    .recipe
+                    .build
+                    .as_ref()
+                    .is_some_and(|build| !build.dependencies.is_empty());
+                if has_dependencies {
+                    let id = format!("{name}@{version}");
+                    let current: Closure =
+                        crate::package_plan::dependency_inputs(catalog, &id, system)?
+                            .into_iter()
+                            .map(|(id, inputs)| (id, (inputs.revision, inputs.recipe_sha256)))
+                            .collect();
+                    if built_with(&platform.record)? != current {
+                        continue;
+                    }
+                }
                 retained.insert(
                     (name.clone(), version.clone(), system.clone()),
                     Published {
@@ -240,7 +266,26 @@ fn retained(
             }
         }
     }
-    retained
+    Ok(retained)
+}
+
+/// The closure a published record was built with, read from the site that already holds it.
+fn record_closure(site: &Path, digest: &str) -> Result<Closure, String> {
+    let bytes = fs::read(site.join("records").join(format!("{digest}.json")))
+        .map_err(|error| format!("record {digest}: {error}"))?;
+    let signed: SignedPackageRecord =
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let record: rootbeer_package::distribution::PackageRecord =
+        serde_json::from_str(signed.record.get()).map_err(|error| error.to_string())?;
+    let rootbeer_package::distribution::PackageProvenance::Source(provenance) = record.provenance
+    else {
+        return Ok(Closure::new());
+    };
+    Ok(provenance
+        .dependencies
+        .into_iter()
+        .map(|(id, built)| (id, (built.inputs.revision, built.inputs.recipe_sha256)))
+        .collect())
 }
 
 /// Builds the unsigned root and every package document, keyed by digest.
@@ -419,6 +464,10 @@ mod tests {
         PackageCatalog::from_definitions(&BTreeMap::from([("tool".into(), definition)])).unwrap()
     }
 
+    fn no_closure(digest: &str) -> Result<Closure, String> {
+        panic!("{digest}: a package without build dependencies never reads its record")
+    }
+
     fn key(version: &str, system: &str) -> Key {
         ("tool".into(), version.into(), system.into())
     }
@@ -522,7 +571,10 @@ mod tests {
         let published = release(&catalog, "2", &[MAC, LINUX], 100);
         let (root, documents) = assemble(&catalog, None, &published, 1).unwrap();
         let documents = documents_of(&root, &documents);
-        assert_eq!(retained(&catalog, &documents), published);
+        assert_eq!(
+            retained(&catalog, &documents, no_closure).unwrap(),
+            published
+        );
 
         let mut changed = catalog.clone();
         let version = changed
@@ -538,7 +590,7 @@ mod tests {
             .unwrap()
             .checks
             .push(vec!["tool".into(), "--help".into()]);
-        let kept = retained(&changed, &documents);
+        let kept = retained(&changed, &documents, no_closure).unwrap();
         assert!(!kept.contains_key(&key("2", MAC)));
         assert!(kept.contains_key(&key("2", LINUX)));
 
@@ -550,7 +602,9 @@ mod tests {
             .get_mut("2")
             .unwrap()
             .revision = 2;
-        assert!(retained(&changed, &documents).is_empty());
+        assert!(retained(&changed, &documents, no_closure)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -612,5 +666,78 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("newer engine"), "{error}");
+    }
+
+    /// `app` is built with `lib`; both are source builds published on Linux.
+    fn dependent_catalog(lib_configure: &str) -> PackageCatalog {
+        let digest = "a".repeat(64);
+        let recipe = |name: &str, build: &str| {
+            PackageDefinition::from_lua(&format!(
+                r#"return {{
+                    name = "{name}", description = "A {name}", homepage = "https://example.com",
+                    default_license = "MIT",
+                    source = {{ url = "https://example.com/{name}-{{version}}.tar.gz", archive = "tar.gz",
+                                strip_prefix = "{name}-{{version}}" }},
+                    build = {build},
+                    outputs = {{ bins = {{ "{name}" }}, checks = {{ {{ "{name}", "--version" }} }} }},
+                    platforms = {{ ["{LINUX}"] = {{ default_version = "1" }} }},
+                    versions = {{ ["1"] = {{ digests = {{ ["{LINUX}"] = "{digest}" }} }} }},
+                }}"#
+            ))
+            .unwrap()
+        };
+        let lib = recipe(
+            "lib",
+            &format!(r#"{{ backend = "autotools", configure = {{ "{lib_configure}" }} }}"#),
+        );
+        let app = recipe(
+            "app",
+            r#"{ backend = "autotools", dependencies = { "lib@1" } }"#,
+        );
+        PackageCatalog::from_definitions(&BTreeMap::from([
+            ("lib".into(), lib),
+            ("app".into(), app),
+        ]))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_dependency_change_unpublishes_what_was_built_with_it() {
+        let catalog = dependent_catalog("--static");
+        let published: BTreeMap<Key, Published> = ["lib", "app"]
+            .into_iter()
+            .map(|name| {
+                let approved = &catalog.packages[name].versions["1"];
+                let key = (name.to_string(), "1".to_string(), LINUX.to_string());
+                let entry = Published {
+                    recipe: approved.platforms[LINUX].clone(),
+                    record: hash_bytes(name.as_bytes()),
+                    published: 100,
+                };
+                (key, entry)
+            })
+            .collect();
+        let (root, documents) = assemble(&catalog, None, &published, 1).unwrap();
+        let documents = documents_of(&root, &documents);
+
+        let built_with = |catalog: &PackageCatalog| {
+            let closure: Closure = crate::package_plan::dependency_inputs(catalog, "app@1", LINUX)
+                .unwrap()
+                .into_iter()
+                .map(|(id, inputs)| (id, (inputs.revision, inputs.recipe_sha256)))
+                .collect();
+            move |_: &str| Ok(closure.clone())
+        };
+        assert_eq!(
+            retained(&catalog, &documents, built_with(&catalog)).unwrap(),
+            published
+        );
+
+        let changed = dependent_catalog("--shared");
+        let kept = retained(&changed, &documents, built_with(&catalog)).unwrap();
+        assert!(
+            kept.is_empty(),
+            "lib changed, and app was built with the old lib: {kept:?}"
+        );
     }
 }

@@ -4,8 +4,7 @@ use std::process::Command;
 
 use rootbeer_package::distribution::{BuildProvenance, PackageProvenance, PackageRecord};
 use rootbeer_package::{
-    BuildArtifact, CatalogPackage, CatalogRecipe, LockedSource, PackageCatalog, PackageRealizer,
-    PublishedArtifact,
+    BuildArtifact, CatalogRecipe, LockedSource, PackageCatalog, PackageRealizer, PublishedArtifact,
 };
 use rootbeer_store::{hash_bytes, Store};
 
@@ -21,7 +20,7 @@ pub struct Signer<'a> {
 /// Verifies and signs one qualified package. The caller must trust the receipt's producer.
 /// The destination contains only this package's archive, receipt, and signed record.
 pub fn release_package(
-    definition: &CatalogPackage,
+    catalog: &PackageCatalog,
     receipt: &Path,
     registry: &str,
     output: &Path,
@@ -37,6 +36,10 @@ pub fn release_package(
     }
     let identity: Identity =
         serde_json::from_slice(&receipt_bytes).map_err(|error| error.to_string())?;
+    let definition = catalog
+        .packages
+        .get(&identity.package.name)
+        .ok_or("receipt names a package outside the catalog")?;
     let entry = definition
         .versions
         .get(&identity.package.version)
@@ -46,9 +49,6 @@ pub fn release_package(
         .for_system(&identity.system)
         .ok_or("no matching package recipe for this platform")?
         .clone();
-    if definition.name != identity.package.name {
-        return Err("receipt belongs to a different package".into());
-    }
     let staging = rootbeer_package::staging::staging(output)?;
     let destination = staging.path().join("release");
     fs::create_dir(&destination).map_err(|error| error.to_string())?;
@@ -59,7 +59,7 @@ pub fn release_package(
     );
     let qualified = if recipe.build.is_some() {
         prepare_source(
-            definition,
+            catalog,
             receipt,
             &receipt_bytes,
             registry,
@@ -107,7 +107,7 @@ struct Qualified {
 }
 
 fn prepare_source(
-    definition: &CatalogPackage,
+    catalog: &PackageCatalog,
     receipt: &Path,
     receipt_bytes: &[u8],
     registry: &str,
@@ -117,8 +117,28 @@ fn prepare_source(
     fs::create_dir(destination.join("artifacts")).map_err(|error| error.to_string())?;
     let build: BuildArtifact =
         serde_json::from_slice(receipt_bytes).map_err(|error| error.to_string())?;
-    if !build.dependencies.is_empty() || !build.package.runtime_dependencies.is_empty() {
-        return Err("release supports dependency-free packages only".into());
+    if !build.package.runtime_dependencies.is_empty() {
+        return Err("release does not support runtime dependencies yet".into());
+    }
+    let id = build.package.id();
+    let mut inputs = crate::package_plan::dependency_inputs(catalog, &id, &build.system)?;
+    let mut dependencies = std::collections::BTreeMap::new();
+    for (dependency, package) in &build.dependencies {
+        let inputs = inputs
+            .remove(dependency)
+            .ok_or_else(|| format!("{id}: built with {dependency}, outside its closure"))?;
+        let output_sha256 = package
+            .output_sha256
+            .clone()
+            .ok_or_else(|| format!("{id}: {dependency} has no output hash"))?;
+        let built = rootbeer_package::distribution::BuiltDependency {
+            inputs,
+            output_sha256,
+        };
+        dependencies.insert(dependency.clone(), built);
+    }
+    if let Some(missing) = inputs.keys().next() {
+        return Err(format!("{id}: receipt omits {missing} from its closure"));
     }
     let provenance = BuildProvenance {
         engine_sha256: rootbeer_build::engine_identity(Some(&build.build.backend)),
@@ -135,13 +155,10 @@ fn prepare_source(
         runtime_audit_sha256: build
             .runtime_audit_sha256
             .ok_or("build receipt has no runtime audit")?,
-    };
-    let catalog = PackageCatalog {
-        extra: Default::default(),
-        packages: std::collections::BTreeMap::from([(definition.name.clone(), definition.clone())]),
+        dependencies,
     };
     let (system, artifact, checked_receipt) =
-        crate::receipt::prepare_artifact(&catalog, receipt, registry, destination, realizer)?;
+        crate::receipt::prepare_artifact(catalog, receipt, registry, destination, realizer)?;
     if checked_receipt != receipt_bytes {
         return Err("build receipt changed during release".into());
     }
@@ -341,7 +358,7 @@ mod tests {
             .collect();
         let release = root.path().join("release");
         let reference = release_package(
-            &catalog.packages[&build.package.name],
+            &catalog,
             &receipt,
             "example/packages/tool",
             &release,
@@ -358,6 +375,7 @@ mod tests {
                     [&build.system],
                 &rootbeer_build::engine_identity(Some(&build.build.backend)),
                 build.qualification_environment.as_deref().unwrap(),
+                &BTreeMap::new(),
             )),
         )
         .unwrap();
@@ -376,7 +394,7 @@ mod tests {
 
         let wrong_inputs = root.path().join("wrong-inputs");
         assert!(release_package(
-            &catalog.packages[&build.package.name],
+            &catalog,
             &receipt,
             "example/packages/tool",
             &wrong_inputs,
@@ -391,13 +409,19 @@ mod tests {
         .contains("planned package inputs"));
         assert!(!wrong_inputs.exists());
 
-        let mut changed = catalog.packages[&build.package.name].clone();
+        let mut changed = catalog.clone();
         changed
+            .packages
+            .get_mut(&build.package.name)
+            .unwrap()
             .versions
             .get_mut(&build.package.version)
             .unwrap()
             .all_mut()
-            .for_each(|platform| platform.checks.push(vec!["new-check".into()]));
+            .for_each(|platform| {
+                let command = platform.bins.names().into_iter().next().unwrap().clone();
+                platform.checks.push(vec![command, "--help".into()]);
+            });
         assert!(release_package(
             &changed,
             &receipt,
@@ -420,7 +444,7 @@ mod tests {
         .unwrap();
         let failed = root.path().join("failed");
         assert!(release_package(
-            &catalog.packages[&build.package.name],
+            &catalog,
             &receipt,
             "example/packages/tool",
             &failed,
