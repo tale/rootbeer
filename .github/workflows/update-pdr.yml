@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: notify-package-index
+  group: notify-pdr
   cancel-in-progress: false
 
 jobs:
@@ -24,12 +24,12 @@ jobs:
           if [ -n "$INDEX_KEY" ]; then
             echo 'available=true' >> "$GITHUB_OUTPUT"
           else
-            echo 'Index polling will pick up this successful build.'
+            echo 'PDR polling will pick up this successful build.'
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.key.outputs.available == 'true'
         with:
-          repository: tale/rootbeer-index
+          repository: rootbeer-org/pdr
           ref: main
           ssh-key: ${{ secrets.INDEX_UPDATE_SSH_KEY }}
       - name: Request a Rootbeer update
