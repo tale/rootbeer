@@ -1,6 +1,8 @@
-use rootbeer_package::{
-    distribution::input_key, graph::find_recipe, PackageCatalog, ResolveContext,
-};
+use std::collections::BTreeMap;
+
+use rootbeer_package::distribution::{input_key, DependencyInputs};
+use rootbeer_package::graph::{find_recipe, find_recipe_for_system, DependencyGraph};
+use rootbeer_package::{PackageCatalog, ResolveContext};
 
 use crate::BuildOptions;
 
@@ -13,7 +15,31 @@ pub struct PackageTask {
     pub key: String,
 }
 
-/// Plans explicitly selected, dependency-free packages without building them.
+/// What identifies every package in a build's closure, so a change to any of them is a new build.
+pub(crate) fn dependency_inputs(
+    catalog: &PackageCatalog,
+    id: &str,
+    system: &str,
+) -> Result<BTreeMap<String, DependencyInputs>, String> {
+    let graph = DependencyGraph::new(catalog, &[id.to_string()], system)?;
+    graph.nodes[id]
+        .closure
+        .iter()
+        .map(|dependency| {
+            let (package, version, recipe) = find_recipe_for_system(catalog, dependency, system)?;
+            let inputs = DependencyInputs {
+                revision: package.versions[version].revision,
+                recipe_sha256: recipe.sha256(),
+                engine_sha256: rootbeer_build::engine_identity(
+                    recipe.build.as_ref().map(|build| &build.backend),
+                ),
+            };
+            Ok((dependency.clone(), inputs))
+        })
+        .collect()
+}
+
+/// Plans explicitly selected packages, and the closure each builds with, without building them.
 pub fn plan_packages(
     catalog: &PackageCatalog,
     requests: &[String],
@@ -36,15 +62,6 @@ pub fn plan_packages(
         if *request != id {
             return Err(format!("use the exact canonical request {id}"));
         }
-        if recipe
-            .build
-            .as_ref()
-            .is_some_and(|build| !build.dependencies.is_empty())
-        {
-            return Err(format!(
-                "{id}: separate dependency results are not supported yet"
-            ));
-        }
         let engine =
             rootbeer_build::engine_identity(recipe.build.as_ref().map(|build| &build.backend));
         let environment = match environments.get(&engine) {
@@ -57,7 +74,15 @@ pub fn plan_packages(
         tasks.insert(
             id.clone(),
             PackageTask {
-                key: input_key(&id, &system, revision, &recipe, &engine, environment),
+                key: input_key(
+                    &id,
+                    &system,
+                    revision,
+                    &recipe,
+                    &engine,
+                    environment,
+                    &dependency_inputs(catalog, &id, &system)?,
+                ),
                 package: id,
                 name: package.name.clone(),
                 system: system.clone(),

@@ -39,9 +39,6 @@ enum Command {
     },
     /// Approve one qualified package and prepare its signed package release
     Release {
-        /// This package's existing Lua definition
-        #[arg(long)]
-        recipe: PathBuf,
         #[arg(long)]
         receipt: PathBuf,
         /// GHCR repository, such as owner/packages/tool
@@ -232,7 +229,6 @@ fn execute(args: Args) -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
         }
         Command::Release {
-            recipe,
             receipt,
             registry,
             output: destination,
@@ -241,9 +237,6 @@ fn execute(args: Args) -> Result<(), String> {
             input_key,
             published,
         } => {
-            let definition = PackageDefinition::from_lua(
-                &std::fs::read_to_string(recipe).map_err(|error| error.to_string())?,
-            )?;
             let published = match published {
                 Some(published) => published,
                 None => std::time::SystemTime::now()
@@ -253,7 +246,7 @@ fn execute(args: Args) -> Result<(), String> {
             };
             let key_der = std::fs::read(key).map_err(|error| error.to_string())?;
             let reference = rootbeer_packaging::release_package(
-                &definition.package,
+                catalog()?,
                 &receipt,
                 &registry,
                 &destination,
