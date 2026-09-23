@@ -90,12 +90,12 @@ jobs:
 
       - name: Build
         run: |
-          [[ "$ROOTBEER_INDEX_URL" == https://* ]] || { echo "ROOTBEER_INDEX_URL must configure the official index" >&2; exit 1; }
-          [[ "$ROOTBEER_INDEX_PUBLIC_KEY" =~ ^[0-9a-f]{64}$ ]] || { echo "ROOTBEER_INDEX_PUBLIC_KEY must configure its verification key" >&2; exit 1; }
+          [[ "$ROOTBEER_PDR_URL" == https://* ]] || { echo "ROOTBEER_PDR_URL must configure the official PDR" >&2; exit 1; }
+          [[ "$ROOTBEER_PDR_PUBLIC_KEY" =~ ^[0-9a-f]{64}$ ]] || { echo "ROOTBEER_PDR_PUBLIC_KEY must configure its verification key" >&2; exit 1; }
           cargo build --locked --release --target ${{ matrix.target }}
         env:
-          ROOTBEER_INDEX_URL: ${{ vars.ROOTBEER_INDEX_URL }}
-          ROOTBEER_INDEX_PUBLIC_KEY: ${{ vars.ROOTBEER_INDEX_PUBLIC_KEY }}
+          ROOTBEER_PDR_URL: ${{ vars.ROOTBEER_PDR_URL }}
+          ROOTBEER_PDR_PUBLIC_KEY: ${{ vars.ROOTBEER_PDR_PUBLIC_KEY }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
           RB_BUILD_TIMESTAMP: ${{ needs.changes.outputs.timestamp }}

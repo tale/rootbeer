@@ -332,7 +332,7 @@ impl PlannedPipeline {
                 Op::Package { intent: PackageIntent::Request(request) }
                     if request.resolver.as_deref().is_none_or(|name| name == "rootbeer")
                         && self.local_catalog.as_ref().is_none_or(|catalog| {
-                            catalog.find(&request.name).is_none() || catalog.requires_index()
+                            catalog.find(&request.name).is_none() || catalog.requires_pdr()
                         })
             )
         })
@@ -527,7 +527,7 @@ mod tests {
 
         assert!(matches!(err, Error::Lock(LockError::StaleLockfile { .. })));
     }
-    fn plan_index_script(directory: &Path, source: &str) -> PlannedPipeline {
+    fn plan_script(directory: &Path, source: &str) -> PlannedPipeline {
         let script = directory.join("init.lua");
         fs::write(&script, source).unwrap();
         let mut options = Options::from_script(&script).unwrap();
@@ -558,7 +558,7 @@ mod tests {
         fs::write(recipes.join("demo.lua"), &recipe).unwrap();
         let script =
             "local rb = require('rootbeer'); rb.package_catalog('packages'); rb.package('demo')";
-        let planned = plan_index_script(root.path(), script);
+        let planned = plan_script(root.path(), script);
         assert!(!planned.has_canonical_requests());
         let mut inputs = PackageResolverInputs::default();
         inputs.resolvers.insert(
@@ -580,19 +580,19 @@ mod tests {
             recipe.replace("revision = 1", "revision = 2"),
         )
         .unwrap();
-        let changed = plan_index_script(root.path(), script);
+        let changed = plan_script(root.path(), script);
         assert!(!changed.lock_matches_plan(&lock).unwrap());
         assert!(matches!(
             changed.locked_ops_for_apply(&mut |_| {}).unwrap_err(),
             Error::Lock(LockError::StaleLockfile { .. })
         ));
-        let removed = plan_index_script(
+        let removed = plan_script(
             root.path(),
             "local rb = require('rootbeer'); rb.package('demo')",
         );
         assert!(removed.has_canonical_requests());
         assert!(!removed.lock_matches_plan(&lock).unwrap());
-        let mixed = plan_index_script(
+        let mixed = plan_script(
             root.path(),
             &(script.to_string() + "; rb.package('registry-tool')"),
         );
@@ -623,7 +623,7 @@ mod tests {
     fn repository_planning_is_offline_and_a_new_repository_invalidates_locks() {
         let root = tempfile::tempdir().unwrap();
         let source = repository_script(&"a".repeat(64));
-        let planned = plan_index_script(root.path(), &source);
+        let planned = plan_script(root.path(), &source);
         assert!(planned.has_canonical_requests());
         let inputs = locked_repository(&planned);
         let builder = PackageLockBuilder::current_system_with_inputs(inputs.clone());
@@ -636,18 +636,18 @@ mod tests {
         lock.inputs = inputs;
         assert!(planned.lock_matches_plan(&lock).unwrap());
         lock.write(root.path().join("rootbeer.lock")).unwrap();
-        let changed = plan_index_script(root.path(), &repository_script(&"b".repeat(64)));
+        let changed = plan_script(root.path(), &repository_script(&"b".repeat(64)));
         assert!(!changed.lock_matches_plan(&lock).unwrap());
         assert!(matches!(
             changed.locked_ops_for_apply(&mut |_| {}).unwrap_err(),
             Error::Lock(LockError::StaleLockfile { .. })
         ));
-        let removed = plan_index_script(
+        let removed = plan_script(
             root.path(),
             "local rb = require('rootbeer'); rb.package('new-tool')",
         );
         assert!(!removed.lock_matches_plan(&lock).unwrap());
-        let mixed = plan_index_script(
+        let mixed = plan_script(
             root.path(),
             &(source + "\nrb.package('github:owner/repo@1')"),
         );
@@ -687,7 +687,7 @@ mod tests {
             PackageRecordProof, PackageRequest, PackageResolution, ResolutionProof, ResolveContext,
         };
         let root = tempfile::tempdir().unwrap();
-        let mut planned = plan_index_script(
+        let mut planned = plan_script(
             root.path(),
             &repository_script(&"a".repeat(64)).replace("new-tool", "demo"),
         );

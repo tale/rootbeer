@@ -116,7 +116,7 @@ impl PackageRecord {
             return Err("package records with dependencies are not supported yet".into());
         }
         let (engine, environment) = self.provenance.qualification();
-        if !crate::index::is_sha256(engine) || !crate::index::is_sha256(environment) {
+        if !rootbeer_catalog::is_sha256(engine) || !rootbeer_catalog::is_sha256(environment) {
             return Err("invalid package qualification identity".into());
         }
         match (&self.recipe.build, &self.provenance) {
@@ -161,8 +161,8 @@ impl BuildProvenance {
         let provenance = self;
         let environment = &provenance.environment;
         if environment.schema != 1
-            || !crate::index::is_sha256(&provenance.engine_sha256)
-            || !crate::index::is_sha256(&provenance.environment_sha256)
+            || !rootbeer_catalog::is_sha256(&provenance.engine_sha256)
+            || !rootbeer_catalog::is_sha256(&provenance.environment_sha256)
             || environment.system != system
             || ["sh", "cc", "make", "patch"]
                 .iter()
@@ -171,10 +171,12 @@ impl BuildProvenance {
                 .tools
                 .values()
                 .chain(environment.inputs.values())
-                .any(|input| !input.path.is_absolute() || !crate::index::is_sha256(&input.sha256))
+                .any(|input| {
+                    !input.path.is_absolute() || !rootbeer_catalog::is_sha256(&input.sha256)
+                })
             || provenance.isolation.is_empty()
             || provenance.toolchain.is_empty()
-            || !crate::index::is_sha256(&provenance.runtime_audit_sha256)
+            || !rootbeer_catalog::is_sha256(&provenance.runtime_audit_sha256)
         {
             return Err("invalid package build evidence".into());
         }

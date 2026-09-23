@@ -17,7 +17,7 @@ impl GhcrBlob {
             .and_then(|reference| reference.split_once("@sha256:"))
             .ok_or("GHCR sources require ghcr://owner/repository@sha256:<archive digest>")?;
         validate_repository(repository)?;
-        if !super::index::is_sha256(sha256) {
+        if !rootbeer_catalog::is_sha256(sha256) {
             return Err("GHCR sources require a lowercase SHA-256 digest".into());
         }
         Ok(Self {

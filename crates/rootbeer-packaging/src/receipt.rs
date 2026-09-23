@@ -8,7 +8,7 @@ use super::{
     ArchiveFormat, BuildArtifact, LockedInstall, LockedSource, PackageCatalog, PackageRealizer,
     PublishedArtifact,
 };
-use rootbeer_package::index::is_sha256;
+use rootbeer_catalog::is_sha256;
 use rootbeer_store::{hash_bytes, hash_file};
 
 /// Verifies a source build's receipt and archives, audits the realized tree, and returns the

@@ -6,7 +6,7 @@ use rootbeer_packaging::{PackageCatalog, PackageDefinition};
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
-    /// Read package definitions from an index checkout
+    /// Read package definitions from a PDR checkout
     #[arg(long, global = true)]
     catalog: Option<PathBuf>,
     #[command(subcommand)]
@@ -97,8 +97,8 @@ enum Command {
     Show { name: String },
     /// Validate the selected catalog and print its digest
     Check,
-    /// Write a deterministic JSON catalog snapshot to stdout
-    Index,
+    /// Write the expanded catalog as deterministic JSON to stdout
+    Catalog,
     /// Hash a build environment specification and write its lock to stdout
     PinEnvironment { specification: PathBuf },
     /// Audit native loader references in an installed package directory
@@ -162,7 +162,7 @@ fn execute(args: Args) -> Result<(), String> {
         .transpose()?;
     let catalog = || {
         local_catalog.as_ref().ok_or_else(|| {
-            "this command requires --catalog pointing to an index recipe directory".to_string()
+            "this command requires --catalog pointing to a PDR recipe directory".to_string()
         })
     };
     let mut output = io::stdout().lock();
@@ -363,7 +363,7 @@ fn execute(args: Args) -> Result<(), String> {
             )
             .map_err(|e| e.to_string())?;
         }
-        Command::Index => {
+        Command::Catalog => {
             writeln!(output, "{}", catalog()?.to_json()?).map_err(|e| e.to_string())?
         }
         Command::PinEnvironment { specification } => {

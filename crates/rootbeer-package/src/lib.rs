@@ -14,7 +14,6 @@ pub use execution::Execution;
 pub mod ghcr;
 pub mod github;
 pub mod graph;
-pub mod index;
 mod inputs;
 mod intent;
 pub mod pdr;
@@ -38,7 +37,6 @@ pub use catalog::{
 };
 pub use definition::{PackageDefinition, PackageUpstream, UpstreamProvider};
 pub use github::GitHubResolver;
-pub use index::PackageIndexPin;
 pub use inputs::{GitHubRepositoryPin, PackageResolverInputs, ResolverInput};
 pub use intent::{PackageIntent, PackageLockInput};
 pub use realize::{PackageRealizer, RealizedPackage};
@@ -51,6 +49,7 @@ pub use resolve::{
     PackageResolutionInput, PackageResolver, ResolutionProof, ResolveAttempt, ResolveContext,
     ResolveError, ResolverStack, SnapshotProof, SnapshotSource,
 };
+pub use rootbeer_catalog::is_sha256;
 pub use spec::{
     ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageRealizationInput, Provides,
 };

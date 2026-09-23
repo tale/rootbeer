@@ -43,8 +43,8 @@ published, so a failed package never takes a working one away.
 
 ## Release configuration
 
-CLI and website builds embed `ROOTBEER_INDEX_URL`, the URL of `current.json`, and
-`ROOTBEER_INDEX_PUBLIC_KEY`. Set both together. The key is a 32-byte Ed25519 public
+CLI and website builds embed `ROOTBEER_PDR_URL`, the URL of `current.json`, and
+`ROOTBEER_PDR_PUBLIC_KEY`. Set both together. The key is a 32-byte Ed25519 public
 key encoded as 64 lowercase hex characters. The private key belongs only in the
 publishing environment and its secure backup.
 

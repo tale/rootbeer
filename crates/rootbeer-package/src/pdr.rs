@@ -16,9 +16,9 @@ use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::{valid_name, SYSTEMS};
-use crate::index::is_sha256;
 use crate::CatalogRecipe;
 use rootbeer_catalog::decode_hex;
+use rootbeer_catalog::is_sha256;
 
 /// The root schema this build reads. A root above it needs a newer rb.
 pub const ROOT_SCHEMA: u32 = 3;

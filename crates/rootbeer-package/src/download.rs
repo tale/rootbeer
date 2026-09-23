@@ -126,7 +126,7 @@ impl DownloadCache {
         };
         let cached = match metadata
             .as_ref()
-            .filter(|entry| super::index::is_sha256(&entry.sha256))
+            .filter(|entry| rootbeer_catalog::is_sha256(&entry.sha256))
         {
             Some(entry) => self.valid_cached(&entry.sha256)?,
             None => None,
