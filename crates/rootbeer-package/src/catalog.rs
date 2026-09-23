@@ -195,6 +195,9 @@ fn downloaded_bins(
     declared: &super::Bins,
 ) -> Result<BTreeMap<String, std::path::PathBuf>, String> {
     let names = declared.names();
+    if names.is_empty() {
+        return Ok(BTreeMap::new());
+    }
     let found = match install {
         super::LockedInstall::Archive {
             format,
@@ -482,6 +485,21 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("no executable `zls`"), "{error}");
+    }
+
+    #[test]
+    fn a_direct_download_without_commands_is_not_searched() {
+        let downloads = crate::download::DownloadCache::new(tempfile::tempdir().unwrap().path());
+        let found = downloaded_bins(
+            &downloads,
+            "google-chrome",
+            "https://example.invalid/googlechrome.dmg",
+            &"0".repeat(64),
+            &crate::LockedInstall::Dmg,
+            &crate::Bins::Names(vec![]),
+        )
+        .unwrap();
+        assert!(found.is_empty());
     }
 
     use std::path::PathBuf;
