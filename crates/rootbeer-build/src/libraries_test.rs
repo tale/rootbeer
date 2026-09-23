@@ -144,13 +144,7 @@ fn static_library_chain_builds_and_runs_after_dependencies_are_removed() {
         .unwrap();
     assert_eq!(artifact.environment, Some(environment));
     assert_eq!(artifact.dependencies.len(), 3);
-    ArtifactIndex {
-        catalog_sha256: catalog.sha256(),
-        catalog: catalog.clone(),
-        artifacts: BTreeMap::new(),
-    }
-    .validate_fragment()
-    .unwrap();
+    catalog.validate().unwrap();
     let relocated = root.join("relocated");
     let realizer =
         PackageRealizer::with_dirs(Store::new(&relocated), &downloads, root.join("install"));

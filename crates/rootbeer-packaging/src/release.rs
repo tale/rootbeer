@@ -49,7 +49,7 @@ pub fn release_package(
     if definition.name != identity.package.name {
         return Err("receipt belongs to a different package".into());
     }
-    let staging = crate::publication::staging(output)?;
+    let staging = rootbeer_package::staging::staging(output)?;
     let destination = staging.path().join("release");
     fs::create_dir(&destination).map_err(|error| error.to_string())?;
     let realizer = PackageRealizer::with_dirs(
@@ -140,13 +140,8 @@ fn prepare_source(
         extra: Default::default(),
         packages: std::collections::BTreeMap::from([(definition.name.clone(), definition.clone())]),
     };
-    let (system, artifact, checked_receipt) = crate::bundle::prepare_artifact(
-        &catalog,
-        receipt,
-        &format!("ghcr://{registry}"),
-        destination,
-        realizer,
-    )?;
+    let (system, artifact, checked_receipt) =
+        crate::receipt::prepare_artifact(&catalog, receipt, registry, destination, realizer)?;
     if checked_receipt != receipt_bytes {
         return Err("build receipt changed during release".into());
     }
@@ -302,7 +297,7 @@ mod tests {
     #[test]
     fn releases_one_build_across_unrelated_catalog_changes_and_rejects_tampering() {
         let root = tempfile::tempdir().unwrap();
-        let (mut catalog, receipt) = crate::bundle::tests::fixture(root.path());
+        let (mut catalog, receipt) = crate::receipt::tests::fixture(root.path());
         let mut build: BuildArtifact =
             serde_json::from_slice(&fs::read(&receipt).unwrap()).unwrap();
         build.environment = Some(BuildEnvironmentLock {

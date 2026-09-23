@@ -1,15 +1,5 @@
-use crate::{LockedPackage, PackageCatalog};
+use crate::LockedPackage;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-/// A catalog snapshot and the exact artifacts available for each package and system.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ArtifactIndex {
-    pub catalog: PackageCatalog,
-    pub catalog_sha256: String,
-    pub artifacts: BTreeMap<String, BTreeMap<String, PublishedArtifact>>,
-}
 
 /// Immutable artifact facts and the digest of its accompanying build receipt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,8 +10,9 @@ pub struct PublishedArtifact {
     pub package: LockedPackage,
 }
 
+/// The test catalog and a published `xz` artifact for aarch64-linux.
 #[cfg(test)]
-pub(crate) fn fixture() -> ArtifactIndex {
+pub(crate) fn fixture() -> (crate::PackageCatalog, PublishedArtifact) {
     use crate::{ArchiveFormat, LockedInstall, LockedSource, Provides};
     let catalog = crate::test_catalog::catalog().clone();
     let entry = &catalog.packages["xz"];
@@ -46,19 +37,10 @@ pub(crate) fn fixture() -> ArtifactIndex {
         runtime_dependencies: Default::default(),
         output_sha256: Some("b".repeat(64)),
     };
-    ArtifactIndex {
-        catalog_sha256: catalog.sha256(),
-        artifacts: BTreeMap::from([(
-            package.id(),
-            BTreeMap::from([(
-                "aarch64-linux".into(),
-                PublishedArtifact {
-                    revision: published.revision,
-                    receipt_sha256: "c".repeat(64),
-                    package,
-                },
-            )]),
-        )]),
-        catalog,
-    }
+    let artifact = PublishedArtifact {
+        revision: published.revision,
+        receipt_sha256: "c".repeat(64),
+        package,
+    };
+    (catalog, artifact)
 }
