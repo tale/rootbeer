@@ -140,7 +140,7 @@ impl PackageResolver for Resolver {
         Ok(Some(PackageResolution::new(
             record.artifact.package,
             ResolutionProof::PackageRecord(crate::discovery::PackageRecordProof {
-                record: pin,
+                record: pin.sha256,
                 public_key: self.pin.public_key.clone(),
                 system: context.system.clone(),
             }),
