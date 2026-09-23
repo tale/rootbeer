@@ -22,6 +22,7 @@ mod intent;
 pub mod official;
 pub mod pdr;
 pub mod realize;
+pub mod repository;
 mod resolve;
 pub mod self_update;
 mod source;

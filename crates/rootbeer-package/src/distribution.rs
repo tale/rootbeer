@@ -265,11 +265,11 @@ pub fn verify_record(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use ring::signature::{Ed25519KeyPair, KeyPair};
 
-    fn signed() -> (Vec<u8>, String, String) {
+    pub(crate) fn signed() -> (Vec<u8>, String, String) {
         let mut index = crate::artifact::fixture();
         let artifact = index
             .artifacts

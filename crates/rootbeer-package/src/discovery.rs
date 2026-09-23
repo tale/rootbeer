@@ -36,14 +36,7 @@ pub struct DiscoveryPin {
     pub public_key: String,
 }
 
-/// The signed package record used for an installation, independent of later discovery changes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageRecordProof {
-    pub record: PackageIndexPin,
-    pub public_key: String,
-    pub system: String,
-}
+pub use crate::repository::PackageRecordProof;
 
 /// Canonical JSON values sort object keys before signing; arrays retain their order.
 pub(crate) fn signing_message<C: Serialize, R: Serialize>(
@@ -303,7 +296,7 @@ impl PackageResolver for DiscoveryResolver {
         Ok(Some(PackageResolution::new(
             record.artifact.package,
             ResolutionProof::PackageRecord(PackageRecordProof {
-                record: pin,
+                record: pin.sha256,
                 public_key: self.pin.public_key.clone(),
                 system: context.system.clone(),
             }),
