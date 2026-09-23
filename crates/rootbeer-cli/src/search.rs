@@ -1,6 +1,5 @@
-use rootbeer_core::package::{
-    discovery::DiscoveryResolver, official, ResolveContext, ResolverInput,
-};
+use rootbeer_core::package::repository::ENGINE_LEVEL;
+use rootbeer_core::package::{Repository, RepositoryResolver, ResolveContext};
 
 #[derive(clap::Args, Debug)]
 pub struct Args {
@@ -22,49 +21,52 @@ pub fn run(args: Args) {
 }
 
 fn search(args: Args) -> Result<(), String> {
-    let selection = official::select_default(false)?;
+    let selection =
+        Repository::chosen(None)?.select(&rootbeer_core::package::state_dir(), false)?;
     if let Some(notice) = selection.notice {
         eprintln!("{notice}");
     }
-    let ResolverInput::Discovery(pin) = selection.input else {
-        return Err("the selected registry has not published package discovery yet".into());
-    };
-    let resolver = DiscoveryResolver::new(&pin);
-    let manifest = resolver.manifest()?;
+    let resolver = RepositoryResolver::new(&selection.pin);
+    let root = resolver.root()?;
     let system = ResolveContext::current().system;
     let query = args.query.to_lowercase();
     let mut matches = Vec::new();
-    for package in manifest.catalog.packages.values() {
-        let versions: Vec<_> = package
-            .versions
+    for (name, package) in &root.packages {
+        let platforms: Vec<_> = package
+            .platforms
             .iter()
-            .filter(|(version, _)| {
-                manifest
-                    .records
-                    .get(&format!("{}@{version}", package.name))
-                    .is_some_and(|platforms| args.all_platforms || platforms.contains_key(&system))
-            })
-            .map(|(version, _)| version.as_str())
+            .filter(|(platform, _)| args.all_platforms || **platform == system)
             .collect();
+        if platforms.is_empty() {
+            continue;
+        }
         let text = format!(
-            "{} {} {} {}",
-            package.name,
+            "{name} {} {} {}",
             package.aliases.join(" "),
             package.description,
-            versions
+            platforms
                 .iter()
-                .filter_map(|version| package.versions[*version].for_system(&system))
-                .flat_map(|recipe| recipe.bins.names().into_iter().cloned())
+                .flat_map(|(_, platform)| &platform.commands)
+                .cloned()
                 .collect::<Vec<_>>()
                 .join(" ")
         )
         .to_lowercase();
-        if versions.is_empty() || !query.split_whitespace().all(|term| text.contains(term)) {
+        if !query.split_whitespace().all(|term| text.contains(term)) {
             continue;
         }
+        let versions: std::collections::BTreeMap<_, _> = platforms
+            .iter()
+            .map(|(platform, entry)| (platform.as_str(), entry.version.as_str()))
+            .collect();
         matches.push(serde_json::json!({
-            "name": package.name, "description": package.description, "versions": versions,
-            "default_version": package.default_version_for(&system), "homepage": package.homepage,
+            "name": name,
+            "description": package.description,
+            "homepage": package.homepage,
+            "license": package.license,
+            "version": package.platforms.get(&system).map(|platform| &platform.version),
+            "platforms": versions,
+            "needs_newer_rb": package.min_engine_level.is_some_and(|level| level > ENGINE_LEVEL),
         }));
     }
     if args.json {
@@ -75,10 +77,15 @@ fn search(args: Args) -> Result<(), String> {
         return Ok(());
     }
     for package in matches {
+        let marker = if package["needs_newer_rb"] == true {
+            "\t(needs newer rb)"
+        } else {
+            ""
+        };
         println!(
-            "{}\t{}\t{}",
+            "{}\t{}\t{}{marker}",
             package["name"].as_str().unwrap(),
-            package["default_version"].as_str().unwrap(),
+            package["version"].as_str().unwrap_or("-"),
             package["description"].as_str().unwrap()
         );
     }

@@ -78,7 +78,7 @@ fn local_source_recipes_build_lock_replay_offline_and_reconcile_edits() {
     succeeds(apply(root.path(), &[]));
     let lock_path = root.path().join("rootbeer.lock");
     let before = RootbeerLock::read(&lock_path).unwrap();
-    assert!(before.inputs.package_index().is_none());
+    assert!(before.inputs.repository().is_none());
     assert!(before.inputs.local_catalog().is_some());
     let bin = root
         .path()

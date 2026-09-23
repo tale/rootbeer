@@ -248,35 +248,20 @@ fn offline_resolution(
         if let Some(saved) = super::standalone::cached_resolution(request, context)
             .map_err(|error| error.to_string())?
         {
-            let matches_index = match (&saved.proof, inputs.explicit_package_index()) {
-                (super::ResolutionProof::PublishedIndex(proof), Some(pin)) => &proof.index == pin,
-                (_, Some(_)) if is_canonical => false,
-                _ => true,
-            };
-            if matches_index {
+            // Standalone resolutions came from the official repository.
+            if !is_canonical || inputs.configured_repository().is_none() {
                 return Ok(saved);
             }
         }
-        if is_canonical {
-            if let Some(pin) = inputs.discovery() {
-                use super::PackageResolver;
-                if let Some(resolution) = super::discovery::DiscoveryResolver::with_cache(
-                    pin,
-                    crate::state_dir().join("downloads"),
-                    true,
-                )
-                .resolve(request, context)?
-                {
-                    return Ok(resolution);
-                }
-            }
-            if let Some(pin) = inputs.package_index() {
-                use super::PackageResolver;
-                if let Some(resolution) =
-                    super::index::IndexResolver::offline(pin).resolve(request, context)?
-                {
-                    return Ok(resolution);
-                }
+        if let (true, Some(pin)) = (is_canonical, inputs.repository()) {
+            use super::PackageResolver;
+            let repository = super::RepositoryResolver::with_cache(
+                pin,
+                crate::state_dir().join("downloads"),
+                true,
+            );
+            if let Some(resolution) = repository.resolve(request, context)? {
+                return Ok(resolution);
             }
         }
         Err(format!(

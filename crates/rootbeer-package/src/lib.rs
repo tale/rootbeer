@@ -7,7 +7,6 @@ mod artifact;
 mod build_spec;
 pub mod catalog;
 pub mod definition;
-pub mod discovery;
 pub mod distribution;
 mod dmg;
 pub mod download;
@@ -19,7 +18,6 @@ pub mod graph;
 pub mod index;
 mod inputs;
 mod intent;
-pub mod official;
 pub mod pdr;
 pub mod realize;
 pub mod repository;
@@ -42,11 +40,13 @@ pub use catalog::{
 };
 pub use definition::{PackageDefinition, PackageUpstream, UpstreamProvider};
 pub use github::GitHubResolver;
-pub use index::{PackageIndexPin, PublishedIndexProof};
+pub use index::PackageIndexPin;
 pub use inputs::{GitHubRepositoryPin, PackageResolverInputs, ResolverInput};
 pub use intent::{PackageIntent, PackageLockInput};
-pub use official::{IndexSelection, OfficialIndexSource};
 pub use realize::{PackageRealizer, RealizedPackage};
+pub use repository::{
+    PackageRecordProof, Repository, RepositoryPin, RepositoryResolver, Selection,
+};
 pub use resolve::{
     ArtifactProof, DependencyProof, ExternalManagerProof, GitReleaseProof, MetadataClosureProof,
     MetadataDocumentProof, PackageRequest, PackageRequestResolver, PackageResolution,
@@ -64,14 +64,13 @@ pub fn default_resolver_stack() -> ResolverStack {
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
     let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
     if let Some(catalog) = inputs.local_catalog() {
-        stack.push(
-            catalog::CatalogResolver::new(catalog, inputs, backend_stack(inputs))
-                .with_fallback(inputs.package_index()),
-        );
-    } else if let Some(pin) = inputs.discovery() {
-        stack.push(discovery::DiscoveryResolver::new(pin));
-    } else if let Some(pin) = inputs.package_index() {
-        stack.push(index::IndexResolver::new(pin));
+        stack.push(catalog::CatalogResolver::new(
+            catalog,
+            inputs,
+            backend_stack(inputs),
+        ));
+    } else if let Some(pin) = inputs.repository() {
+        stack.push(RepositoryResolver::new(pin));
     }
     stack
 }

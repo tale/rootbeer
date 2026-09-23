@@ -1,8 +1,9 @@
 //! Reading a PDR: select its signed root, then resolve a request through the package's
 //! document to the signed record that approves it.
 
+use std::collections::BTreeMap;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -11,10 +12,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::distribution::{verify_record, PackageRecord, RECORD_LIMIT};
 use crate::download::DownloadCache;
-use crate::official::{atomic_write, decode_hex};
 use crate::pdr::{PackageDocument, Root, RootPackage, DOCUMENT_LIMIT, ROOT_LIMIT};
 use crate::store::hash_bytes;
-use crate::{PackageRequest, PackageResolution, PackageResolver, ResolutionProof, ResolveContext};
+use crate::{
+    CatalogPackage, CatalogVersion, PackageCatalog, PackageRequest, PackageResolution,
+    PackageResolver, ResolutionProof, ResolveContext,
+};
+use rootbeer_catalog::decode_hex;
 
 /// The highest `min_engine_level` this build can install.
 pub const ENGINE_LEVEL: u32 = 1;
@@ -80,6 +84,19 @@ impl Repository {
                     .into(),
             ),
         }
+    }
+
+    /// The repository a configuration names, or else the one this build trusts.
+    pub fn chosen(configured: Option<&Self>) -> Result<Self, String> {
+        if let Some(configured) = configured {
+            configured.validate()?;
+            return Ok(configured.clone());
+        }
+        Self::official()?.ok_or_else(|| {
+            "this build trusts no package repository; build with ROOTBEER_INDEX_URL and \
+             ROOTBEER_INDEX_PUBLIC_KEY, or call rb.package_repository()"
+                .into()
+        })
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -198,6 +215,14 @@ impl Repository {
 }
 
 impl RepositoryPin {
+    /// The repository this root belongs to, without which root it was.
+    pub fn repository(&self) -> Repository {
+        Repository {
+            url: self.url.clone(),
+            public_key: self.public_key.clone(),
+        }
+    }
+
     /// Where a digest-addressed document lives, beside the root.
     fn locate(&self, directory: &str, digest: &str) -> String {
         let (base, _) = self.url.rsplit_once('/').expect("validated repository URL");
@@ -231,16 +256,22 @@ impl RepositoryResolver {
 
     pub fn root(&self) -> Result<&Root, String> {
         self.root
-            .get_or_init(|| {
-                let bytes = self.read(
-                    &self.pin.locate("roots", &self.pin.root),
-                    &self.pin.root,
-                    ROOT_LIMIT,
-                )?;
-                Root::from_bytes(&bytes, &self.pin.public_key)
-            })
+            .get_or_init(|| Root::from_bytes(&self.root_bytes()?, &self.pin.public_key))
             .as_ref()
             .map_err(Clone::clone)
+    }
+
+    /// The pinned root with its signature verified but its packages left undecoded.
+    pub fn verified_root(&self) -> Result<serde_json::Value, String> {
+        crate::pdr::verify_root(&self.root_bytes()?, &self.pin.public_key)
+    }
+
+    fn root_bytes(&self) -> Result<Vec<u8>, String> {
+        self.read(
+            &self.pin.locate("roots", &self.pin.root),
+            &self.pin.root,
+            ROOT_LIMIT,
+        )
     }
 
     /// The package a request names, refusing one this build is too old to install.
@@ -269,6 +300,42 @@ impl RepositoryResolver {
         Ok(document)
     }
 
+    /// Published recipes for `names` and every package they build with, as a catalog, for
+    /// building from source. Only the documents in that closure are fetched.
+    pub fn catalog<'a>(
+        &self,
+        names: impl IntoIterator<Item = &'a str>,
+    ) -> Result<PackageCatalog, String> {
+        let mut packages = BTreeMap::new();
+        let mut pending: Vec<String> = names.into_iter().map(str::to_string).collect();
+        while let Some(requested) = pending.pop() {
+            let (name, package) = self.package(&requested)?;
+            if packages.contains_key(name) {
+                continue;
+            }
+            let document = self.document(name, package)?;
+            let recipes = document
+                .versions
+                .values()
+                .flat_map(|version| version.platforms.values());
+            for platform in recipes {
+                let dependencies = platform
+                    .recipe
+                    .build
+                    .iter()
+                    .flat_map(|build| &build.dependencies);
+                pending.extend(
+                    dependencies.map(|dependency| PackageRequest::parse(dependency.package()).name),
+                );
+            }
+            packages.insert(name.to_string(), catalog_package(name, package, document));
+        }
+        Ok(PackageCatalog {
+            extra: Default::default(),
+            packages,
+        })
+    }
+
     /// The verified record for a request, and its digest.
     pub fn record(
         &self,
@@ -276,7 +343,18 @@ impl RepositoryResolver {
         context: &ResolveContext,
     ) -> Result<(PackageRecord, String), String> {
         let (name, package) = self.package(&request.name)?;
-        let version = match request.version.as_deref() {
+        self.record_of(name, package, request.version.as_deref(), context)
+    }
+
+    /// The verified record for one package's entry, at `version` or this platform's default.
+    pub fn record_of(
+        &self,
+        name: &str,
+        package: &RootPackage,
+        version: Option<&str>,
+        context: &ResolveContext,
+    ) -> Result<(PackageRecord, String), String> {
+        let version = match version {
             Some(version) => version,
             None => package
                 .platforms
@@ -344,6 +422,50 @@ impl PackageResolver for RepositoryResolver {
             }),
         )))
     }
+}
+
+fn catalog_package(name: &str, package: &RootPackage, document: PackageDocument) -> CatalogPackage {
+    CatalogPackage {
+        name: name.to_string(),
+        aliases: package.aliases.clone(),
+        description: package.description.clone(),
+        homepage: package.homepage.clone(),
+        recipe_maintainers: package.maintainers.clone(),
+        min_engine_level: package.min_engine_level,
+        default_versions: package
+            .platforms
+            .iter()
+            .map(|(system, platform)| (system.clone(), platform.version.clone()))
+            .collect(),
+        versions: document
+            .versions
+            .into_iter()
+            .map(|(version, entry)| {
+                let platforms = entry
+                    .platforms
+                    .into_iter()
+                    .map(|(system, platform)| (system, platform.recipe))
+                    .collect();
+                let version_entry = CatalogVersion {
+                    license: entry.license,
+                    revision: entry.revision,
+                    platforms,
+                    extra: Default::default(),
+                };
+                (version, version_entry)
+            })
+            .collect(),
+        extra: Default::default(),
+    }
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path.parent().ok_or("cache path has no parent")?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    file.write_all(bytes).map_err(|e| e.to_string())?;
+    file.as_file().sync_all().map_err(|e| e.to_string())?;
+    file.persist(path).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn fetch(url: &str, limit: usize) -> Result<Vec<u8>, FetchError> {

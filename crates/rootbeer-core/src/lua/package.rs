@@ -8,8 +8,8 @@ use super::module::Module;
 use super::vm::{profile_bin_path, PackageBins};
 use crate::package::{
     lockfile::RootbeerLock, profile as package_profile, ArchiveFormat, LockedInstall,
-    LockedPackage, LockedSource, PackageCatalog, PackageIndexPin, PackageIntent, PackageRequest,
-    Provides, ResolveContext,
+    LockedPackage, LockedSource, PackageCatalog, PackageIntent, PackageRequest, Provides,
+    Repository, ResolveContext,
 };
 use crate::plan::{Op, WriteSource};
 
@@ -44,10 +44,10 @@ impl Module for Package {
             })?,
         )?;
         t.set(
-            "package_index",
+            "package_repository",
             lua.create_function(|lua, spec: Table| {
                 let cx = Ctx::from(lua);
-                if lua.app_data_ref::<PackageIndexPin>().is_some()
+                if lua.app_data_ref::<Repository>().is_some()
                     || cx
                         .run
                         .lock()
@@ -55,16 +55,16 @@ impl Module for Package {
                         .any(|op| matches!(op, Op::Package { .. }))
                 {
                     return Err(LuaError::RuntimeError(
-                        "declare package_index once, before packages".into(),
+                        "declare package_repository once, before packages".into(),
                     ));
                 }
-                let pin = PackageIndexPin {
+                let repository = Repository {
                     url: required(&spec, "url")?,
-                    sha256: required(&spec, "sha256")?,
+                    public_key: required(&spec, "public_key")?,
                 };
-                pin.validate().map_err(LuaError::RuntimeError)?;
+                repository.validate().map_err(LuaError::RuntimeError)?;
                 drop(cx);
-                lua.set_app_data(pin);
+                lua.set_app_data(repository);
                 Ok(())
             })?,
         )?;
@@ -358,7 +358,8 @@ fn request_bins(lua: &Lua, cx: &Ctx<'_>, request: &PackageRequest) -> LuaResult<
         {
             return Ok(Vec::new());
         }
-        if lock.inputs.explicit_package_index() == lua.app_data_ref::<PackageIndexPin>().as_deref()
+        if lock.inputs.configured_repository().as_ref()
+            == lua.app_data_ref::<Repository>().as_deref()
         {
             if let Ok(package) = lock.package_for_request(request, &ResolveContext::current()) {
                 return Ok(package.provides.bins.keys().cloned().collect());

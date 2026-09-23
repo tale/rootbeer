@@ -135,11 +135,12 @@ pub fn prepare_with_resolver(
                     .is_none_or(|name| name == "rootbeer")
                 {
                     if official_selection.is_none() {
-                        let selection = super::official::select_default(should_update)?;
+                        let selection = super::Repository::chosen(None)?
+                            .select(&crate::state_dir(), should_update)?;
                         if let Some(notice) = selection.notice {
                             eprintln!("{notice}");
                         }
-                        official_selection = Some(selection.input);
+                        official_selection = Some(super::ResolverInput::Repository(selection.pin));
                     }
                     inputs.resolvers.insert(
                         "rootbeer".into(),

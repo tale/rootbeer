@@ -5,7 +5,9 @@
 //! internal types cannot leak into the contract.
 
 mod canonical;
+mod hex;
 mod pin;
 
 pub use canonical::{canonical_json, canonical_sha256};
+pub use hex::decode_hex;
 pub use pin::{is_sha256, validate_https, PackageIndexPin};

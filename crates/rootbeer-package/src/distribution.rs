@@ -247,10 +247,10 @@ pub fn verify_record(
     }
     let signed: SignedPackageRecord =
         serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-    UnparsedPublicKey::new(&ED25519, crate::official::decode_hex::<32>(public_key)?)
+    UnparsedPublicKey::new(&ED25519, rootbeer_catalog::decode_hex::<32>(public_key)?)
         .verify(
             &signing_message(&signed.record),
-            &crate::official::decode_hex::<64>(&signed.signature)?,
+            &rootbeer_catalog::decode_hex::<64>(&signed.signature)?,
         )
         .map_err(|_| "package signature verification failed".to_string())?;
     let record: PackageRecord =

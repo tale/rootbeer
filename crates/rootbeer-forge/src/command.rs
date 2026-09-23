@@ -155,28 +155,6 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Upload GHCR blobs and prepare the signed Pages directory (requires ORAS)
-    Publish {
-        #[arg(long)]
-        bundle: PathBuf,
-        #[arg(long)]
-        site: PathBuf,
-        #[arg(long)]
-        site_url: String,
-        /// Manifest channel filename, such as latest-v2.json
-        #[arg(long, default_value = "latest.json")]
-        manifest: String,
-        #[arg(long)]
-        registry: String,
-        #[arg(long)]
-        repository_url: String,
-        #[arg(long)]
-        sequence: u64,
-        #[arg(long)]
-        key: PathBuf,
-        #[arg(long)]
-        public_key: String,
-    },
     /// Validate an artifact index, optionally requiring every declared platform
     VerifyIndex {
         index: PathBuf,
@@ -214,22 +192,6 @@ enum Command {
         shard: Option<usize>,
         #[arg(long, requires = "shard")]
         shards: Option<usize>,
-    },
-    /// Sign a complete artifact index with an Ed25519 PKCS#8 DER key
-    SignIndex {
-        index: PathBuf,
-        #[arg(long)]
-        url: String,
-        #[arg(long)]
-        sequence: u64,
-        #[arg(long)]
-        key: PathBuf,
-        #[arg(long)]
-        public_key: String,
-        #[arg(long)]
-        previous: Option<PathBuf>,
-        #[arg(long)]
-        output: PathBuf,
     },
     /// Hash a build environment specification and write its lock to stdout
     PinEnvironment { specification: PathBuf },
@@ -590,29 +552,6 @@ fn execute(args: Args) -> Result<(), String> {
         Command::Assemble { inputs, output } => {
             rootbeer_packaging::assemble_indexes(&inputs, &output)?
         }
-        Command::Publish {
-            bundle,
-            site,
-            site_url,
-            manifest,
-            registry,
-            repository_url,
-            sequence,
-            key,
-            public_key,
-        } => {
-            rootbeer_packaging::publish_index(&rootbeer_packaging::PublishOptions {
-                bundle: &bundle,
-                site: &site,
-                site_url: &site_url,
-                manifest_name: &manifest,
-                registry: &registry,
-                repository_url: &repository_url,
-                sequence,
-                key: &key,
-                public_key: &public_key,
-            })?;
-        }
         Command::VerifyIndex { index, complete } => {
             let index: rootbeer_packaging::ArtifactIndex =
                 serde_json::from_slice(&std::fs::read(index).map_err(|e| e.to_string())?)
@@ -670,37 +609,6 @@ fn execute(args: Args) -> Result<(), String> {
                 rootbeer_packaging::checkpoint_results(catalog, &cache, &destination, shard)?;
             writeln!(output, "retained {count} completed qualifications")
                 .map_err(|error| error.to_string())?;
-        }
-        Command::SignIndex {
-            index,
-            url,
-            sequence,
-            key,
-            public_key,
-            previous,
-            output: destination,
-        } => {
-            let bytes = std::fs::read(index).map_err(|e| e.to_string())?;
-            let key = std::fs::read(key).map_err(|e| e.to_string())?;
-            let previous = previous
-                .map(std::fs::read)
-                .transpose()
-                .map_err(|e| e.to_string())?;
-            let manifest = rootbeer_packaging::sign_index(
-                &bytes,
-                &url,
-                sequence,
-                &key,
-                &public_key,
-                previous.as_deref(),
-            )?;
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(destination)
-                .map_err(|e| e.to_string())?;
-            file.write_all(&manifest).map_err(|e| e.to_string())?;
-            file.sync_all().map_err(|e| e.to_string())?;
         }
         Command::PinEnvironment { specification } => {
             let specification: rootbeer_packaging::BuildEnvironment = serde_json::from_slice(
@@ -812,49 +720,4 @@ fn read_environment(
             .map_err(|error| error.to_string())
     })
     .transpose()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::Parser;
-
-    #[test]
-    fn publish_manifest_defaults_to_legacy_and_accepts_an_explicit_channel() {
-        let argv = [
-            "rootbeer-forge",
-            "publish",
-            "--bundle",
-            "bundle",
-            "--site",
-            "site",
-            "--site-url",
-            "https://example.org",
-            "--registry",
-            "owner/index",
-            "--repository-url",
-            "https://github.com/owner/index",
-            "--sequence",
-            "1",
-            "--key",
-            "key.der",
-            "--public-key",
-            "public-key",
-        ];
-        for channel in [None, Some("latest-v2.json")] {
-            let mut args = argv.to_vec();
-            if let Some(channel) = channel {
-                args.extend(["--manifest", channel]);
-            }
-            let cli = crate::Cli::try_parse_from(args).unwrap();
-            let Args {
-                command: Command::Publish { manifest, .. },
-                ..
-            } = cli.args
-            else {
-                panic!("expected package publish");
-            };
-            assert_eq!(manifest, channel.unwrap_or("latest.json"));
-        }
-    }
 }
