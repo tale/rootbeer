@@ -295,7 +295,7 @@ fn has_token(name: &str, token: &str) -> bool {
     })
 }
 
-fn discover_bins(root: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+pub(crate) fn discover_bins(root: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
     let mut bins = BTreeMap::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {

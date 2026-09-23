@@ -184,6 +184,61 @@ pub fn valid_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
 
+/// Where each command a direct download declares by name lives in it, found as the GitHub
+/// backend finds them: by the executables the verified artifact actually contains.
+fn downloaded_bins(
+    downloads: &super::download::DownloadCache,
+    package: &str,
+    url: &str,
+    sha256: &str,
+    install: &super::LockedInstall,
+    declared: &super::Bins,
+) -> Result<BTreeMap<String, std::path::PathBuf>, String> {
+    let names = declared.names();
+    let found = match install {
+        super::LockedInstall::Archive {
+            format,
+            strip_prefix,
+        } => {
+            let archive = downloads
+                .materialize_verified(url, sha256)
+                .map_err(|error| error.to_string())?;
+            let extracted = tempfile::tempdir().map_err(|error| error.to_string())?;
+            super::realize::extract_archive(&archive, *format, extracted.path())
+                .map_err(|error| error.to_string())?;
+            let root = match strip_prefix {
+                Some(prefix) => extracted.path().join(prefix),
+                None => extracted.path().to_path_buf(),
+            };
+            super::github::discover_bins(&root)?
+        }
+        super::LockedInstall::Binary { path } => {
+            let [name] = names.iter().collect::<Vec<_>>()[..] else {
+                return Err(format!(
+                    "{package}: a raw binary provides exactly one command"
+                ));
+            };
+            BTreeMap::from([((*name).clone(), path.clone())])
+        }
+        _ => {
+            return Err(format!(
+                "{package}: this install format needs each command's path in outputs.bins"
+            ))
+        }
+    };
+    names
+        .into_iter()
+        .map(|name| {
+            let path = found.get(name).ok_or_else(|| {
+                format!(
+                    "{package}: the download has no executable `{name}`; map it in outputs.bins"
+                )
+            })?;
+            Ok((name.clone(), path.clone()))
+        })
+        .collect()
+}
+
 pub struct CatalogResolver {
     catalog: PackageCatalog,
     inputs: PackageResolverInputs,
@@ -271,6 +326,21 @@ impl PackageResolver for CatalogResolver {
                 .sha256
                 .clone()
                 .ok_or("direct download requires a checksum")?;
+            let install = recipe
+                .install
+                .clone()
+                .ok_or("direct download requires an install format")?;
+            let bins = match recipe.bins.paths() {
+                Some(paths) => paths.clone(),
+                None => downloaded_bins(
+                    &super::download::DownloadCache::default(),
+                    &package.name,
+                    source,
+                    &sha256,
+                    &install,
+                    &recipe.bins,
+                )?,
+            };
             return Ok(Some(PackageResolution::new(
                 super::LockedPackage {
                     name: package.name.clone(),
@@ -279,12 +349,9 @@ impl PackageResolver for CatalogResolver {
                         url: source.into(),
                         sha256: sha256.clone(),
                     },
-                    install: recipe
-                        .install
-                        .clone()
-                        .ok_or("direct download requires an install format")?,
+                    install,
                     provides: super::Provides {
-                        bins: recipe.bins.paths().cloned().unwrap_or_default(),
+                        bins,
                         apps: recipe.apps.clone(),
                     },
                     runtime_dependencies: BTreeMap::new(),
@@ -362,6 +429,61 @@ impl PackageResolver for CatalogResolver {
 
 #[cfg(test)]
 mod tests {
+    /// A tar.gz whose executables live below a versioned directory, as zig's releases do.
+    fn nested_archive(root: &Path) -> (String, String) {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        let tree = root.join("tree/zig-linux-1.0");
+        fs::create_dir_all(tree.join("lib")).unwrap();
+        for (name, mode) in [("zig", 0o755), ("lib/README", 0o644)] {
+            fs::write(tree.join(name), b"file").unwrap();
+            fs::set_permissions(tree.join(name), fs::Permissions::from_mode(mode)).unwrap();
+        }
+        let archive = root.join("zig.tar.gz");
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+            fs::File::create(&archive).unwrap(),
+            flate2::Compression::default(),
+        ));
+        builder.append_dir_all(".", root.join("tree")).unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+        (
+            format!("file://{}", archive.display()),
+            crate::store::hash_file(&archive).unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_direct_download_finds_the_commands_it_declares_by_name() {
+        let root = tempfile::tempdir().unwrap();
+        let (url, sha256) = nested_archive(root.path());
+        let downloads = crate::download::DownloadCache::new(root.path().join("downloads"));
+        let install = crate::LockedInstall::Archive {
+            format: crate::ArchiveFormat::TarGz,
+            strip_prefix: None,
+        };
+        let found = downloaded_bins(
+            &downloads,
+            "zig",
+            &url,
+            &sha256,
+            &install,
+            &crate::Bins::Names(vec!["zig".into()]),
+        )
+        .unwrap();
+        assert_eq!(found["zig"], std::path::PathBuf::from("zig-linux-1.0/zig"));
+
+        let error = downloaded_bins(
+            &downloads,
+            "zig",
+            &url,
+            &sha256,
+            &install,
+            &crate::Bins::Names(vec!["zls".into()]),
+        )
+        .unwrap_err();
+        assert!(error.contains("no executable `zls`"), "{error}");
+    }
+
     use std::path::PathBuf;
 
     use super::*;
