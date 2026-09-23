@@ -10,7 +10,7 @@ use super::{
 
 mod recipe;
 
-pub(crate) use recipe::{validate_apps, validate_commands, validate_systems};
+pub(crate) use recipe::{validate_apps, validate_commands, validate_systems, SYSTEMS};
 pub use recipe::{Bins, CatalogPackage, CatalogRecipe, CatalogVersion, ExtraFields};
 
 /// A versioned snapshot of Rootbeer's canonical package definitions.

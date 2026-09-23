@@ -49,6 +49,7 @@ pub fn publish(catalog: &PackageCatalog, directory: &Path) -> RepositoryPin {
                     (version.clone(), version_entry)
                 })
                 .collect(),
+            unreadable: Default::default(),
         };
         let platforms: BTreeMap<_, _> = package
             .default_versions
@@ -108,6 +109,7 @@ pub fn publish(catalog: &PackageCatalog, directory: &Path) -> RepositoryPin {
         schema: ROOT_SCHEMA,
         sequence: 1,
         packages,
+        unreadable: BTreeMap::new(),
         signature: String::new(),
     };
     root.signature = hex(key.sign(&root.signing_message().unwrap()).as_ref());
