@@ -143,7 +143,7 @@ fn source_packages_do_not_implicitly_compile_during_resolution() {
     let resolver = rootbeer_package::catalog::CatalogResolver::new(
         &source_catalog(),
         &inputs,
-        rootbeer_package::backend_stack(&inputs),
+        rootbeer_package::backend_stack(),
     );
     let error = rootbeer_package::PackageResolver::resolve(
         &resolver,
@@ -354,24 +354,12 @@ EOF
             platform.build.as_mut().unwrap().dependencies = vec!["tool@5.8.3".into()]
         });
     let inputs = PackageResolverInputs {
-        resolvers: BTreeMap::from([
-            (
-                "rootbeer".into(),
-                rootbeer_package::ResolverInput::Catalog {
-                    sha256: catalog.sha256(),
-                },
-            ),
-            (
-                "aqua".into(),
-                rootbeer_package::ResolverInput::AquaRegistry(
-                    rootbeer_package::GitHubRepositoryPin {
-                        owner: "fixture".into(),
-                        repo: "pinned-registry".into(),
-                        rev: "a".repeat(40),
-                    },
-                ),
-            ),
-        ]),
+        resolvers: BTreeMap::from([(
+            "rootbeer".into(),
+            rootbeer_package::ResolverInput::Catalog {
+                sha256: catalog.sha256(),
+            },
+        )]),
     };
     let output = directory.path().join("build-with-inputs");
     let artifact = BuildPlan::resolve(&catalog, "fixture", &inputs)

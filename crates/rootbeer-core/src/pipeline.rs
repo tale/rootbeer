@@ -285,56 +285,6 @@ impl PlannedPipeline {
         } else {
             inputs.resolvers.remove("rootbeer");
         }
-        let needs_aqua = self.ops.iter().any(|op| {
-            let Op::Package {
-                intent: PackageIntent::Request(request),
-            } = op
-            else {
-                return false;
-            };
-            if request.resolver.as_deref() == Some("aqua") {
-                return true;
-            }
-            if request
-                .resolver
-                .as_deref()
-                .is_some_and(|name| name != "rootbeer")
-            {
-                return false;
-            }
-            let Some(package) = inputs
-                .local_catalog()
-                .and_then(|catalog| catalog.find(&request.name))
-            else {
-                return false;
-            };
-            let context = crate::package::ResolveContext::current();
-            let Some(version) = request
-                .version
-                .as_deref()
-                .or_else(|| package.default_version_for(&context.system))
-            else {
-                return false;
-            };
-            package.versions.get(version).is_some_and(|entry| {
-                entry.for_system(&context.system).is_some_and(|recipe| {
-                    recipe.build.is_none()
-                        && recipe
-                            .source
-                            .as_deref()
-                            .is_some_and(|source| source.starts_with("aqua:"))
-                })
-            })
-        });
-        if needs_aqua
-            && !self.opts.package_lock.is_offline
-            && (should_refresh || inputs.aqua_registry().is_none())
-        {
-            let current = PackageResolverInputs::resolve_current()?;
-            inputs
-                .resolvers
-                .insert("aqua".into(), current.resolvers["aqua"].clone());
-        }
         let builder = PackageLockBuilder::new_with_inputs(
             (self.package_resolver)(&inputs),
             if self.opts.package_lock.is_offline {
@@ -697,7 +647,10 @@ mod tests {
             "local rb = require('rootbeer'); rb.package('new-tool')",
         );
         assert!(!removed.lock_matches_plan(&lock).unwrap());
-        let mixed = plan_index_script(root.path(), &(source + "\nrb.package('aqua:owner/repo@1')"));
+        let mixed = plan_index_script(
+            root.path(),
+            &(source + "\nrb.package('github:owner/repo@1')"),
+        );
         assert!(mixed.has_canonical_requests());
     }
 

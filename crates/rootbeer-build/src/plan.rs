@@ -26,28 +26,14 @@ impl BuildPlan {
             &[request.into()],
             &ResolveContext::current().system,
         )?;
-        let needs_aqua = graph.order.iter().any(|key| {
-            graph::find_recipe(catalog, key).is_ok_and(|(_, _, recipe)| {
-                Some(key) != graph.order.last()
-                    && recipe.build.is_none()
-                    && recipe
-                        .source
-                        .as_deref()
-                        .is_some_and(|source| source.starts_with("aqua:"))
-            })
-        });
-        let mut inputs = if needs_aqua {
-            PackageResolverInputs::resolve_current().map_err(|error| error.to_string())?
-        } else {
-            PackageResolverInputs::default()
-        };
+        let mut inputs = PackageResolverInputs::default();
         inputs.resolvers.insert(
             "rootbeer".into(),
             ResolverInput::Catalog {
                 sha256: catalog.sha256(),
             },
         );
-        Self::from_graph(catalog, graph, &inputs, backend_stack(&inputs))
+        Self::from_graph(catalog, graph, &inputs, backend_stack())
     }
 
     /// Resolves a build under caller-supplied, pinned metadata inputs.
@@ -62,7 +48,7 @@ impl BuildPlan {
             &[request.into()],
             &ResolveContext::current().system,
         )?;
-        Self::from_graph(catalog, graph, inputs, backend_stack(inputs))
+        Self::from_graph(catalog, graph, inputs, backend_stack())
     }
 
     fn from_graph(
@@ -92,15 +78,6 @@ impl BuildPlan {
             let (_, _, entry) = graph::find_recipe_definition(catalog, key)?;
             revisions.insert(key.clone(), entry.revision);
             let is_prebuilt = key != root && recipe.build.is_none();
-            if is_prebuilt
-                && recipe
-                    .source
-                    .as_deref()
-                    .is_some_and(|source| source.starts_with("aqua:"))
-                && inputs.aqua_registry().is_none()
-            {
-                return Err("build dependencies require a pinned Aqua registry".into());
-            }
             if is_prebuilt {
                 let package = resolver
                     .resolve(&PackageRequest::parse(key), &context)

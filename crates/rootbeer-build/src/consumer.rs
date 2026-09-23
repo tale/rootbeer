@@ -20,7 +20,7 @@ pub fn self_update_resolver_stack(inputs: &PackageResolverInputs) -> ResolverSta
 
 /// Builds an installation resolver that prefers published artifacts and can execute source recipes.
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
-    let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
+    let mut stack = backend_stack().with_implicit_resolver("rootbeer");
     if inputs.repository().is_some() || inputs.local_catalog().is_some() {
         stack.push(SourceResolver::with_inputs(
             inputs,
@@ -128,12 +128,8 @@ impl PackageResolver for SourceResolver {
                     .is_some_and(|recipe| recipe.build.is_none())
             })
         {
-            return catalog::CatalogResolver::new(
-                &catalog,
-                &self.inputs,
-                backend_stack(&self.inputs),
-            )
-            .resolve(request, context);
+            return catalog::CatalogResolver::new(&catalog, &self.inputs, backend_stack())
+                .resolve(request, context);
         }
         if context != &ResolveContext::current() {
             return Err("local source builds require the host platform".into());

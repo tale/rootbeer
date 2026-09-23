@@ -2,7 +2,6 @@
 
 pub use rootbeer_store as store;
 pub use rootbeer_store::{deterministic, state_dir};
-mod aqua;
 mod artifact;
 mod build_spec;
 pub mod catalog;
@@ -29,7 +28,6 @@ pub use source::{GitSource, SourceBuildProof, SourceSelection};
 pub mod staging;
 pub mod upstream;
 
-pub use aqua::AquaResolver;
 pub use artifact::PublishedArtifact;
 pub use build_spec::{
     BuildArtifact, BuildBackend, BuildDependency, BuildEnvironmentInput, BuildEnvironmentLock,
@@ -62,12 +60,12 @@ pub fn default_resolver_stack() -> ResolverStack {
 }
 
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
-    let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
+    let mut stack = backend_stack().with_implicit_resolver("rootbeer");
     if let Some(catalog) = inputs.local_catalog() {
         stack.push(catalog::CatalogResolver::new(
             catalog,
             inputs,
-            backend_stack(inputs),
+            backend_stack(),
         ));
     } else if let Some(pin) = inputs.repository() {
         stack.push(RepositoryResolver::new(pin));
@@ -75,12 +73,8 @@ pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStac
     stack
 }
 
-pub fn backend_stack(inputs: &PackageResolverInputs) -> ResolverStack {
+pub fn backend_stack() -> ResolverStack {
     let mut stack = ResolverStack::new();
-    stack.push(match inputs.aqua_registry() {
-        Some(pin) => AquaResolver::from_registry_pin(pin),
-        None => AquaResolver::new(),
-    });
     stack.push(GitHubResolver::new());
     stack
 }

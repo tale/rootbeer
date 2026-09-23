@@ -5,7 +5,7 @@ use crate::package::PackageRequest;
 use crate::tools::ToolRuntime;
 
 pub(crate) fn command(tools: &ToolRuntime) -> io::Result<Command> {
-    tools.command(&PackageRequest::parse("aqua:1password/cli@v2.39.0"), "op")
+    tools.command(&PackageRequest::parse("op@2.39.0"), "op")
 }
 
 pub(crate) fn read(tools: &ToolRuntime, reference: &str) -> io::Result<String> {

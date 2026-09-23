@@ -75,7 +75,7 @@ mod tests {
     fn shares_package_exports_and_separates_versions() {
         let tools = ToolRuntime::new(true);
         let count = Cell::new(0);
-        let request = PackageRequest::parse("aqua:example/tool@v1");
+        let request = PackageRequest::parse("github:example/tool@v1");
         let prepare = |_: &PackageRequest, is_offline: bool| {
             assert!(is_offline);
             count.set(count.get() + 1);
@@ -126,7 +126,7 @@ mod tests {
         )).unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
         let tools = Arc::new(ToolRuntime::new(true));
-        let request = PackageRequest::parse("aqua:1password/cli@v2.39.0");
+        let request = PackageRequest::parse("op@2.39.0");
         tools
             .command_with(&request, "op", |_, _| {
                 Ok(BTreeMap::from([("op".into(), executable)]))
@@ -182,7 +182,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     #[test]
-    #[ignore = "requires aqua:1password/cli@v2.39.0 in the local standalone cache"]
+    #[ignore = "requires op@2.39.0 in the local standalone cache"]
     fn cached_provider_runtime_uses_packaged_op() {
         let tools = super::ToolRuntime::new(true);
         let mut command = crate::one_password::command(&tools).unwrap();

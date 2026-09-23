@@ -84,8 +84,7 @@ fn main() {
 
     match cli.command {
         Commands::Licenses => print!(
-            "aqua-registry (mise)\n{}\nlzma-rust2\n{}\nzip\n{}",
-            include_str!("../../../licenses/aqua-registry.txt"),
+            "lzma-rust2\n{}\nzip\n{}",
             include_str!("../../../licenses/lzma-rust2.txt"),
             include_str!("../../../licenses/zip.txt")
         ),

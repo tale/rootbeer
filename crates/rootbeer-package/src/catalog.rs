@@ -421,7 +421,7 @@ mod tests {
             .platforms
             .get_mut("x86_64-linux")
             .unwrap()
-            .source = Some("aqua:sharkdp/fd@latest".into());
+            .source = Some("github:sharkdp/fd@latest".into());
         assert!(catalog.validate().unwrap_err().contains("exact"));
 
         let mut catalog = original.clone();
@@ -463,7 +463,7 @@ mod tests {
         assert!(recipe.validate("x86_64-linux").is_err());
 
         let mut recipe = original;
-        recipe.source = Some("aqua:BurntSushi/ripgrep@15.2.0".into());
+        recipe.source = Some("gitlab:BurntSushi/ripgrep@15.2.0".into());
         assert!(recipe.validate("x86_64-linux").is_err());
     }
 

@@ -35,12 +35,12 @@ pub fn prepare_package(
         return rootbeer_build::build_package(catalog, request, output, options)
             .map(|artifact| artifact.package);
     }
-    let inputs = package_inputs(catalog, std::iter::once(request))?;
-    let mut resolver = rootbeer_package::backend_stack(&inputs).with_implicit_resolver("rootbeer");
+    let inputs = package_inputs(catalog);
+    let mut resolver = rootbeer_package::backend_stack().with_implicit_resolver("rootbeer");
     resolver.push(rootbeer_package::catalog::CatalogResolver::new(
         catalog,
         &inputs,
-        rootbeer_package::backend_stack(&inputs),
+        rootbeer_package::backend_stack(),
     ));
     let platform = ResolveContext::current();
     let resolution = resolver
@@ -127,60 +127,16 @@ fn prepare_binary(
     Ok(package)
 }
 
-/// Resolver inputs that pin this catalog, and Aqua only when a closure member needs it.
-fn package_inputs<'a>(
-    catalog: &PackageCatalog,
-    keys: impl Iterator<Item = &'a str>,
-) -> Result<PackageResolverInputs, String> {
-    let mut pending: Vec<String> = keys.map(str::to_owned).collect();
-    let mut visited = std::collections::BTreeSet::new();
-    let mut needs_aqua = false;
-    while let Some(key) = pending.pop() {
-        if !visited.insert(key.clone()) {
-            continue;
-        }
-        let request = PackageRequest::parse(&key);
-        let package = catalog
-            .find(&request.name)
-            .ok_or_else(|| format!("unknown package {key}"))?;
-        let recipe = package
-            .versions
-            .get(
-                request
-                    .version
-                    .as_deref()
-                    .ok_or("package dependencies must use exact versions")?,
-            )
-            .ok_or_else(|| format!("unknown recipe {key}"))?;
-        let Some(recipe) = recipe.for_system(&ResolveContext::current().system) else {
-            continue;
-        };
-        needs_aqua |= recipe.build.is_none()
-            && recipe
-                .source
-                .as_deref()
-                .is_some_and(|source| source.starts_with("aqua:"));
-        if let Some(build) = &recipe.build {
-            pending.extend(
-                build
-                    .dependencies
-                    .iter()
-                    .map(|dependency| dependency.package().to_string()),
-            );
-        }
-    }
-    let mut inputs = if needs_aqua {
-        PackageResolverInputs::resolve_current().map_err(|e| e.to_string())?
-    } else {
-        PackageResolverInputs::default()
-    };
+/// Resolver inputs that pin this catalog.
+fn package_inputs(catalog: &PackageCatalog) -> PackageResolverInputs {
+    let mut inputs = PackageResolverInputs::default();
     inputs.resolvers.insert(
         "rootbeer".into(),
         ResolverInput::Catalog {
             sha256: catalog.sha256(),
         },
     );
-    Ok(inputs)
+    inputs
 }
 
 #[cfg(test)]

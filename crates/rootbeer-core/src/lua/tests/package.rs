@@ -76,7 +76,7 @@ fn rb_package_pushes_realize_package_op() {
 #[test]
 fn rb_package_string_pushes_request_intent_without_resolving() {
     let ops = run(r#"
-        rb.package("aqua:owner/tool@v1.0.0")
+        rb.package("github:owner/tool@v1.0.0")
         "#);
 
     let [Op::Package { intent }] = ops.as_slice() else {
@@ -87,7 +87,7 @@ fn rb_package_string_pushes_request_intent_without_resolving() {
         intent,
         &PackageIntent::Request(
             PackageRequest::new("owner/tool")
-                .resolver("aqua")
+                .resolver("github")
                 .version("v1.0.0")
         )
     );
@@ -175,14 +175,14 @@ fn accepts_raw_and_additional_archive_formats() {
 #[test]
 fn batches_and_structured_requests_match_individual_declarations() {
     let single = run(r#"
-        rb.package("aqua:owner/first@v1")
+        rb.package("github:owner/first@v1")
         rb.package("github:owner/second@v2", { asset = "second.zip", bins = { second = "bin/second" } })
         rb.package({ name = "raw", version = "1", source = { file = "/raw.zip", sha256 = "hash" },
             install = { archive = "zip" }, bins = { raw = "bin/raw" } })
     "#);
     let batch = run(r#"
         rb.packages({
-            "aqua:owner/first@v1",
+            "github:owner/first@v1",
             { request = "github:owner/second@v2", asset = "second.zip", bins = { second = "bin/second" } },
             { name = "raw", version = "1", source = { file = "/raw.zip", sha256 = "hash" },
                 install = { archive = "zip" }, bins = { raw = "bin/raw" } },
