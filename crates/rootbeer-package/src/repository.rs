@@ -64,11 +64,11 @@ enum FetchError {
 }
 
 impl Repository {
-    /// The PDR a release build is configured to trust, if any.
+    /// The official PDR a release build is configured to trust, if any.
     pub fn official() -> Result<Option<Self>, String> {
         match (
-            option_env!("ROOTBEER_INDEX_URL"),
-            option_env!("ROOTBEER_INDEX_PUBLIC_KEY"),
+            option_env!("ROOTBEER_PDR_URL"),
+            option_env!("ROOTBEER_PDR_PUBLIC_KEY"),
         ) {
             (None, None) => Ok(None),
             (Some(url), Some(public_key)) => {
@@ -80,8 +80,7 @@ impl Repository {
                 Ok(Some(repository))
             }
             _ => Err(
-                "release must configure both ROOTBEER_INDEX_URL and ROOTBEER_INDEX_PUBLIC_KEY"
-                    .into(),
+                "release must configure both ROOTBEER_PDR_URL and ROOTBEER_PDR_PUBLIC_KEY".into(),
             ),
         }
     }
@@ -93,15 +92,15 @@ impl Repository {
             return Ok(configured.clone());
         }
         Self::official()?.ok_or_else(|| {
-            "this build trusts no package repository; build with ROOTBEER_INDEX_URL and \
-             ROOTBEER_INDEX_PUBLIC_KEY, or call rb.package_repository()"
+            "this build trusts no PDR; build with ROOTBEER_PDR_URL and ROOTBEER_PDR_PUBLIC_KEY, \
+             or call rb.package_repository()"
                 .into()
         })
     }
 
     pub fn validate(&self) -> Result<(), String> {
         if !self.url.starts_with("file:///") {
-            crate::index::validate_https(&self.url)?;
+            rootbeer_catalog::validate_https(&self.url)?;
         }
         if !self.url.ends_with(".json") || !self.url.contains('/') {
             return Err("a repository URL names its root document".into());
@@ -670,7 +669,7 @@ mod tests {
             panic!("a repository resolution is proven by its record")
         };
         assert_eq!(proof.system, SYSTEM);
-        assert!(crate::index::is_sha256(&proof.record));
+        assert!(rootbeer_catalog::is_sha256(&proof.record));
     }
 
     #[test]

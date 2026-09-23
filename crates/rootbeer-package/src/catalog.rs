@@ -97,14 +97,14 @@ impl PackageCatalog {
                 .collect(),
         };
         catalog.validate_recipes()?;
-        if !catalog.requires_index() {
+        if !catalog.requires_pdr() {
             catalog.validate()?;
         }
         Ok(catalog)
     }
 
-    /// Whether any declared dependency must be supplied by an external catalog.
-    pub fn requires_index(&self) -> bool {
+    /// Whether any declared dependency must be supplied by the PDR.
+    pub fn requires_pdr(&self) -> bool {
         self.packages
             .values()
             .flat_map(|package| package.versions.values())

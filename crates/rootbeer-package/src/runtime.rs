@@ -66,7 +66,7 @@ pub fn store_directory(package: &LockedPackage) -> Result<PathBuf, String> {
     let hash = package
         .output_sha256
         .as_deref()
-        .filter(|hash| crate::index::is_sha256(hash))
+        .filter(|hash| rootbeer_catalog::is_sha256(hash))
         .ok_or_else(|| format!("{}: runtime output requires a locked SHA-256", package.id()))?;
     Ok(Store::new("").store_path(hash, &package.name, &package.version))
 }

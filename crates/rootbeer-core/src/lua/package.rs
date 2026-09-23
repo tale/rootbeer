@@ -471,7 +471,7 @@ fn parse_package_at_depth(cx: &Ctx<'_>, spec: Table, depth: usize) -> LuaResult<
     let output_sha256: Option<String> = optional(&spec, "output_sha256")?;
     if output_sha256
         .as_deref()
-        .is_some_and(|hash| !rootbeer_package::index::is_sha256(hash))
+        .is_some_and(|hash| !rootbeer_package::is_sha256(hash))
     {
         return Err(LuaError::RuntimeError(
             "output_sha256 must be a lowercase SHA-256".into(),

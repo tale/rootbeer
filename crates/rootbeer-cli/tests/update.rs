@@ -50,5 +50,5 @@ fn managed_update_refuses_before_network_or_store_mutation() {
     );
     assert_eq!(fs::read(&binary).unwrap(), before);
     assert_eq!(fs::read_to_string(lock).unwrap(), "unchanged lock");
-    assert!(!state.join("indexes").exists());
+    assert!(!state.join("repositories").exists());
 }

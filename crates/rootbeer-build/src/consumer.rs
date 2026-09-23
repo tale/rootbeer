@@ -65,7 +65,7 @@ impl PackageResolver for SourceResolver {
         context: &ResolveContext,
     ) -> Result<Option<PackageResolution>, String> {
         if request.asset.is_some() || !request.bins.is_empty() {
-            return Err("index packages do not accept asset or command overrides".into());
+            return Err("PDR packages do not accept asset or command overrides".into());
         }
         if let Some(selection) = &request.source {
             selection.validate()?;
@@ -82,7 +82,7 @@ impl PackageResolver for SourceResolver {
                 return repository.resolve(request, context);
             }
         }
-        let repository_catalog = if local.is_none_or(PackageCatalog::requires_index) {
+        let repository_catalog = if local.is_none_or(PackageCatalog::requires_pdr) {
             let repository = self
                 .repository
                 .as_ref()

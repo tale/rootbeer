@@ -117,7 +117,7 @@ EOF
         extra: Default::default(),
         packages: BTreeMap::from([("local-tool".into(), local_tool)]),
     };
-    assert!(local.requires_index());
+    assert!(local.requires_pdr());
     let mut dependent_inputs = inputs.clone();
     dependent_inputs
         .resolvers

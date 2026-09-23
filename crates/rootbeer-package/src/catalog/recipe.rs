@@ -200,7 +200,7 @@ impl CatalogRecipe {
             .as_deref()
             .is_some_and(|source| source.starts_with("https://"));
         if is_download {
-            crate::index::validate_https(self.source.as_deref().unwrap())?;
+            rootbeer_catalog::validate_https(self.source.as_deref().unwrap())?;
             if self.sha256.is_none() || self.asset.is_some() {
                 return Err(
                     "direct downloads require an install format, a digest, and no release asset"
