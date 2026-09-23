@@ -219,7 +219,7 @@ impl PackageDefinition {
             .authoring
             .as_ref()
             .ok_or("rendering a package file requires its authored recipe")?;
-        lua::write(recipe)
+        lua::write(&recipe.with_shared_upstream())
     }
 }
 
@@ -410,6 +410,37 @@ mod tests {
             let error = PackageDefinition::from_lua(&source).unwrap_err();
             assert!(error.contains("unknown field"), "`{field}`: {error}");
         }
+    }
+
+    #[test]
+    fn rendering_declares_an_upstream_every_platform_repeats_once() {
+        let repeated = r#"return {
+            name = "tool", description = "A tool", homepage = "https://example.com",
+            default_license = "MIT",
+            prebuilt = { github = "owner/tool", asset = "tool-{version}-{target}.tar.gz" },
+            outputs = { bins = { "tool" }, checks = { { "tool", "--version" } } },
+            platforms = {
+                ["aarch64-macos"] = { target = "mac", default_version = "1",
+                                      upstream = { github = "owner/tool", tag = "v{version}" } },
+                ["x86_64-linux"] = { target = "linux", default_version = "1",
+                                     upstream = { github = "owner/tool", tag = "v{version}" } },
+            },
+            versions = { ["1"] = { digests = { ["aarch64-macos"] = "aa", ["x86_64-linux"] = "bb" } } },
+        }"#;
+        let definition = PackageDefinition::from_lua(repeated).unwrap();
+        let rendered = definition.to_lua().unwrap();
+        assert_eq!(rendered.matches("upstream = {").count(), 1, "{rendered}");
+        let again = PackageDefinition::from_lua(&rendered).unwrap();
+        assert_eq!(again.package, definition.package);
+        assert_eq!(again.upstream, definition.upstream);
+
+        let split = PackageDefinition::from_lua(HELIUM).unwrap();
+        let rendered = split.to_lua().unwrap();
+        assert_eq!(
+            rendered.matches("upstream = {").count(),
+            2,
+            "distinct upstreams stay per platform"
+        );
     }
 
     #[test]
