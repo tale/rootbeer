@@ -5,7 +5,7 @@ use rootbeer_package::distribution::UpstreamProvenance;
 use rootbeer_package::{
     ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageCatalog, PackageRealizer,
     PackageRequest, PackageRequestResolver, PackageResolution, PackageResolverInputs,
-    ResolveContext,
+    ResolveContext, ResolverInput,
 };
 use rootbeer_store::{hash_file, Store};
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ pub fn prepare_package(
         return rootbeer_build::build_package(catalog, request, output, options)
             .map(|artifact| artifact.package);
     }
-    let inputs = crate::export::export_inputs(catalog, std::iter::once(request))?;
+    let inputs = package_inputs(catalog, std::iter::once(request))?;
     let mut resolver = rootbeer_package::backend_stack(&inputs).with_implicit_resolver("rootbeer");
     resolver.push(rootbeer_package::catalog::CatalogResolver::new(
         catalog,
@@ -63,7 +63,7 @@ fn prepare_binary(
         .as_ref()
         .map_or("", |cache| cache.context.as_str());
     let environment = options.environment_identity(catalog, request, context)?;
-    let staging = crate::publication::staging(output)?;
+    let staging = rootbeer_package::staging::staging(output)?;
     let destination = staging.path().join("result");
     fs::create_dir(&destination).map_err(|error| error.to_string())?;
     let realizer = PackageRealizer::with_dirs(
@@ -118,9 +118,69 @@ fn prepare_binary(
             resolver_inputs: inputs,
         },
     };
-    crate::publication::write_json(&destination.join("receipt.json"), &receipt)?;
+    fs::write(
+        destination.join("receipt.json"),
+        serde_json::to_vec(&receipt).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
     fs::rename(destination, output).map_err(|error| error.to_string())?;
     Ok(package)
+}
+
+/// Resolver inputs that pin this catalog, and Aqua only when a closure member needs it.
+fn package_inputs<'a>(
+    catalog: &PackageCatalog,
+    keys: impl Iterator<Item = &'a str>,
+) -> Result<PackageResolverInputs, String> {
+    let mut pending: Vec<String> = keys.map(str::to_owned).collect();
+    let mut visited = std::collections::BTreeSet::new();
+    let mut needs_aqua = false;
+    while let Some(key) = pending.pop() {
+        if !visited.insert(key.clone()) {
+            continue;
+        }
+        let request = PackageRequest::parse(&key);
+        let package = catalog
+            .find(&request.name)
+            .ok_or_else(|| format!("unknown package {key}"))?;
+        let recipe = package
+            .versions
+            .get(
+                request
+                    .version
+                    .as_deref()
+                    .ok_or("package dependencies must use exact versions")?,
+            )
+            .ok_or_else(|| format!("unknown recipe {key}"))?;
+        let Some(recipe) = recipe.for_system(&ResolveContext::current().system) else {
+            continue;
+        };
+        needs_aqua |= recipe.build.is_none()
+            && recipe
+                .source
+                .as_deref()
+                .is_some_and(|source| source.starts_with("aqua:"));
+        if let Some(build) = &recipe.build {
+            pending.extend(
+                build
+                    .dependencies
+                    .iter()
+                    .map(|dependency| dependency.package().to_string()),
+            );
+        }
+    }
+    let mut inputs = if needs_aqua {
+        PackageResolverInputs::resolve_current().map_err(|e| e.to_string())?
+    } else {
+        PackageResolverInputs::default()
+    };
+    inputs.resolvers.insert(
+        "rootbeer".into(),
+        ResolverInput::Catalog {
+            sha256: catalog.sha256(),
+        },
+    );
+    Ok(inputs)
 }
 
 #[cfg(test)]

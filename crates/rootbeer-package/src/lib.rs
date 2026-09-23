@@ -30,7 +30,7 @@ pub mod staging;
 pub mod upstream;
 
 pub use aqua::AquaResolver;
-pub use artifact::{ArtifactIndex, PublishedArtifact};
+pub use artifact::PublishedArtifact;
 pub use build_spec::{
     BuildArtifact, BuildBackend, BuildDependency, BuildEnvironmentInput, BuildEnvironmentLock,
     BuildSteps, DependencyKind, GoBuild, RustBuild, SourceBuild,

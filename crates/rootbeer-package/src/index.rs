@@ -1,99 +1,6 @@
 pub use rootbeer_catalog::{is_sha256, validate_https, PackageIndexPin};
 
-use super::{ArtifactIndex, LockedInstall, LockedSource, PackageRequest};
-
-impl ArtifactIndex {
-    /// Requires artifacts for prebuilt-only recipes; source recipes can be built by consumers.
-    pub fn validate_complete(&self) -> Result<(), String> {
-        self.validate()?;
-        for package in self.catalog.packages.values() {
-            for (version, entry) in &package.versions {
-                let key = format!("{}@{version}", package.name);
-                for (system, recipe) in &entry.platforms {
-                    if recipe.build.is_some() {
-                        continue;
-                    }
-                    if !self
-                        .artifacts
-                        .get(&key)
-                        .is_some_and(|systems| systems.contains_key(system))
-                    {
-                        return Err(format!("incomplete publication: missing {key} on {system}"));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Validates the catalog and every advertised artifact without executing recipes.
-    pub fn validate(&self) -> Result<(), String> {
-        if self.artifacts.is_empty()
-            && !self.catalog.packages.values().any(|package| {
-                package
-                    .versions
-                    .values()
-                    .flat_map(|entry| entry.platforms.values())
-                    .any(|recipe| recipe.build.is_some())
-            })
-        {
-            return Err("empty artifact index".into());
-        }
-        self.validate_fragment()
-    }
-
-    pub fn validate_fragment(&self) -> Result<(), String> {
-        self.catalog.validate()?;
-        if self.catalog_sha256 != self.catalog.sha256() {
-            return Err("invalid artifact index catalog digest".into());
-        }
-        for (key, systems) in &self.artifacts {
-            let request = PackageRequest::parse(key);
-            if request.resolver.is_some() {
-                return Err(format!("{key}: index keys must use canonical name@version"));
-            }
-            let recipe = self
-                .catalog
-                .packages
-                .get(&request.name)
-                .and_then(|entry| {
-                    request
-                        .version
-                        .as_ref()
-                        .and_then(|version| entry.versions.get(version))
-                })
-                .ok_or_else(|| format!("{key}: missing index recipe"))?;
-            if systems.is_empty() {
-                return Err(format!("{key}: no platform artifacts"));
-            }
-            for (system, artifact) in systems {
-                let platform = recipe
-                    .for_system(system)
-                    .ok_or_else(|| format!("{key}: {system} has no recipe"))?;
-                artifact.validate(key, system, recipe.revision, platform)?;
-                for dependency in super::runtime::closure(&artifact.package)? {
-                    let (_, _, entry) =
-                        super::graph::find_recipe_definition(&self.catalog, &dependency.id())?;
-                    let dependency_recipe = entry
-                        .for_system(system)
-                        .ok_or_else(|| format!("{}: {system} has no recipe", dependency.id()))?;
-                    super::PublishedArtifact {
-                        revision: entry.revision,
-                        receipt_sha256: artifact.receipt_sha256.clone(),
-                        package: dependency.clone(),
-                    }
-                    .validate(
-                        &dependency.id(),
-                        system,
-                        entry.revision,
-                        dependency_recipe,
-                    )?;
-                }
-            }
-        }
-        Ok(())
-    }
-}
+use super::{LockedInstall, LockedSource};
 
 impl super::PublishedArtifact {
     pub fn validate(
@@ -223,92 +130,56 @@ impl super::PublishedArtifact {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::hash_bytes;
-    use std::{fs, path::Path};
+    use crate::{CatalogRecipe, PublishedArtifact};
 
-    fn fixture(root: &Path) -> (ArtifactIndex, PackageIndexPin) {
-        let mut index = crate::artifact::fixture();
-        let mut entry = index.catalog.packages.remove("xz").unwrap();
-        entry.name = "new-tool".into();
-        entry.aliases = vec!["new-alias".into()];
-        let mut platforms = index
-            .artifacts
-            .remove(&format!(
-                "xz@{}",
-                entry.default_version_for("aarch64-linux").unwrap()
-            ))
-            .unwrap();
-        for artifact in platforms.values_mut() {
-            artifact.package.name = entry.name.clone();
-        }
-        index.artifacts.insert(
-            format!(
-                "new-tool@{}",
-                entry.default_version_for("aarch64-linux").unwrap()
-            ),
-            platforms,
-        );
-        index.catalog.packages.insert(entry.name.clone(), entry);
-        index.catalog_sha256 = index.catalog.sha256();
-        let bytes = serde_json::to_vec(&index).unwrap();
-        let path = root.join("index.json");
-        fs::write(&path, &bytes).unwrap();
-        (
-            index,
-            PackageIndexPin {
-                url: format!("file://{}", path.display()),
-                sha256: hash_bytes(&bytes),
-            },
-        )
+    /// The published `xz` artifact, renamed so no test depends on the catalog's own entry.
+    fn fixture() -> (String, PublishedArtifact, CatalogRecipe) {
+        let (catalog, mut artifact) = crate::artifact::fixture();
+        artifact.package.name = "new-tool".into();
+        let package = &catalog.packages["xz"];
+        let recipe = package.versions[&artifact.package.version]
+            .for_system("aarch64-linux")
+            .unwrap()
+            .clone();
+        (artifact.package.id(), artifact, recipe)
     }
 
     #[test]
-    fn rejects_unsafe_or_inconsistent_index_artifacts() {
-        let root = tempfile::tempdir().unwrap();
-        let (index, _) = fixture(root.path());
-        let original = serde_json::to_value(index).unwrap();
-        let key = original["artifacts"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .next()
-            .unwrap()
-            .clone();
-        for field in ["source", "bins", "output", "revision", "catalog", "system"] {
-            let mut value = original.clone();
-            let artifact = &mut value["artifacts"][&key]["aarch64-linux"];
+    fn rejects_unsafe_or_inconsistent_artifacts() {
+        let (key, original, recipe) = fixture();
+        let revision = original.revision;
+        original
+            .validate(&key, "aarch64-linux", revision, &recipe)
+            .unwrap();
+        let unsafe_source = LockedSource::File {
+            path: "/etc/passwd".into(),
+            sha256: "0".repeat(64),
+        };
+        for field in ["source", "bins", "output", "revision"] {
+            let mut artifact = original.clone();
             match field {
-                "source" => {
-                    artifact["package"]["source"] = serde_json::json!({"File": {"path": "/etc/passwd", "sha256": "0".repeat(64)}})
-                }
+                "source" => artifact.package.source = unsafe_source.clone(),
                 "bins" => {
-                    artifact["package"]["provides"]["bins"]["xz"] = serde_json::json!("../escape")
+                    *artifact.package.provides.bins.values_mut().next().unwrap() =
+                        "../escape".into()
                 }
-                "output" => artifact["package"]["output_sha256"] = serde_json::Value::Null,
-                "revision" => artifact["revision"] = serde_json::json!(99),
-                "catalog" => value["catalog_sha256"] = serde_json::json!("0".repeat(64)),
-                "system" => {
-                    let artifact = artifact.clone();
-                    value["artifacts"][&key]["windows"] = artifact;
-                }
+                "output" => artifact.package.output_sha256 = None,
+                "revision" => artifact.revision = 99,
                 _ => unreachable!(),
             }
-            let index: ArtifactIndex = serde_json::from_value(value).unwrap();
-            assert!(index.validate().is_err(), "{field}");
+            assert!(
+                artifact
+                    .validate(&key, "aarch64-linux", revision, &recipe)
+                    .is_err(),
+                "{field}"
+            );
         }
     }
 
     #[test]
     fn artifact_validation_enforces_declared_command_paths() {
-        let root = tempfile::tempdir().unwrap();
-        let (index, _) = fixture(root.path());
-        let (key, platforms) = index.artifacts.iter().next().unwrap();
-        let mut artifact = platforms["aarch64-linux"].clone();
-        let package = &index.catalog.packages["new-tool"];
-        let mut recipe = package.versions[package.default_version_for("aarch64-linux").unwrap()]
-            .for_system("aarch64-linux")
-            .unwrap()
-            .clone();
+        let (key, mut artifact, mut recipe) = fixture();
+        let key = &key;
         recipe.build = None;
         recipe.source = Some("github:owner/tool@v1".into());
         recipe.bins = crate::Bins::Paths(artifact.package.provides.bins.clone());
@@ -327,15 +198,8 @@ mod tests {
 
     #[test]
     fn artifact_validation_checks_platform_pins_without_comparing_mirror_archive_to_upstream() {
-        let root = tempfile::tempdir().unwrap();
-        let (index, _) = fixture(root.path());
-        let (key, platforms) = index.artifacts.iter().next().unwrap();
-        let mut artifact = platforms["aarch64-linux"].clone();
-        let package = &index.catalog.packages["new-tool"];
-        let mut recipe = package.versions[package.default_version_for("aarch64-linux").unwrap()]
-            .for_system("aarch64-linux")
-            .unwrap()
-            .clone();
+        let (key, mut artifact, mut recipe) = fixture();
+        let key = &key;
         recipe.build = None;
         recipe.source = Some("github:owner/tool@v1".into());
         let LockedSource::Url { sha256, .. } = &artifact.package.source else {

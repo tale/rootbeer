@@ -270,14 +270,7 @@ pub(crate) mod tests {
     use ring::signature::{Ed25519KeyPair, KeyPair};
 
     pub(crate) fn signed() -> (Vec<u8>, String, String) {
-        let mut index = crate::artifact::fixture();
-        let artifact = index
-            .artifacts
-            .values_mut()
-            .next()
-            .unwrap()
-            .remove("aarch64-linux")
-            .unwrap();
+        let (catalog, artifact) = crate::artifact::fixture();
         let package = &artifact.package;
         let id = package.id();
         let record = PackageRecord {
@@ -285,8 +278,8 @@ pub(crate) mod tests {
             schema: 2,
             published: 1,
             system: "aarch64-linux".into(),
-            revision: index.catalog.packages[&package.name].versions[&package.version].revision,
-            recipe: index.catalog.packages[&package.name].versions[&package.version]
+            revision: catalog.packages[&package.name].versions[&package.version].revision,
+            recipe: catalog.packages[&package.name].versions[&package.version]
                 .for_system("aarch64-linux")
                 .unwrap()
                 .clone(),
