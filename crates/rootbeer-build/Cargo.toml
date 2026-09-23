@@ -15,6 +15,10 @@ tar = "0.4"
 libc = "0.2.182"
 goblin = { version = "0.10.7", default-features = false, features = ["std", "elf32", "elf64", "mach32", "mach64", "endian_fd"] }
 
+[dev-dependencies]
+ring = "0.17.14"
+rootbeer-catalog = { path = "../rootbeer-catalog" }
+
 [build-dependencies]
 syn = { version = "2", features = ["full"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }

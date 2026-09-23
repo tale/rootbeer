@@ -38,7 +38,7 @@ pub fn publish_records(
     catalog.validate()?;
     let key =
         Ed25519KeyPair::from_pkcs8(key_der).map_err(|_| "invalid Ed25519 PKCS#8 signing key")?;
-    if key.public_key().as_ref() != rootbeer_package::official::decode_hex::<32>(public_key)? {
+    if key.public_key().as_ref() != rootbeer_catalog::decode_hex::<32>(public_key)? {
         return Err("signing key does not match the PDR verification key".into());
     }
 

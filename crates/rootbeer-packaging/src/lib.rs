@@ -21,14 +21,12 @@ pub use export::{
     ExportPlan, ExportShard,
 };
 pub use package_plan::{plan_packages, PackageTask};
-pub use publication::{
-    assemble_indexes, publish_index, verify_bundle, verify_candidate, PublishOptions,
-};
+pub use publication::{assemble_indexes, verify_bundle, verify_candidate};
 pub use publish_records::publish_records;
 pub use release::{push_package, release_package, Signer};
 
 mod sign;
-pub use sign::{sign_index, sign_package_record};
+pub use sign::sign_package_record;
 
 pub mod upstream;
 pub use upstream::{discover_updates, UpdateReport};

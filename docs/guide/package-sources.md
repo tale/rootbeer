@@ -105,22 +105,22 @@ Direct GitHub and Aqua requests record download hashes in their saved resolution
 They do not carry the Rootbeer index publisher's signature. Aqua signatures and
 attestations are not verified.
 
-## Use another index
+## Use another repository
 
-A Lua configuration can select a custom collection before declaring packages:
-call `rb.package_index()` with the snapshot URL and SHA-256 supplied by its
-publisher. See the [API reference](/reference/core#rootbeer-package-index) for the
-fields. HTTPS and absolute local `file://` snapshot URLs are supported.
+A Lua configuration can use another package repository in place of the official one:
+call `rb.package_repository()` before declaring packages, with the URL of its signed
+root and its publisher's verification key. See the
+[API reference](/reference/core#rootbeer-package-repository) for the fields. HTTPS and
+absolute local `file://` URLs are supported.
 
-Use a publisher you trust: the checksum identifies exact contents but does not
-verify who published them. Rootbeer uses this collection instead of its official
-catalog for the configuration. Standalone `rb run` and `rb use` do not read this
-Lua setting.
+The key is what you trust: Rootbeer verifies the repository's signature, rejects
+rollbacks, and checks every package document and record against the digests that
+signature covers. Standalone `rb run` and `rb use` do not read this Lua setting.
 
-`rb apply --update` keeps the selected snapshot. Change its URL and checksum to
-select a newer one; changing or removing the setting refreshes your lock on the
-next apply. Offline installs still require a matching lock and cached packages.
+Your lock records the exact root it resolved against. `rb apply --update` moves it to
+the repository's latest root; changing or removing the setting refreshes your lock on
+the next apply. Offline installs still require a matching lock and cached packages.
 
 See [updates and offline use](/guide/package-locks) for saved versions, or
-[index hosting and trust](/contributing/package-hosting) for verification and
+[repository hosting and trust](/contributing/package-hosting) for verification and
 fallback behavior.

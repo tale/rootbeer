@@ -188,8 +188,8 @@ pub struct CatalogResolver {
     catalog: PackageCatalog,
     inputs: PackageResolverInputs,
     backends: ResolverStack,
-    fallback: Option<super::index::IndexResolver>,
-    discovery: Option<super::discovery::DiscoveryResolver>,
+    /// Resolves names this catalog does not define.
+    repository: Option<super::RepositoryResolver>,
 }
 
 impl CatalogResolver {
@@ -202,17 +202,8 @@ impl CatalogResolver {
             catalog: catalog.clone(),
             inputs: inputs.clone(),
             backends,
-            fallback: None,
-            discovery: inputs
-                .discovery()
-                .map(super::discovery::DiscoveryResolver::new),
+            repository: inputs.repository().map(super::RepositoryResolver::new),
         }
-    }
-
-    /// Resolves names absent from this catalog using the selected published index.
-    pub fn with_fallback(mut self, pin: Option<&super::PackageIndexPin>) -> Self {
-        self.fallback = pin.map(super::index::IndexResolver::new);
-        self
     }
 }
 
@@ -228,11 +219,8 @@ impl PackageResolver for CatalogResolver {
     ) -> Result<Option<PackageResolution>, String> {
         let catalog = &self.catalog;
         let Some(package) = catalog.find(&request.name) else {
-            if let Some(discovery) = &self.discovery {
-                return discovery.resolve(request, context);
-            }
-            if let Some(fallback) = &self.fallback {
-                return fallback.resolve(request, context);
+            if let Some(repository) = &self.repository {
+                return repository.resolve(request, context);
             }
             return Err(format!("unknown catalog package `{}`; use `rootbeer-forge list` or an explicit backend request", request.name));
         };

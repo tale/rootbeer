@@ -3,14 +3,13 @@ use std::fs;
 use std::process::Command;
 
 use rootbeer_package::download::DownloadCache;
-use rootbeer_package::index::IndexResolver;
 use rootbeer_package::*;
 use rootbeer_store::hash_file;
 
 /// Resolves Rootbeer itself and nothing else; see [`rootbeer_package::self_update`].
 pub fn self_update_resolver_stack(inputs: &PackageResolverInputs) -> ResolverStack {
     let mut stack = ResolverStack::new().with_implicit_resolver("rootbeer");
-    if let Some(pin) = inputs.discovery() {
+    if let Some(pin) = inputs.repository() {
         stack.push(rootbeer_package::self_update::Resolver::new(
             pin,
             rootbeer_store::state_dir().join("downloads"),
@@ -22,10 +21,7 @@ pub fn self_update_resolver_stack(inputs: &PackageResolverInputs) -> ResolverSta
 /// Builds an installation resolver that prefers published artifacts and can execute source recipes.
 pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStack {
     let mut stack = backend_stack(inputs).with_implicit_resolver("rootbeer");
-    if inputs.package_index().is_some()
-        || inputs.discovery().is_some()
-        || inputs.local_catalog().is_some()
-    {
+    if inputs.repository().is_some() || inputs.local_catalog().is_some() {
         stack.push(SourceResolver::with_inputs(
             inputs,
             rootbeer_store::state_dir(),
@@ -34,49 +30,24 @@ pub fn resolver_stack_for_inputs(inputs: &PackageResolverInputs) -> ResolverStac
     stack
 }
 
-/// Installs published artifacts or builds recipes from local definitions and verified indexes.
+/// Installs published packages or builds recipes from local definitions and the repository.
 pub struct SourceResolver {
     state: std::path::PathBuf,
-    index: Option<IndexResolver>,
-    discovery: Option<rootbeer_package::discovery::DiscoveryResolver>,
-    pin: Option<PackageIndexPin>,
+    repository: Option<RepositoryResolver>,
     inputs: PackageResolverInputs,
 }
 
 impl SourceResolver {
     /// Keeps source downloads, build results, and diagnostics under the caller's state directory.
-    pub fn new(pin: &PackageIndexPin, state: impl Into<std::path::PathBuf>) -> Self {
-        let state = state.into();
-        Self {
-            index: Some(IndexResolver::with_cache(pin, state.join("downloads"))),
-            discovery: None,
-            pin: Some(pin.clone()),
-            inputs: PackageResolverInputs::default(),
-            state,
-        }
-    }
-
-    /// Combines configuration-local recipes with the selected published index.
     pub fn with_inputs(
         inputs: &PackageResolverInputs,
         state: impl Into<std::path::PathBuf>,
     ) -> Self {
         let state = state.into();
         Self {
-            index: inputs
-                .package_index()
-                .map(|pin| IndexResolver::with_cache(pin, state.join("downloads"))),
-            discovery: inputs.discovery().map(|pin| {
-                rootbeer_package::discovery::DiscoveryResolver::with_cache(
-                    pin,
-                    state.join("downloads"),
-                    false,
-                )
-            }),
-            pin: inputs
-                .package_index()
-                .cloned()
-                .or_else(|| inputs.discovery().map(|pin| pin.manifest.clone())),
+            repository: inputs
+                .repository()
+                .map(|pin| RepositoryResolver::with_cache(pin, state.join("downloads"), false)),
             inputs: inputs.clone(),
             state,
         }
@@ -107,38 +78,32 @@ impl PackageResolver for SourceResolver {
             .local_catalog()
             .filter(|catalog| catalog.find(&request.name).is_some());
         if local.is_none() && request.source.is_none() {
-            if let Some(discovery) = &self.discovery {
-                return discovery.resolve(request, context);
+            if let Some(repository) = &self.repository {
+                return repository.resolve(request, context);
             }
         }
-        let discovered = self
-            .discovery
-            .as_ref()
-            .map(|discovery| {
-                let catalog = discovery.manifest()?.catalog.clone();
-                Ok::<_, String>(ArtifactIndex {
-                    catalog_sha256: catalog.sha256(),
-                    catalog,
-                    artifacts: Default::default(),
-                })
-            })
-            .transpose()?;
-        let index = if local.is_none_or(PackageCatalog::requires_index) {
-            match &discovered {
-                Some(index) => Some(index),
-                None => Some(
-                    self.index
-                        .as_ref()
-                        .ok_or("this request requires a package index")?
-                        .index()?,
-                ),
+        let repository_catalog = if local.is_none_or(PackageCatalog::requires_index) {
+            let repository = self
+                .repository
+                .as_ref()
+                .ok_or("this request requires a package repository")?;
+            let mut names = vec![request.name.as_str()];
+            if let Some(local) = local {
+                names.extend(missing_dependencies(local));
             }
+            Some(
+                repository.catalog(
+                    names
+                        .into_iter()
+                        .filter(|name| local.is_none_or(|local| local.find(name).is_none())),
+                )?,
+            )
         } else {
             None
         };
-        let mut catalog = match (local, &index) {
+        let mut catalog = match (local, &repository_catalog) {
             (Some(local), None) => local.clone(),
-            (_, Some(index)) => index.catalog.clone(),
+            (_, Some(published)) => published.clone(),
             _ => return Err("no package catalog selected".into()),
         };
         if let Some(local) = local {
@@ -147,7 +112,7 @@ impl PackageResolver for SourceResolver {
         catalog.validate()?;
         let package = catalog
             .find(&request.name)
-            .ok_or_else(|| format!("unknown index package `{}`", request.name))?;
+            .ok_or_else(|| format!("unknown package `{}`", request.name))?;
         let version = match request.version.as_deref() {
             Some(version) => version,
             None => package
@@ -155,17 +120,6 @@ impl PackageResolver for SourceResolver {
                 .ok_or_else(|| format!("{} does not support {}", package.name, context.system))?,
         };
         let key = format!("{}@{version}", package.name);
-        if local.is_none()
-            && request.source.is_none()
-            && index.as_ref().is_some_and(|index| {
-                index
-                    .artifacts
-                    .get(&key)
-                    .is_some_and(|systems| systems.contains_key(&context.system))
-            })
-        {
-            return self.index.as_ref().unwrap().resolve(request, context);
-        }
         if local.is_some()
             && request.source.is_none()
             && package.versions.get(version).is_some_and(|entry| {
@@ -271,7 +225,9 @@ impl PackageResolver for SourceResolver {
             },
         )?;
         let proof = SourceBuildProof {
-            index: index.as_ref().and(self.pin.clone()),
+            repository: repository_catalog
+                .as_ref()
+                .and(self.inputs.repository().cloned()),
             local_catalog_sha256: local.map(PackageCatalog::sha256),
             catalog_sha256,
             recipe_sha256,
@@ -349,6 +305,21 @@ fn commit_from_refs(output: &str, reference: &str) -> Result<String, String> {
     peeled
         .or(commit)
         .ok_or_else(|| format!("Git ref `{reference}` was not found"))
+}
+
+/// Packages a local catalog builds with but does not define.
+fn missing_dependencies(local: &PackageCatalog) -> Vec<&str> {
+    local
+        .packages
+        .values()
+        .flat_map(|package| package.versions.values())
+        .flat_map(|version| version.platforms.values())
+        .filter_map(|recipe| recipe.build.as_ref())
+        .flat_map(|build| &build.dependencies)
+        .map(|dependency| dependency.package())
+        .map(|package| package.split_once('@').map_or(package, |(name, _)| name))
+        .filter(|name| local.find(name).is_none())
+        .collect()
 }
 
 #[cfg(test)]

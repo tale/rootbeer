@@ -1,13 +1,10 @@
-use std::collections::BTreeSet;
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use super::{ArtifactIndex, LockedSource, PackageCatalog, PublishedArtifact};
-use rootbeer_store::{hash_bytes, hash_file};
+use rootbeer_store::hash_file;
 
 pub(super) fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
     serde_json::from_slice(&fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?)
@@ -249,191 +246,11 @@ pub fn assemble_indexes(inputs: &Path, output: &Path) -> Result<(), String> {
     fs::rename(destination, output).map_err(|e| e.to_string())
 }
 
-/// Coordinates for a signed Pages publication. ORAS supplies publisher authentication.
-pub struct PublishOptions<'a> {
-    pub bundle: &'a Path,
-    pub site: &'a Path,
-    pub site_url: &'a str,
-    pub manifest_name: &'a str,
-    pub registry: &'a str,
-    pub repository_url: &'a str,
-    pub sequence: u64,
-    pub key: &'a Path,
-    pub public_key: &'a str,
-}
-
-fn publication_manifest(public: &Path, name: &str) -> Result<PathBuf, String> {
-    let path = Path::new(name);
-    if path.file_name().is_none_or(|file| file != name)
-        || path.extension().is_none_or(|extension| extension != "json")
-        || name.as_bytes().contains(&0)
-    {
-        return Err("manifest must be a .json basename without directory components".into());
-    }
-    match fs::symlink_metadata(public) {
-        Ok(metadata) if !metadata.is_dir() => {
-            return Err("Pages output directory must not be a symlink or file".into());
-        }
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.to_string()),
-        _ => {}
-    }
-    let destination = public.join(name);
-    match fs::symlink_metadata(&destination) {
-        Ok(metadata) if !metadata.is_file() => {
-            return Err("manifest destination must be a regular file".into());
-        }
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.to_string()),
-        _ => {}
-    }
-    Ok(destination)
-}
-
-/// Uploads source blobs, verifies anonymous reads, then installs the signed Pages snapshot.
-/// Never executes package artifacts. Git commits and Pages deployment remain CI operations.
-pub fn publish_index(opts: &PublishOptions<'_>) -> Result<(), String> {
-    let public = opts.site.join("public");
-    let manifest_path = publication_manifest(&public, opts.manifest_name)?;
-    rootbeer_package::ghcr::validate_repository(opts.registry)?;
-    rootbeer_package::index::validate_https(opts.site_url)?;
-    rootbeer_package::index::validate_https(opts.repository_url)?;
-    let bundle = opts.bundle.canonicalize().map_err(|e| e.to_string())?;
-    let bytes = fs::read(bundle.join("index.json")).map_err(|e| e.to_string())?;
-    let index: ArtifactIndex = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    index.validate_complete()?;
-    check_files(&index, &bundle)?;
-    let previous = match fs::read(&manifest_path) {
-        Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.to_string()),
-    };
-    let digest = hash_bytes(&bytes);
-    let url = format!(
-        "{}/snapshots/{digest}.json",
-        opts.site_url.trim_end_matches('/')
-    );
-    let key = fs::read(opts.key).map_err(|e| e.to_string())?;
-    let manifest = super::sign_index(
-        &bytes,
-        &url,
-        opts.sequence,
-        &key,
-        opts.public_key,
-        previous.as_deref(),
-    )?;
-    let mut blobs = BTreeSet::new();
-    for systems in index.artifacts.values() {
-        for artifact in systems.values() {
-            for package in rootbeer_package::runtime::closure(&artifact.package)?
-                .into_iter()
-                .chain(std::iter::once(&artifact.package))
-            {
-                let LockedSource::Url { url, .. } = &package.source else {
-                    unreachable!()
-                };
-                if !url.starts_with("ghcr://") {
-                    continue;
-                }
-                let blob = rootbeer_package::ghcr::GhcrBlob::parse(url)?;
-                if !blob.repository.starts_with(&format!("{}/", opts.registry)) {
-                    return Err("artifact is outside the publication namespace".into());
-                }
-                blobs.insert((blob.repository, blob.sha256));
-            }
-        }
-    }
-    for (repository, digest) in blobs {
-        let status = Command::new("oras")
-            .args([
-                "push",
-                &format!("ghcr.io/{repository}:sha256-{digest}"),
-                "--artifact-type",
-                "application/vnd.rootbeer.package.v1",
-                "--annotation",
-                &format!("org.opencontainers.image.source={}", opts.repository_url),
-                &format!("{digest}.tar.gz:application/gzip"),
-            ])
-            .env_remove("INDEX_SIGNING_KEY")
-            .current_dir(bundle.join("artifacts"))
-            .status()
-            .map_err(|e| e.to_string())?;
-        if !status.success() {
-            return Err(format!("ORAS upload failed: {status}"));
-        }
-        let mut reader = rootbeer_package::ghcr::GhcrBlob {
-            repository,
-            sha256: digest.clone(),
-        }
-        .reader()
-        .map_err(|e| e.to_string())?;
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        let mut buffer = [0; 8192];
-        loop {
-            let count = reader.read(&mut buffer).map_err(|e| e.to_string())?;
-            if count == 0 {
-                break;
-            }
-            hasher.update(&buffer[..count]);
-        }
-        if format!("{:x}", hasher.finalize()) != digest {
-            return Err("published GHCR blob hash mismatch".into());
-        }
-    }
-    fs::create_dir_all(opts.site).map_err(|e| e.to_string())?;
-    for directory in [&public, &public.join("snapshots"), &public.join("receipts")] {
-        match fs::symlink_metadata(directory) {
-            Ok(metadata) if !metadata.is_dir() => {
-                return Err("Pages output directories must not be symlinks or files".into())
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                fs::create_dir(directory).map_err(|e| e.to_string())?
-            }
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    let snapshot = public.join("snapshots").join(format!("{digest}.json"));
-    match fs::symlink_metadata(&snapshot) {
-        Ok(metadata) if !metadata.is_file() => {
-            return Err("snapshot destination must be a regular file".into())
-        }
-        Ok(_) if fs::read(&snapshot).map_err(|e| e.to_string())? != bytes => {
-            return Err("immutable snapshot collision".into())
-        }
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.to_string()),
-        _ => {}
-    }
-    fs::write(snapshot, bytes).map_err(|e| e.to_string())?;
-    for file in fs::read_dir(bundle.join("receipts")).map_err(|e| e.to_string())? {
-        copy_verified(
-            &file.map_err(|e| e.to_string())?.path(),
-            &public.join("receipts"),
-            ".json",
-        )?;
-    }
-    let mut latest = tempfile::NamedTempFile::new_in(&public).map_err(|e| e.to_string())?;
-    latest.write_all(&manifest).map_err(|e| e.to_string())?;
-    latest.as_file().sync_all().map_err(|e| e.to_string())?;
-    latest.persist(&manifest_path).map_err(|e| e.to_string())?;
-    if !public
-        .join(".nojekyll")
-        .try_exists()
-        .map_err(|e| e.to_string())?
-    {
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(public.join(".nojekyll"))
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_catalog::VersionTestExt;
-    use ring::signature::{Ed25519KeyPair, KeyPair};
+    use rootbeer_store::hash_bytes;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -842,95 +659,6 @@ mod tests {
     }
 
     #[test]
-    fn publisher_signs_retained_snapshots_and_rejects_bad_sequence_before_mutation() {
-        let root = tempfile::tempdir().unwrap();
-        let bundle = complete(root.path());
-        let der = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
-        let key_pair = Ed25519KeyPair::from_pkcs8(der.as_ref()).unwrap();
-        let public_key: String = key_pair
-            .public_key()
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        let key = root.path().join("key.der");
-        fs::write(&key, der.as_ref()).unwrap();
-        let site = root.path().join("site");
-        let mut opts = PublishOptions {
-            bundle: &bundle,
-            site: &site,
-            site_url: "https://example.org",
-            manifest_name: "latest.json",
-            registry: "tale/rootbeer-index",
-            repository_url: "https://github.com/tale/rootbeer-index",
-            sequence: 1,
-            key: &key,
-            public_key: &public_key,
-        };
-        publish_index(&opts).unwrap();
-        let first = fs::read(site.join("public/latest.json")).unwrap();
-        assert!(publish_index(&opts).unwrap_err().contains("increase"));
-        assert_eq!(first, fs::read(site.join("public/latest.json")).unwrap());
-        opts.sequence = 2;
-        publish_index(&opts).unwrap();
-        assert_eq!(
-            fs::read_dir(site.join("public/snapshots")).unwrap().count(),
-            1
-        );
-        let latest: serde_json::Value = read_json(&site.join("public/latest.json")).unwrap();
-        assert_eq!(latest["sequence"], 2);
-        assert_eq!(
-            latest["index"]["sha256"],
-            hash_bytes(&fs::read(bundle.join("index.json")).unwrap())
-        );
-        let legacy = fs::read(site.join("public/latest.json")).unwrap();
-        let legacy_snapshot = site.join("public/snapshots").join(format!(
-            "{}.json",
-            latest["index"]["sha256"].as_str().unwrap()
-        ));
-        let receipts = fs::read_dir(site.join("public/receipts"))
-            .unwrap()
-            .map(|entry| {
-                let path = entry.unwrap().path();
-                (path.clone(), fs::read(path).unwrap())
-            })
-            .collect::<Vec<_>>();
-        let mut updated: ArtifactIndex = read_json(&bundle.join("index.json")).unwrap();
-        updated
-            .catalog
-            .packages
-            .get_mut("xz")
-            .unwrap()
-            .description
-            .push_str(" (updated)");
-        updated.catalog_sha256 = updated.catalog.sha256();
-        write_json(&bundle.join("index.json"), &updated).unwrap();
-        opts.manifest_name = "latest-v2.json";
-        opts.sequence = 1;
-        publish_index(&opts).unwrap();
-        let versioned = fs::read(site.join("public/latest-v2.json")).unwrap();
-        assert_eq!(legacy, fs::read(site.join("public/latest.json")).unwrap());
-        assert_eq!(
-            fs::read_dir(site.join("public/snapshots")).unwrap().count(),
-            2
-        );
-        assert!(legacy_snapshot.is_file());
-        for (path, contents) in receipts {
-            assert_eq!(fs::read(path).unwrap(), contents);
-        }
-        assert!(publish_index(&opts).unwrap_err().contains("increase"));
-        assert_eq!(
-            versioned,
-            fs::read(site.join("public/latest-v2.json")).unwrap()
-        );
-        opts.sequence = 2;
-        publish_index(&opts).unwrap();
-        assert_eq!(legacy, fs::read(site.join("public/latest.json")).unwrap());
-        opts.manifest_name = "latest.json";
-        assert!(publish_index(&opts).unwrap_err().contains("increase"));
-        assert_eq!(legacy, fs::read(site.join("public/latest.json")).unwrap());
-    }
-    #[test]
     fn rejects_symlinks_in_bundle_content_and_destinations() {
         let root = tempfile::tempdir().unwrap();
         let digest = hash_bytes(b"receipt");
@@ -948,42 +676,5 @@ mod tests {
         fs::write(&outside, b"receipt").unwrap();
         std::os::unix::fs::symlink(&outside, &source).unwrap();
         assert!(copy_verified(&source, &output, ".json").is_err());
-    }
-
-    #[test]
-    fn manifest_names_reject_traversal_directories_and_symlinks() {
-        use std::os::unix::fs::symlink;
-
-        let root = tempfile::tempdir().unwrap();
-        let public = root.path().join("public");
-        fs::create_dir(&public).unwrap();
-        for name in [
-            "",
-            "latest",
-            ".json",
-            "../latest.json",
-            "sub/latest.json",
-            "/tmp/latest.json",
-            "./latest.json",
-            "latest.json/",
-            "bad\0.json",
-        ] {
-            assert!(publication_manifest(&public, name).is_err(), "{name:?}");
-        }
-        assert_eq!(
-            publication_manifest(&public, "latest-v2.json").unwrap(),
-            public.join("latest-v2.json")
-        );
-        fs::create_dir(public.join("directory.json")).unwrap();
-        assert!(publication_manifest(&public, "directory.json").is_err());
-        let outside = root.path().join("outside.json");
-        fs::write(&outside, b"legacy").unwrap();
-        symlink(&outside, public.join("latest-v2.json")).unwrap();
-        assert!(publication_manifest(&public, "latest-v2.json").is_err());
-        assert_eq!(fs::read(&outside).unwrap(), b"legacy");
-        symlink(root.path().join("missing"), public.join("dangling.json")).unwrap();
-        assert!(publication_manifest(&public, "dangling.json").is_err());
-        symlink(&public, root.path().join("linked-public")).unwrap();
-        assert!(publication_manifest(&root.path().join("linked-public"), "latest.json").is_err());
     }
 }

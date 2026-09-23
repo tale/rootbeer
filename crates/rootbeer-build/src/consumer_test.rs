@@ -3,14 +3,12 @@ use std::fs;
 
 #[allow(unused_imports)]
 use crate::test_catalog::VersionTestExt;
-use rootbeer_package::lockfile::{PackageLockEntry, RootbeerLock};
 use rootbeer_package::*;
-use rootbeer_store::hash_bytes;
 
 use crate::consumer::SourceResolver;
 
 #[test]
-fn source_fallback_builds_cached_inputs_and_published_artifacts_take_precedence() {
+fn builds_repository_recipes_and_local_recipes_that_depend_on_them() {
     let root = tempfile::tempdir().unwrap();
     let state = root.path().join("state");
     let source = root.path().join("source");
@@ -55,73 +53,46 @@ EOF
         build.strip_prefix = "fixture".into();
         build.configure.clear();
     }
-    let mut index = ArtifactIndex {
-        catalog_sha256: catalog.sha256(),
-        catalog,
-        artifacts: BTreeMap::new(),
-    };
-    index.validate_complete().unwrap();
-    let save = |index: &ArtifactIndex| {
-        let bytes = serde_json::to_vec(index).unwrap();
-        let path = root.path().join(format!("{}.json", hash_bytes(&bytes)));
-        fs::write(&path, &bytes).unwrap();
-        PackageIndexPin {
-            url: format!("file://{}", path.display()),
-            sha256: hash_bytes(&bytes),
-        }
+    let repository = |catalog: &PackageCatalog, name: &str| {
+        let mut inputs = PackageResolverInputs::default();
+        let pin = crate::test_repository::publish(catalog, &root.path().join(name));
+        inputs
+            .resolvers
+            .insert("rootbeer".into(), ResolverInput::Repository(pin));
+        inputs
     };
     let context = ResolveContext::current();
-    let pin = save(&index);
-    let resolver = SourceResolver::new(&pin, &state);
-    let request = PackageRequest::parse("xz@5.8.3");
+    let inputs = repository(&catalog, "site");
+    let pin = inputs.repository().cloned();
+    let resolver = SourceResolver::with_inputs(&inputs, &state);
+    let request = PackageRequest::parse("xz@source:5.8.3");
     let built = resolver.resolve(&request, &context).unwrap().unwrap();
     let ResolutionProof::SourceBuild(proof) = &built.proof else {
-        panic!("expected source fallback");
+        panic!("expected a source build from the repository recipe");
     };
     assert_eq!(proof.source_sha256, cached.sha256);
-    assert_eq!(proof.index.as_ref(), Some(&pin));
+    assert_eq!(proof.repository, pin);
     let repeated = resolver.resolve(&request, &context).unwrap().unwrap();
     let ResolutionProof::SourceBuild(repeated_proof) = repeated.proof else {
         panic!("expected source build");
     };
     assert_eq!(proof.build_key, repeated_proof.build_key);
     assert_eq!(built.package.output_sha256, repeated.package.output_sha256);
-    let mut published = built.package.clone();
-    published.source = LockedSource::Url {
-        url: "https://packages.invalid/prebuilt.tar.gz".into(),
-        sha256: "a".repeat(64),
-    };
-    index.artifacts.insert(
-        published.id(),
-        BTreeMap::from([(
-            context.system.clone(),
-            PublishedArtifact {
-                revision: 2,
-                receipt_sha256: "b".repeat(64),
-                package: published.clone(),
-            },
-        )]),
+
+    let local_sha256 = catalog.sha256();
+    let mut local_inputs = inputs.clone();
+    local_inputs.resolvers.insert(
+        "local".into(),
+        ResolverInput::LocalCatalog(Box::new(catalog.clone())),
     );
-    index.validate_complete().unwrap();
-    let local = index.catalog.clone();
-    let local_sha256 = local.sha256();
-    let mut inputs = PackageResolverInputs::default();
-    inputs
-        .resolvers
-        .insert("local".into(), ResolverInput::LocalCatalog(Box::new(local)));
-    inputs.resolvers.insert(
-        "rootbeer".into(),
-        ResolverInput::PublishedIndex(PackageIndexPin {
-            url: "https://unavailable.invalid/index.json".into(),
-            sha256: "a".repeat(64),
-        }),
-    );
-    let local_resolver = SourceResolver::with_inputs(&inputs, &state);
-    let local_resolution = local_resolver.resolve(&request, &context).unwrap().unwrap();
+    let local_resolution = SourceResolver::with_inputs(&local_inputs, &state)
+        .resolve(&PackageRequest::parse("xz@5.8.3"), &context)
+        .unwrap()
+        .unwrap();
     let ResolutionProof::SourceBuild(local_proof) = &local_resolution.proof else {
-        panic!("local source recipe must take precedence over published artifacts");
+        panic!("a local source recipe takes precedence over the repository");
     };
-    assert_eq!(local_proof.index, None);
+    assert_eq!(local_proof.repository, None);
     assert_eq!(
         local_proof.local_catalog_sha256.as_deref(),
         Some(local_sha256.as_str())
@@ -130,9 +101,8 @@ EOF
         local_resolution.package.output_sha256,
         built.package.output_sha256
     );
-    assert_eq!(local_resolution.package.provides, built.package.provides);
 
-    let mut local_tool = index.catalog.packages["xz"].clone();
+    let mut local_tool = catalog.packages["xz"].clone();
     local_tool.name = "local-tool".into();
     local_tool.aliases.clear();
     local_tool
@@ -140,54 +110,31 @@ EOF
         .get_mut("5.8.3")
         .unwrap()
         .all_mut()
-        .next()
-        .unwrap()
-        .build
-        .as_mut()
-        .unwrap()
-        .dependencies = vec![BuildDependency::from("xz@5.8.3")];
+        .for_each(|platform| {
+            platform.build.as_mut().unwrap().dependencies = vec![BuildDependency::from("xz@5.8.3")];
+        });
     let local = PackageCatalog {
         extra: Default::default(),
         packages: BTreeMap::from([("local-tool".into(), local_tool)]),
     };
     assert!(local.requires_index());
-    let dependency_pin = save(&index);
-    inputs
+    let mut dependent_inputs = inputs.clone();
+    dependent_inputs
         .resolvers
         .insert("local".into(), ResolverInput::LocalCatalog(Box::new(local)));
-    inputs.resolvers.insert(
-        "rootbeer".into(),
-        ResolverInput::PublishedIndex(dependency_pin.clone()),
-    );
-    let local_resolver = SourceResolver::with_inputs(&inputs, &state);
-    let local_resolution = local_resolver
+    let dependent = SourceResolver::with_inputs(&dependent_inputs, &state)
         .resolve(&PackageRequest::parse("local-tool"), &context)
         .unwrap()
         .unwrap();
-    let ResolutionProof::SourceBuild(local_proof) = local_resolution.proof else {
-        panic!("expected local source build with registry dependency");
+    let ResolutionProof::SourceBuild(dependent_proof) = dependent.proof else {
+        panic!("expected a local source build with a repository dependency");
     };
-    assert_eq!(local_proof.index, Some(dependency_pin));
-    assert!(local_proof.local_catalog_sha256.is_some());
-    assert_eq!(local_resolution.package.name, "local-tool");
+    assert_eq!(dependent_proof.repository, pin);
+    assert!(dependent_proof.local_catalog_sha256.is_some());
+    assert_eq!(dependent.package.name, "local-tool");
 
-    let resolver = SourceResolver::new(&save(&index), &state);
-    let normal = resolver.resolve(&request, &context).unwrap().unwrap();
-    assert!(matches!(normal.proof, ResolutionProof::PublishedIndex(_)));
-    assert_eq!(normal.package, published);
-    let forced = PackageRequest::parse("xz@source:5.8.3");
-    assert!(matches!(
-        resolver.resolve(&forced, &context).unwrap().unwrap().proof,
-        ResolutionProof::SourceBuild(_)
-    ));
-    let lock = RootbeerLock::from_package_entries([PackageLockEntry::resolved(
-        &request, &context, normal,
-    )
-    .unwrap()])
-    .unwrap();
-    assert!(lock.package_for_request(&forced, &context).is_err());
-    index
-        .catalog
+    let mut prebuilt = catalog.clone();
+    prebuilt
         .packages
         .get_mut("xz")
         .unwrap()
@@ -199,9 +146,9 @@ EOF
             platform.build = None;
             platform.source = Some("github:owner/xz@5.8.3".into());
             platform.asset = Some("xz-5.8.3.tar.gz".into());
+            platform.sha256 = Some("d".repeat(64));
         });
-    index.catalog_sha256 = index.catalog.sha256();
-    let resolver = SourceResolver::new(&save(&index), &state);
+    let resolver = SourceResolver::with_inputs(&repository(&prebuilt, "prebuilt"), &state);
     assert!(resolver
         .resolve(&PackageRequest::parse("xz@HEAD"), &context)
         .unwrap_err()

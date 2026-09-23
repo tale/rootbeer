@@ -21,9 +21,7 @@ pub enum ResolverInput {
     AquaRegistry(GitHubRepositoryPin),
     Catalog { sha256: String },
     LocalCatalog(Box<super::PackageCatalog>),
-    PublishedIndex(super::PackageIndexPin),
-    OfficialIndex(super::PackageIndexPin),
-    Discovery(super::discovery::DiscoveryPin),
+    Repository(super::RepositoryPin),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,25 +49,17 @@ impl PackageResolverInputs {
         Ok(Self { resolvers })
     }
 
-    pub fn discovery(&self) -> Option<&super::discovery::DiscoveryPin> {
-        match self.resolvers.get("rootbeer") {
-            Some(ResolverInput::Discovery(pin)) => Some(pin),
-            _ => None,
-        }
+    /// The repository a configuration chose in place of the official one, if any.
+    pub fn configured_repository(&self) -> Option<super::Repository> {
+        let locked = self.repository()?.repository();
+        let official = super::Repository::official().ok().flatten();
+        (Some(&locked) != official.as_ref()).then_some(locked)
     }
 
-    pub fn package_index(&self) -> Option<&super::PackageIndexPin> {
+    /// The exact repository root canonical requests resolve against.
+    pub fn repository(&self) -> Option<&super::RepositoryPin> {
         match self.resolvers.get("rootbeer") {
-            Some(ResolverInput::PublishedIndex(pin) | ResolverInput::OfficialIndex(pin)) => {
-                Some(pin)
-            }
-            _ => None,
-        }
-    }
-
-    pub fn explicit_package_index(&self) -> Option<&super::PackageIndexPin> {
-        match self.resolvers.get("rootbeer") {
-            Some(ResolverInput::PublishedIndex(pin)) => Some(pin),
+            Some(ResolverInput::Repository(pin)) => Some(pin),
             _ => None,
         }
     }
@@ -94,7 +84,8 @@ impl PackageResolverInputs {
                 .local_catalog()
                 .is_some_and(|catalog| catalog.find(&request.name).is_some())
         });
-        self.explicit_package_index() == other.explicit_package_index()
+        let repository = |inputs: &Self| inputs.repository().map(super::RepositoryPin::repository);
+        repository(self) == repository(other)
             && (!has_local || self.local_catalog() == other.local_catalog())
     }
 

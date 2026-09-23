@@ -5,7 +5,7 @@ use std::{fs, io};
 use crate::executor::{self, ApplyOptions, ExecutionHandler, ExecutionReport};
 use crate::package::lockfile::{LockError, RootbeerLock};
 use crate::package::{
-    PackageCatalog, PackageIndexPin, PackageIntent, PackageLockBuilder, PackageResolverInputs,
+    PackageCatalog, PackageIntent, PackageLockBuilder, PackageResolverInputs, Repository,
     ResolverInput,
 };
 use crate::plan::Op;
@@ -142,10 +142,10 @@ impl Pipeline {
             return Err(e.into());
         }
 
-        let package_index = vm
+        let package_repository = vm
             .lua
-            .app_data_ref::<PackageIndexPin>()
-            .map(|pin| pin.clone());
+            .app_data_ref::<Repository>()
+            .map(|repository| repository.clone());
         let local_catalog = vm
             .lua
             .app_data_ref::<PackageCatalog>()
@@ -156,7 +156,7 @@ impl Pipeline {
             tools,
             package_resolver: self.package_resolver,
             opts: self.opts,
-            package_index,
+            package_repository,
             local_catalog,
             ops,
         })
@@ -167,7 +167,8 @@ impl Pipeline {
 pub struct PlannedPipeline {
     tools: std::sync::Arc<crate::tools::ToolRuntime>,
     package_resolver: fn(&PackageResolverInputs) -> crate::package::ResolverStack,
-    package_index: Option<PackageIndexPin>,
+    /// Set by `rb.package_repository`; otherwise the official repository is used.
+    package_repository: Option<Repository>,
     local_catalog: Option<PackageCatalog>,
     opts: Options,
     ops: Vec<Op>,
@@ -260,26 +261,28 @@ impl PlannedPipeline {
                 ResolverInput::LocalCatalog(Box::new(catalog.clone())),
             );
         }
-        if let Some(pin) = &self.package_index {
-            inputs.resolvers.insert(
-                "rootbeer".into(),
-                ResolverInput::PublishedIndex(pin.clone()),
-            );
-        } else if self.has_canonical_requests()
-            && (should_refresh
-                || (inputs.package_index().is_none() && inputs.discovery().is_none()))
-        {
-            let selection = if self.opts.package_lock.is_offline {
-                crate::package::official::select_default_offline()
-            } else {
-                crate::package::official::select_default(should_refresh)
+        if self.has_canonical_requests() {
+            let repository =
+                Repository::chosen(self.package_repository.as_ref()).map_err(io::Error::other)?;
+            let is_locked = inputs
+                .repository()
+                .is_some_and(|pin| pin.repository() == repository);
+            if should_refresh || !is_locked {
+                let state = crate::state_dir();
+                let selection = if self.opts.package_lock.is_offline {
+                    repository.select_offline(&state)
+                } else {
+                    repository.select(&state, should_refresh)
+                }
+                .map_err(io::Error::other)?;
+                if let Some(message) = &selection.notice {
+                    notice(message);
+                }
+                inputs
+                    .resolvers
+                    .insert("rootbeer".into(), ResolverInput::Repository(selection.pin));
             }
-            .map_err(io::Error::other)?;
-            if let Some(message) = &selection.notice {
-                notice(message);
-            }
-            inputs.resolvers.insert("rootbeer".into(), selection.input);
-        } else if !self.has_canonical_requests() {
+        } else {
             inputs.resolvers.remove("rootbeer");
         }
         let needs_aqua = self.ops.iter().any(|op| {
@@ -353,7 +356,7 @@ impl PlannedPipeline {
     }
 
     fn lock_matches_plan(&self, lock: &RootbeerLock) -> Result<bool, Error> {
-        if lock.inputs.explicit_package_index() != self.package_index.as_ref()
+        if lock.inputs.configured_repository() != self.package_repository
             || lock.inputs.local_catalog() != self.local_catalog.as_ref()
         {
             return Ok(false);
@@ -449,7 +452,7 @@ mod tests {
         let planned = PlannedPipeline {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
-            package_index: None,
+            package_repository: None,
             local_catalog: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
@@ -474,7 +477,7 @@ mod tests {
         let planned = PlannedPipeline {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
-            package_index: None,
+            package_repository: None,
             local_catalog: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
@@ -504,7 +507,7 @@ mod tests {
         let planned = PlannedPipeline {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
-            package_index: None,
+            package_repository: None,
             local_catalog: None,
             opts: opts(tmp.path().to_path_buf(), Mode::Apply),
             ops: vec![Op::Package {
@@ -528,7 +531,7 @@ mod tests {
         let planned = PlannedPipeline {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
-            package_index: None,
+            package_repository: None,
             local_catalog: None,
             opts,
             ops: vec![Op::Package {
@@ -562,7 +565,7 @@ mod tests {
         let planned = PlannedPipeline {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
-            package_index: None,
+            package_repository: None,
             local_catalog: None,
             opts,
             ops: vec![Op::Package {
@@ -646,17 +649,33 @@ mod tests {
         assert!(mixed.has_canonical_requests());
     }
 
-    #[test]
-    fn index_planning_is_offline_and_pin_changes_invalidate_locks() {
-        let root = tempfile::tempdir().unwrap();
-        let source = format!("local rb = require('rootbeer')\nrb.package_index({{url='https://unavailable.invalid/index.json', sha256='{}'}})\nrb.package('new-tool')", "a".repeat(64));
-        let planned = plan_index_script(root.path(), &source);
-        assert!(planned.has_canonical_requests());
+    fn repository_script(public_key: &str) -> String {
+        format!(
+            "local rb = require('rootbeer')\nrb.package_repository({{url='https://unavailable.invalid/current.json', public_key='{public_key}'}})\nrb.package('new-tool')"
+        )
+    }
+
+    fn locked_repository(planned: &PlannedPipeline) -> PackageResolverInputs {
+        let repository = planned.package_repository.clone().unwrap();
         let mut inputs = PackageResolverInputs::default();
         inputs.resolvers.insert(
             "rootbeer".into(),
-            ResolverInput::PublishedIndex(planned.package_index.clone().unwrap()),
+            ResolverInput::Repository(crate::package::RepositoryPin {
+                url: repository.url,
+                public_key: repository.public_key,
+                root: "c".repeat(64),
+            }),
         );
+        inputs
+    }
+
+    #[test]
+    fn repository_planning_is_offline_and_a_new_repository_invalidates_locks() {
+        let root = tempfile::tempdir().unwrap();
+        let source = repository_script(&"a".repeat(64));
+        let planned = plan_index_script(root.path(), &source);
+        assert!(planned.has_canonical_requests());
+        let inputs = locked_repository(&planned);
         let builder = PackageLockBuilder::current_system_with_inputs(inputs.clone());
         let fingerprint = builder
             .fingerprint_input(&builder.lock_input_from_ops(&planned.ops))
@@ -667,10 +686,7 @@ mod tests {
         lock.inputs = inputs;
         assert!(planned.lock_matches_plan(&lock).unwrap());
         lock.write(root.path().join("rootbeer.lock")).unwrap();
-        let changed = plan_index_script(
-            root.path(),
-            &source.replace(&"a".repeat(64), &"b".repeat(64)),
-        );
+        let changed = plan_index_script(root.path(), &repository_script(&"b".repeat(64)));
         assert!(!changed.lock_matches_plan(&lock).unwrap());
         assert!(matches!(
             changed.locked_ops_for_apply(&mut |_| {}).unwrap_err(),
@@ -681,66 +697,63 @@ mod tests {
             "local rb = require('rootbeer'); rb.package('new-tool')",
         );
         assert!(!removed.lock_matches_plan(&lock).unwrap());
-        assert!(removed.has_canonical_requests());
         let mixed = plan_index_script(root.path(), &(source + "\nrb.package('aqua:owner/repo@1')"));
         assert!(mixed.has_canonical_requests());
     }
 
     #[test]
-    fn index_declarations_require_valid_pins_and_precede_packages() {
+    fn repository_declarations_require_a_key_and_precede_packages() {
         let root = tempfile::tempdir().unwrap();
-        let pin = format!(
-            "rb.package_index({{url='https://example.org/index.json', sha256='{}'}})",
+        let declaration = format!(
+            "rb.package_repository({{url='https://example.org/current.json', public_key='{}'}})",
             "a".repeat(64)
         );
         for source in [
-            format!("{pin}; {pin}"),
-            format!("rb.package('age'); {pin}"),
-            pin.replace(&"a".repeat(64), "invalid"),
-            pin.replace("https://", "http://"),
+            format!("{declaration}; {declaration}"),
+            format!("rb.package('age'); {declaration}"),
+            declaration.replace(&"a".repeat(64), "invalid"),
+            declaration.replace("https://", "http://"),
+            declaration.replace("current.json", "packages"),
+            "rb.package_repository({url='https://example.org/current.json'})".into(),
         ] {
             let script = root.path().join("init.lua");
             fs::write(&script, format!("local rb = require('rootbeer'); {source}")).unwrap();
-            assert!(Pipeline::new(Options::from_script(&script).unwrap())
-                .plan()
-                .is_err());
+            assert!(
+                Pipeline::new(Options::from_script(&script).unwrap())
+                    .plan()
+                    .is_err(),
+                "{source}"
+            );
         }
     }
+
     #[test]
-    fn official_locks_replay_without_an_override_or_catalog_fetch() {
+    fn a_matching_lock_replays_without_fetching_its_repository() {
         use crate::package::lockfile::PackageLockEntry;
         use crate::package::{
-            PackageRequest, PackageResolution, PublishedIndexProof, ResolutionProof, ResolveContext,
+            PackageRecordProof, PackageRequest, PackageResolution, ResolutionProof, ResolveContext,
         };
         let root = tempfile::tempdir().unwrap();
         let mut planned = plan_index_script(
             root.path(),
-            "local rb = require('rootbeer'); rb.package('demo')",
+            &repository_script(&"a".repeat(64)).replace("new-tool", "demo"),
         );
-        let pin = PackageIndexPin {
-            url: "https://unavailable.invalid/index.json".into(),
-            sha256: "a".repeat(64),
-        };
         let context = ResolveContext::current();
         let entry = PackageLockEntry::resolved(
             &PackageRequest::parse("demo"),
             &context,
             PackageResolution::new(
                 package(),
-                ResolutionProof::PublishedIndex(PublishedIndexProof {
-                    index: pin.clone(),
-                    catalog_sha256: "b".repeat(64),
-                    revision: 1,
+                ResolutionProof::PackageRecord(PackageRecordProof {
+                    record: "b".repeat(64),
+                    public_key: "a".repeat(64),
                     system: context.system.clone(),
-                    receipt_sha256: "c".repeat(64),
                 }),
             ),
         )
         .unwrap();
         let mut lock = RootbeerLock::from_package_entries([entry]).unwrap();
-        lock.inputs
-            .resolvers
-            .insert("rootbeer".into(), ResolverInput::OfficialIndex(pin));
+        lock.inputs = locked_repository(&planned);
         let builder = PackageLockBuilder::current_system_with_inputs(lock.inputs.clone());
         lock.input_fingerprint = Some(
             builder
@@ -761,7 +774,9 @@ mod tests {
         ] {
             planned.opts.package_lock = mode;
             let ops = planned
-                .locked_ops_for_apply(&mut |_| panic!("matching lock attempted catalog selection"))
+                .locked_ops_for_apply(&mut |_| {
+                    panic!("matching lock attempted repository selection")
+                })
                 .unwrap();
             assert!(matches!(ops.as_slice(), [Op::RealizePackage { .. }]));
         }
@@ -785,7 +800,7 @@ mod tests {
         let mut planned = PlannedPipeline {
             tools: Default::default(),
             package_resolver: crate::package::resolver_stack_for_inputs,
-            package_index: None,
+            package_repository: None,
             local_catalog: None,
             opts: options,
             ops: vec![],
@@ -825,7 +840,7 @@ mod tests {
             let planned = PlannedPipeline {
                 tools: Default::default(),
                 package_resolver: crate::package::resolver_stack_for_inputs,
-                package_index: None,
+                package_repository: None,
                 local_catalog: None,
                 opts: options,
                 ops: vec![],

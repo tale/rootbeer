@@ -1,122 +1,48 @@
 //! Side channel that resolves Rootbeer itself, and nothing else.
 //!
 //! `rb self-update` is how a client recovers, so it cannot depend on this build understanding
-//! every recipe the catalog happens to carry: one unknown field in an unrelated package would
-//! otherwise leave an older client with no upgrade path at all.
+//! every package the root happens to list: one package using something newer would otherwise
+//! leave an older client with no upgrade path at all.
 //!
-//! This channel narrows only what is decoded. It does not relax trust. The publisher signature
-//! is still verified over the entire signed document, the package record is still verified and
-//! still bound to the recipe the catalog publishes, and the channel can resolve no package
-//! other than [`PACKAGE`].
+//! This channel narrows only what is decoded. It does not relax trust. The root signature is
+//! still verified over the entire document, the package document is still checked against its
+//! digest, the record is still verified and bound to the recipe that document publishes, and
+//! the channel can resolve no package other than [`PACKAGE`].
 
 use std::path::PathBuf;
 
-use crate::discovery::{verify_signed, DiscoveryPin};
-use crate::distribution::{verify_record, PackageRecord};
-use crate::download::DownloadCache;
+use crate::pdr::RootPackage;
 use crate::{
-    CatalogRecipe, PackageIndexPin, PackageRequest, PackageResolution, PackageResolver,
-    ResolutionProof, ResolveContext,
+    PackageRecordProof, PackageRequest, PackageResolution, PackageResolver, RepositoryPin,
+    RepositoryResolver, ResolutionProof, ResolveContext,
 };
 
 /// The only package this channel will ever resolve.
 pub const PACKAGE: &str = "rootbeer";
 
-/// One signed discovery entry for [`PACKAGE`], read without decoding the rest of the catalog.
-#[derive(Debug, Clone)]
-pub struct Entry {
-    pub id: String,
-    pub recipe: CatalogRecipe,
-    pub pin: PackageIndexPin,
+/// [`PACKAGE`]'s entry in a verified root, decoded without touching any other package.
+pub fn entry(root: &serde_json::Value) -> Result<RootPackage, String> {
+    let entry = root["packages"]
+        .get(PACKAGE)
+        .ok_or_else(|| format!("unknown package {PACKAGE}"))?;
+    let package: RootPackage = serde_json::from_value(entry.clone())
+        .map_err(|error| format!("{PACKAGE} is not readable by this build: {error}"))?;
+    package.validate()?;
+    Ok(package)
 }
 
-impl Entry {
-    pub fn read(
-        bytes: &[u8],
-        public_key: &str,
-        version: Option<&str>,
-        system: &str,
-    ) -> Result<Self, String> {
-        let value = crate::discovery::parse_manifest(bytes)?;
-        verify_signed(bytes, public_key)?;
-        let package = &value["catalog"]["packages"][PACKAGE];
-        if package["name"].as_str() != Some(PACKAGE) {
-            return Err(format!("unknown package {PACKAGE}"));
-        }
-
-        let version = match version {
-            Some(version) => version.to_string(),
-            None => package["default_versions"][system]
-                .as_str()
-                .or_else(|| package["default_version"].as_str())
-                .ok_or_else(|| format!("{PACKAGE} has no default version"))?
-                .to_string(),
-        };
-        let id = format!("{PACKAGE}@{version}");
-        let entry: crate::CatalogVersion =
-            serde_json::from_value(package["versions"][&version].clone())
-                .map_err(|error| format!("{id} is not readable by this build: {error}"))?;
-        entry.validate()?;
-        let Some(recipe) = entry.for_system(system).cloned() else {
-            return Err(format!("{id}: unapproved discovery platform {system}"));
-        };
-
-        let pin: PackageIndexPin = serde_json::from_value(value["records"][&id][system].clone())
-            .map_err(|_| format!("{id} has no published package for {system}"))?;
-        crate::index::validate_https(&pin.url)?;
-        pin.validate()?;
-        Ok(Self { id, recipe, pin })
-    }
-}
-
-/// Resolves [`PACKAGE`] from signed discovery, and refuses every other request.
+/// Resolves [`PACKAGE`] from a pinned root, and refuses every other request.
 pub struct Resolver {
-    pin: DiscoveryPin,
-    downloads: DownloadCache,
+    repository: RepositoryResolver,
+    public_key: String,
 }
 
 impl Resolver {
-    pub fn new(pin: &DiscoveryPin, cache: impl Into<PathBuf>) -> Self {
+    pub fn new(pin: &RepositoryPin, cache: impl Into<PathBuf>) -> Self {
         Self {
-            pin: pin.clone(),
-            downloads: DownloadCache::new(cache),
+            repository: RepositoryResolver::with_cache(pin, cache, false),
+            public_key: pin.public_key.clone(),
         }
-    }
-
-    fn read(&self, pin: &PackageIndexPin, limit: usize) -> Result<Vec<u8>, String> {
-        let path = self
-            .downloads
-            .materialize_verified(&pin.url, &pin.sha256)
-            .map_err(|error| error.to_string())?;
-        if std::fs::metadata(&path)
-            .map_err(|error| error.to_string())?
-            .len()
-            > limit as u64
-        {
-            return Err("package metadata exceeds size limit".into());
-        }
-        std::fs::read(path).map_err(|error| error.to_string())
-    }
-
-    pub fn record(
-        &self,
-        request: &PackageRequest,
-        context: &ResolveContext,
-    ) -> Result<(PackageRecord, PackageIndexPin), String> {
-        self.pin.manifest.validate()?;
-        let manifest = self.read(&self.pin.manifest, crate::discovery::MANIFEST_LIMIT)?;
-        let entry = Entry::read(
-            &manifest,
-            &self.pin.public_key,
-            request.version.as_deref(),
-            &context.system,
-        )?;
-        let bytes = self.read(&entry.pin, crate::distribution::RECORD_LIMIT)?;
-        let record = verify_record(&bytes, &self.pin.public_key, &entry.id, &context.system)?;
-        if entry.recipe != record.recipe {
-            return Err("package record differs from the discovered recipe".into());
-        }
-        Ok((record, entry.pin))
     }
 }
 
@@ -136,12 +62,15 @@ impl PackageResolver for Resolver {
         if request.source.is_some() || request.asset.is_some() || !request.bins.is_empty() {
             return Err("self-update does not accept source, asset, or command overrides".into());
         }
-        let (record, pin) = self.record(request, context)?;
+        let package = entry(&self.repository.verified_root()?)?;
+        let (record, digest) =
+            self.repository
+                .record_of(PACKAGE, &package, request.version.as_deref(), context)?;
         Ok(Some(PackageResolution::new(
             record.artifact.package,
-            ResolutionProof::PackageRecord(crate::discovery::PackageRecordProof {
-                record: pin.sha256,
-                public_key: self.pin.public_key.clone(),
+            ResolutionProof::PackageRecord(PackageRecordProof {
+                record: digest,
+                public_key: self.public_key.clone(),
                 system: context.system.clone(),
             }),
         )))
@@ -151,85 +80,48 @@ impl PackageResolver for Resolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ring::signature::{Ed25519KeyPair, KeyPair};
     use serde_json::json;
 
-    fn signed_manifest(key: &Ed25519KeyPair, system: &str) -> Vec<u8> {
-        let mut catalog = serde_json::to_value(crate::test_catalog::catalog()).unwrap();
-        let mut entry = catalog["packages"]["age"].clone();
-        entry["name"] = json!(PACKAGE);
-        catalog["packages"][PACKAGE] = entry;
-        catalog["packages"]["fd"]["versions"]["10.5.0"]["platforms"][&system]["install"] =
-            json!("Pkg");
-
-        let records = json!({
-            format!("{PACKAGE}@1.3.1"): {
-                system: { "url": "https://example.com/records/r.json", "sha256": "a".repeat(64) },
+    fn root() -> serde_json::Value {
+        let package = json!({
+            "description": "Declarative system configuration",
+            "homepage": "https://example.com",
+            "license": "MIT",
+            "added": 1,
+            "updated": 2,
+            "platforms": {
+                "aarch64-macos": { "version": "1.0.0", "kind": "command", "commands": ["rb"] },
             },
+            "document": "a".repeat(64),
         });
-        let mut value = json!({
-            "schema": 2,
-            "sequence": 9,
-            "catalog": catalog,
-            "records": records,
+        let mut unreadable = package.clone();
+        unreadable["platforms"]["aarch64-macos"]["kind"] = json!("font");
+        json!({
+            "schema": 3,
+            "sequence": 1,
+            "packages": { PACKAGE: package, "newer": unreadable },
             "signature": "",
-        });
-        value["signature"] = json!(key
-            .sign(
-                &crate::discovery::signing_message(9, &value["catalog"], &value["records"])
-                    .unwrap()
-            )
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>());
-        serde_json::to_vec(&value).unwrap()
+        })
     }
 
     #[test]
-    fn reads_rootbeer_from_a_manifest_this_build_cannot_fully_decode() {
-        let key = Ed25519KeyPair::from_seed_unchecked(&[11; 32]).unwrap();
-        let public_key: String = key
-            .public_key()
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        let system = ResolveContext::current().system;
-        let bytes = signed_manifest(&key, &system);
-
-        assert!(
-            crate::discovery::DiscoveryManifest::from_bytes(&bytes, &public_key)
-                .unwrap_err()
-                .contains("unknown variant `Pkg`")
+    fn reads_rootbeer_from_a_root_this_build_cannot_fully_decode() {
+        let root = root();
+        assert!(serde_json::from_value::<crate::pdr::Root>(root.clone())
+            .unwrap_err()
+            .to_string()
+            .contains("font"));
+        assert_eq!(
+            entry(&root).unwrap().platforms["aarch64-macos"].version,
+            "1.0.0"
         );
-
-        let entry = Entry::read(&bytes, &public_key, None, &system).unwrap();
-        assert_eq!(entry.id, format!("{PACKAGE}@1.3.1"));
-        assert_eq!(entry.pin.url, "https://example.com/records/r.json");
     }
 
     #[test]
-    fn rejects_a_tampered_record_pin() {
-        let key = Ed25519KeyPair::from_seed_unchecked(&[11; 32]).unwrap();
-        let public_key: String = key
-            .public_key()
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        let system = ResolveContext::current().system;
-        let mut value: serde_json::Value =
-            serde_json::from_slice(&signed_manifest(&key, &system)).unwrap();
-        value["records"][format!("{PACKAGE}@1.3.1")][&system]["sha256"] = json!("b".repeat(64));
-
-        assert!(Entry::read(
-            &serde_json::to_vec(&value).unwrap(),
-            &public_key,
-            None,
-            &system
-        )
-        .unwrap_err()
-        .contains("signature verification failed"));
+    fn an_unreadable_rootbeer_entry_is_named() {
+        let mut root = root();
+        root["packages"][PACKAGE]["platforms"]["aarch64-macos"]["kind"] = json!("font");
+        let error = entry(&root).unwrap_err();
+        assert!(error.contains("not readable by this build"), "{error}");
     }
 }

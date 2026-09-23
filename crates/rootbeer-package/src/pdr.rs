@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog::valid_name;
 use crate::index::is_sha256;
-use crate::official::decode_hex;
 use crate::CatalogRecipe;
+use rootbeer_catalog::decode_hex;
 
 /// The root schema this build reads. A root above it needs a newer rb.
 pub const ROOT_SCHEMA: u32 = 3;
@@ -96,39 +96,46 @@ pub fn signing_message(sequence: u64, packages: &impl Serialize) -> Result<Vec<u
         .map_err(|error| error.to_string())
 }
 
+/// Verifies a root's signature over the document as published, without decoding its packages.
+///
+/// Verification runs on the raw JSON so fields a newer publisher added stay covered by the
+/// signature even though this build ignores them, and so a caller can decode only the entry it
+/// needs when another package uses something this build cannot read.
+pub fn verify_root(bytes: &[u8], public_key: &str) -> Result<serde_json::Value, String> {
+    if bytes.len() > ROOT_LIMIT {
+        return Err("PDR root exceeds 4 MiB".into());
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    let schema = value["schema"].as_u64().ok_or("PDR root has no schema")?;
+    if schema > u64::from(ROOT_SCHEMA) {
+        return Err(format!(
+            "this package repository needs a newer rb (schema {schema}); run rb self-update"
+        ));
+    }
+    if schema != u64::from(ROOT_SCHEMA) {
+        return Err(format!("unsupported PDR root schema {schema}"));
+    }
+    let sequence = value["sequence"]
+        .as_u64()
+        .ok_or("PDR root has no sequence")?;
+    let signature = value["signature"]
+        .as_str()
+        .ok_or("PDR root has no signature")?;
+    UnparsedPublicKey::new(&ED25519, decode_hex::<32>(public_key)?)
+        .verify(
+            &signing_message(sequence, &value["packages"])?,
+            &decode_hex::<64>(signature)?,
+        )
+        .map_err(|_| "PDR root signature verification failed".to_string())?;
+    Ok(value)
+}
+
 impl Root {
     /// Verifies the signature over the document as published, then decodes it.
-    ///
-    /// Verification runs on the raw JSON so fields a newer publisher added stay covered by
-    /// the signature even though this build ignores them when decoding.
     pub fn from_bytes(bytes: &[u8], public_key: &str) -> Result<Self, String> {
-        if bytes.len() > ROOT_LIMIT {
-            return Err("PDR root exceeds 4 MiB".into());
-        }
-        let value: serde_json::Value =
-            serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-        let schema = value["schema"].as_u64().ok_or("PDR root has no schema")?;
-        if schema > u64::from(ROOT_SCHEMA) {
-            return Err(format!(
-                "this PDR uses schema {schema}; update rb to read it"
-            ));
-        }
-        if schema != u64::from(ROOT_SCHEMA) {
-            return Err(format!("unsupported PDR root schema {schema}"));
-        }
-        let sequence = value["sequence"]
-            .as_u64()
-            .ok_or("PDR root has no sequence")?;
-        let signature = value["signature"]
-            .as_str()
-            .ok_or("PDR root has no signature")?;
-        UnparsedPublicKey::new(&ED25519, decode_hex::<32>(public_key)?)
-            .verify(
-                &signing_message(sequence, &value["packages"])?,
-                &decode_hex::<64>(signature)?,
-            )
-            .map_err(|_| "PDR root signature verification failed".to_string())?;
-        let root: Self = serde_json::from_value(value).map_err(|error| error.to_string())?;
+        let root: Self = serde_json::from_value(verify_root(bytes, public_key)?)
+            .map_err(|error| error.to_string())?;
         root.validate()?;
         Ok(root)
     }
@@ -171,7 +178,7 @@ impl Root {
 }
 
 impl RootPackage {
-    fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         if self.description.trim().is_empty()
             || !self.homepage.starts_with("https://")
             || self.license.trim().is_empty()
@@ -386,7 +393,7 @@ mod tests {
         value["schema"] = 4.into();
         let (bytes, key) = sign(value);
         let error = Root::from_bytes(&bytes, &key).unwrap_err();
-        assert!(error.contains("update rb"), "{error}");
+        assert!(error.contains("rb self-update"), "{error}");
     }
 
     #[test]
