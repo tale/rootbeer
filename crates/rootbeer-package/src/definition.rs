@@ -431,6 +431,44 @@ mod tests {
     }
 
     #[test]
+    fn templates_name_the_parts_of_a_release_version() {
+        let source = r#"return {
+            name = "tool", description = "A tool", homepage = "https://example.com",
+            default_license = "MIT",
+            source = { url = "https://example.com/{version}.tar.gz", archive = "tar.gz", strip_prefix = "tool-{version}" },
+            build = { backend = "go", go = {
+                binaries = { tool = "./cmd" },
+                variables = { major = "{major}", minor = "{minor}", patch = "{patch}" },
+            } },
+            outputs = { bins = { "tool" }, checks = { { "tool", "--minor={minor}" } } },
+            platforms = { ["x86_64-linux"] = { default_version = "VERSION" } },
+            versions = { ["VERSION"] = { digests = { ["x86_64-linux"] = "DIGEST" } } },
+        }"#
+        .replace("DIGEST", &"a".repeat(64));
+        let definition =
+            PackageDefinition::from_lua(&source.replace("VERSION", "1.37.1-rc.1+build")).unwrap();
+        let recipe = definition.package.versions["1.37.1-rc.1+build"]
+            .for_system("x86_64-linux")
+            .unwrap();
+        let variables = &recipe
+            .build
+            .as_ref()
+            .unwrap()
+            .go
+            .as_ref()
+            .unwrap()
+            .variables;
+        assert_eq!(variables.values().collect::<Vec<_>>(), ["1", "37", "1"]);
+        assert_eq!(recipe.checks, [["tool", "--minor=37"]]);
+
+        let error = PackageDefinition::from_lua(&source.replace("VERSION", "5.0")).unwrap_err();
+        assert!(
+            error.contains("`{patch}` needs a version with 3 parts"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn a_build_cannot_restate_its_source() {
         for field in [
             r#"url = "https://example.com/x.tar.gz""#,

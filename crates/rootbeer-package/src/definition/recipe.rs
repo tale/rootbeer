@@ -163,36 +163,62 @@ fn is_one(value: &u32) -> bool {
     *value == 1
 }
 
-fn substitute(
-    pattern: &str,
-    version: &str,
-    tag: &str,
-    target: Option<&str>,
-) -> Result<String, String> {
-    let mut value = pattern.replace("{version}", version).replace("{tag}", tag);
-    if let Some(target) = target {
-        value = value.replace("{target}", target);
-    }
-    if value.contains(['{', '}']) {
-        return Err(format!("unsupported placeholder in `{pattern}`"));
-    }
-    Ok(value)
+/// What a recipe's templates may name for one version on one platform.
+#[derive(Clone, Copy)]
+struct Placeholders<'a> {
+    version: &'a str,
+    tag: &'a str,
+    target: Option<&'a str>,
 }
 
-/// Fills a command's version placeholders and keeps every other brace: the build fills
-/// `{prefix}` and `{jobs}` itself, and checks carry shell or Python of their own.
-fn fill_command(command: &[String], version: &str, tag: &str) -> Vec<String> {
-    command
-        .iter()
-        .map(|argument| argument.replace("{version}", version).replace("{tag}", tag))
-        .collect()
-}
+impl Placeholders<'_> {
+    /// Fills every placeholder this version knows and leaves any other brace as written.
+    fn fill(&self, text: &str) -> Result<String, String> {
+        let mut value = text
+            .replace("{version}", self.version)
+            .replace("{tag}", self.tag);
+        if let Some(target) = self.target {
+            value = value.replace("{target}", target);
+        }
+        let release = self.version.split(['-', '+']).next().unwrap_or_default();
+        let parts: Vec<&str> = release.split('.').collect();
+        for (index, name) in ["{major}", "{minor}", "{patch}"].into_iter().enumerate() {
+            if !value.contains(name) {
+                continue;
+            }
+            let part = parts.get(index).ok_or_else(|| {
+                format!(
+                    "`{name}` needs a version with {} parts, not `{}`",
+                    index + 1,
+                    self.version
+                )
+            })?;
+            value = value.replace(name, part);
+        }
+        Ok(value)
+    }
 
-fn fill_commands(commands: &[Vec<String>], version: &str, tag: &str) -> Vec<Vec<String>> {
-    commands
-        .iter()
-        .map(|command| fill_command(command, version, tag))
-        .collect()
+    /// Fills a URL, asset, or path, where no brace may remain.
+    fn substitute(&self, pattern: &str) -> Result<String, String> {
+        let value = self.fill(pattern)?;
+        if value.contains(['{', '}']) {
+            return Err(format!("unsupported placeholder in `{pattern}`"));
+        }
+        Ok(value)
+    }
+
+    /// Fills a command and keeps every other brace: the build fills `{prefix}` and `{jobs}`
+    /// itself, and checks carry shell or Python of their own.
+    fn command(&self, command: &[String]) -> Result<Vec<String>, String> {
+        command.iter().map(|argument| self.fill(argument)).collect()
+    }
+
+    fn commands(&self, commands: &[Vec<String>]) -> Result<Vec<Vec<String>>, String> {
+        commands
+            .iter()
+            .map(|command| self.command(command))
+            .collect()
+    }
 }
 
 impl Spec {
@@ -387,7 +413,11 @@ impl Recipe {
             .platform_upstream(platform)
             .map(|upstream| upstream.tag_for(version))
             .unwrap_or_else(|| version.to_string());
-        let target = platform.target.as_deref();
+        let values = Placeholders {
+            version,
+            tag: &tag,
+            target: platform.target.as_deref(),
+        };
         let outputs = spec.outputs.clone().unwrap_or_default();
 
         let mut recipe = crate::CatalogRecipe {
@@ -398,7 +428,7 @@ impl Recipe {
             sha256: None,
             bins: outputs.bins.clone().unwrap_or_default(),
             apps: outputs.apps.clone().unwrap_or_default(),
-            checks: fill_commands(outputs.checks.as_deref().unwrap_or_default(), version, &tag),
+            checks: values.commands(outputs.checks.as_deref().unwrap_or_default())?,
             mirror: false,
             extra: Default::default(),
         };
@@ -413,7 +443,7 @@ impl Recipe {
                 Provider::Github(repository) => {
                     crate::github::repository(repository)?;
                     let tag = match &prebuilt.tag {
-                        Some(pattern) => substitute(pattern, version, &tag, target)?,
+                        Some(pattern) => values.substitute(pattern)?,
                         None => tag.clone(),
                     };
                     recipe.source = Some(format!("github:{repository}@{tag}"));
@@ -421,10 +451,14 @@ impl Recipe {
                         .asset
                         .as_deref()
                         .ok_or("a github prebuilt needs a release asset")?;
-                    recipe.asset = Some(substitute(asset, version, &tag, target)?);
+                    let values = Placeholders {
+                        tag: &tag,
+                        ..values
+                    };
+                    recipe.asset = Some(values.substitute(asset)?);
                 }
                 Provider::Url(url) => {
-                    recipe.source = Some(substitute(url, version, &tag, target)?);
+                    recipe.source = Some(values.substitute(url)?);
                 }
             }
         } else if let Some(source) = &spec.source {
@@ -435,7 +469,7 @@ impl Recipe {
             let mut go = build.go.clone();
             if let Some(go) = go.as_mut() {
                 for value in go.variables.values_mut() {
-                    *value = substitute(value, version, &tag, target)?;
+                    *value = values.substitute(value)?;
                 }
             }
             let archive = match source.archive.as_deref() {
@@ -452,7 +486,7 @@ impl Recipe {
             let strip_prefix = source
                 .strip_prefix
                 .as_deref()
-                .map(|prefix| substitute(prefix, version, &tag, target))
+                .map(|prefix| values.substitute(prefix))
                 .transpose()?
                 .map(PathBuf::from)
                 .unwrap_or_default();
@@ -461,21 +495,27 @@ impl Recipe {
                 backend: build.backend.clone(),
                 rust: build.rust.clone(),
                 go,
-                url: substitute(url, version, &tag, target)?,
+                url: values.substitute(url)?,
                 sha256: digest.to_string(),
                 archive,
                 strip_prefix,
-                configure: fill_command(&build.configure, version, &tag),
-                args: fill_command(&build.args, version, &tag),
+                configure: values.command(&build.configure)?,
+                args: values.command(&build.args)?,
                 patches: source.patches.clone(),
                 dependencies: build.dependencies.clone(),
                 libraries: build.libraries.clone(),
-                steps: build.steps.as_ref().map(|steps| crate::BuildSteps {
-                    configure: fill_commands(&steps.configure, version, &tag),
-                    build: fill_commands(&steps.build, version, &tag),
-                    check: fill_commands(&steps.check, version, &tag),
-                    install: fill_commands(&steps.install, version, &tag),
-                }),
+                steps: build
+                    .steps
+                    .as_ref()
+                    .map(|steps| {
+                        Ok::<_, String>(crate::BuildSteps {
+                            configure: values.commands(&steps.configure)?,
+                            build: values.commands(&steps.build)?,
+                            check: values.commands(&steps.check)?,
+                            install: values.commands(&steps.install)?,
+                        })
+                    })
+                    .transpose()?,
             });
         } else {
             return Err("a platform needs a prebuilt or a source".into());
