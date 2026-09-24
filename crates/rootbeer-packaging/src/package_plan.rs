@@ -4,7 +4,9 @@ use rootbeer_package::distribution::{input_key, DependencyInputs};
 use rootbeer_package::graph::{find_recipe, find_recipe_for_system, DependencyGraph};
 use rootbeer_package::{PackageCatalog, ResolveContext};
 
-use crate::BuildOptions;
+use rootbeer_package::repository::RepositoryResolver;
+
+use crate::{BuildOptions, PublishedDependencies};
 
 /// One package to qualify on the current platform.
 #[derive(Debug, serde::Serialize)]
@@ -16,16 +18,21 @@ pub struct PackageTask {
 }
 
 /// What identifies every package in a build's closure, so a change to any of them is a new build.
+/// A dependency taken from the PDR is identified by the build it was published from.
 pub(crate) fn dependency_inputs(
     catalog: &PackageCatalog,
     id: &str,
     system: &str,
+    published: &PublishedDependencies,
 ) -> Result<BTreeMap<String, DependencyInputs>, String> {
     let graph = DependencyGraph::new(catalog, &[id.to_string()], system)?;
     graph.nodes[id]
         .closure
         .iter()
         .map(|dependency| {
+            if let Some(inputs) = published.inputs(dependency) {
+                return Ok((dependency.clone(), inputs));
+            }
             let (package, version, recipe) = find_recipe_for_system(catalog, dependency, system)?;
             let inputs = DependencyInputs {
                 revision: package.versions[version].revision,
@@ -40,11 +47,13 @@ pub(crate) fn dependency_inputs(
 }
 
 /// Plans explicitly selected packages, and the closure each builds with, without building them.
+/// With a PDR, dependencies it has published builds of are keyed as those builds.
 pub fn plan_packages(
     catalog: &PackageCatalog,
     requests: &[String],
     options: &BuildOptions,
     context: &str,
+    pdr: Option<&RepositoryResolver>,
 ) -> Result<Vec<PackageTask>, String> {
     catalog.validate()?;
     if requests.is_empty() || context.trim().is_empty() {
@@ -64,6 +73,12 @@ pub fn plan_packages(
         }
         let engine =
             rootbeer_build::engine_identity(recipe.build.as_ref().map(|build| &build.backend));
+        let published = match pdr {
+            Some(pdr) if recipe.build.is_some() => {
+                PublishedDependencies::find(catalog, &id, &system, pdr)?
+            }
+            _ => PublishedDependencies::default(),
+        };
         let environment = match environments.get(&engine) {
             Some(environment) => environment,
             None => {
@@ -81,7 +96,7 @@ pub fn plan_packages(
                     &recipe,
                     &engine,
                     environment,
-                    &dependency_inputs(catalog, &id, &system)?,
+                    &dependency_inputs(catalog, &id, &system, &published)?,
                 ),
                 package: id,
                 name: package.name.clone(),

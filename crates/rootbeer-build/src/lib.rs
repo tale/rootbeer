@@ -333,6 +333,14 @@ fn execute(plan: &BuildPlan, output: &Path, opts: &BuildOptions) -> Result<Build
             artifact.qualification_environment = Some(identity.clone());
             artifact.isolation = Some(isolation.clone());
             artifact.resolver_inputs = plan.inputs.clone();
+            artifact.published_dependencies = graph.nodes[key]
+                .closure
+                .iter()
+                .filter_map(|dependency| {
+                    let record = plan.published.get(dependency)?;
+                    Some((dependency.clone(), record.clone()))
+                })
+                .collect();
             artifact.build_key = cache_entry.as_ref().map(|entry| entry.key().to_string());
             artifact.build_environment = cache.map(|cache| cache.context.clone());
             pack_runtime(&mut artifact.package, &dependency_roots, &destination)?;
@@ -705,6 +713,7 @@ fn compile(
         system: plan.graph.system.clone(),
         build: build.clone(),
         dependencies,
+        published_dependencies: BTreeMap::new(),
         resolver_inputs: PackageResolverInputs::default(),
         toolchain,
         package: LockedPackage {

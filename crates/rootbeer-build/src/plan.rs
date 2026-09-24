@@ -11,6 +11,8 @@ pub struct BuildPlan {
     pub(crate) catalog_sha256: String,
     pub(crate) graph: DependencyGraph,
     pub(crate) binaries: BTreeMap<String, LockedPackage>,
+    /// Signed records of the source dependencies taken from the PDR instead of compiled.
+    pub(crate) published: BTreeMap<String, String>,
     pub(crate) recipes: BTreeMap<String, CatalogRecipe>,
     /// Catalog revision per key; a recipe is one platform and no longer carries it.
     pub(crate) revisions: BTreeMap<String, u32>,
@@ -91,10 +93,35 @@ impl BuildPlan {
             catalog_sha256: catalog.sha256(),
             graph,
             binaries,
+            published: BTreeMap::new(),
             recipes,
             revisions,
             inputs: inputs.clone(),
         })
+    }
+
+    /// Installs `key` from its published build instead of compiling it. The caller has verified
+    /// `record` against the PDR's key; it travels in the receipt so a release can verify again.
+    pub fn use_published(
+        &mut self,
+        key: &str,
+        package: LockedPackage,
+        record: String,
+    ) -> Result<(), String> {
+        let is_dependency = self.graph.order.last().is_some_and(|root| root != key);
+        if !is_dependency
+            || !self
+                .recipes
+                .get(key)
+                .is_some_and(|recipe| recipe.build.is_some())
+        {
+            return Err(format!(
+                "{key}: only a source-built dependency has a published build"
+            ));
+        }
+        self.binaries.insert(key.to_string(), package);
+        self.published.insert(key.to_string(), record);
+        Ok(())
     }
 
     pub fn graph(&self) -> &DependencyGraph {

@@ -246,11 +246,15 @@ fn retained(
                     .is_some_and(|build| !build.dependencies.is_empty());
                 if has_dependencies {
                     let id = format!("{name}@{version}");
-                    let current: Closure =
-                        crate::package_plan::dependency_inputs(catalog, &id, system)?
-                            .into_iter()
-                            .map(|(id, inputs)| (id, (inputs.revision, inputs.recipe_sha256)))
-                            .collect();
+                    let current: Closure = crate::package_plan::dependency_inputs(
+                        catalog,
+                        &id,
+                        system,
+                        &Default::default(),
+                    )?
+                    .into_iter()
+                    .map(|(id, inputs)| (id, (inputs.revision, inputs.recipe_sha256)))
+                    .collect();
                     if built_with(&platform.record)? != current {
                         continue;
                     }
@@ -721,11 +725,16 @@ mod tests {
         let documents = documents_of(&root, &documents);
 
         let built_with = |catalog: &PackageCatalog| {
-            let closure: Closure = crate::package_plan::dependency_inputs(catalog, "app@1", LINUX)
-                .unwrap()
-                .into_iter()
-                .map(|(id, inputs)| (id, (inputs.revision, inputs.recipe_sha256)))
-                .collect();
+            let closure: Closure = crate::package_plan::dependency_inputs(
+                catalog,
+                "app@1",
+                LINUX,
+                &Default::default(),
+            )
+            .unwrap()
+            .into_iter()
+            .map(|(id, inputs)| (id, (inputs.revision, inputs.recipe_sha256)))
+            .collect();
             move |_: &str| Ok(closure.clone())
         };
         assert_eq!(

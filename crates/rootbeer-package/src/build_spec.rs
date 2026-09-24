@@ -445,6 +445,10 @@ pub struct BuildArtifact {
     pub system: String,
     pub build: SourceBuild,
     pub dependencies: BTreeMap<String, LockedPackage>,
+    /// The signed PDR record of each dependency used as its published build instead of being
+    /// compiled, so a release can verify the evidence without trusting this receipt.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub published_dependencies: BTreeMap<String, String>,
     pub resolver_inputs: PackageResolverInputs,
     pub toolchain: BTreeMap<String, String>,
     pub package: LockedPackage,

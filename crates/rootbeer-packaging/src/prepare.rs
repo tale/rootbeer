@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use rootbeer_package::distribution::UpstreamProvenance;
+use rootbeer_package::repository::RepositoryResolver;
 use rootbeer_package::{
     ArchiveFormat, LockedInstall, LockedPackage, LockedSource, PackageCatalog, PackageRealizer,
     PackageRequest, PackageRequestResolver, PackageResolution, PackageResolverInputs,
@@ -23,16 +24,25 @@ pub(crate) struct BinaryReceipt {
 }
 
 /// Qualifies a source build or repackages a verified upstream binary without compiling it.
+/// With a PDR, dependencies it has published builds of are installed rather than compiled.
 pub fn prepare_package(
     catalog: &PackageCatalog,
     request: &str,
     output: &Path,
     options: &BuildOptions,
+    pdr: Option<&RepositoryResolver>,
 ) -> Result<LockedPackage, String> {
     catalog.validate()?;
     let (_, _, recipe) = rootbeer_package::graph::find_recipe(catalog, request)?;
     if recipe.build.is_some() {
-        return rootbeer_build::build_package(catalog, request, output, options)
+        let mut plan = crate::BuildPlan::current(catalog, request)?;
+        if let Some(pdr) = pdr {
+            let system = ResolveContext::current().system;
+            crate::PublishedDependencies::find(catalog, request, &system, pdr)?
+                .use_in(&mut plan)?;
+        }
+        return plan
+            .execute(output, options)
             .map(|artifact| artifact.package);
     }
     let inputs = package_inputs(catalog);
@@ -351,10 +361,15 @@ mod tests {
                     }}
                 }}
             })).unwrap();
-            let task =
-                crate::plan_packages(&catalog, &["demo@1".into()], &options, "fixture-image")
-                    .unwrap()
-                    .remove(0);
+            let task = crate::plan_packages(
+                &catalog,
+                &["demo@1".into()],
+                &options,
+                "fixture-image",
+                None,
+            )
+            .unwrap()
+            .remove(0);
             let package = LockedPackage {
                 name: "demo".into(),
                 version: "1".into(),

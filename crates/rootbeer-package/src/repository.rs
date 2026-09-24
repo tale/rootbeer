@@ -351,6 +351,19 @@ impl RepositoryResolver {
         version: Option<&str>,
         context: &ResolveContext,
     ) -> Result<(PackageRecord, String), String> {
+        let (record, digest, _) = self.signed_record_of(name, package, version, context)?;
+        Ok((record, digest))
+    }
+
+    /// The verified record, its digest, and the exact signed bytes, for evidence that must be
+    /// verifiable again later.
+    pub fn signed_record_of(
+        &self,
+        name: &str,
+        package: &RootPackage,
+        version: Option<&str>,
+        context: &ResolveContext,
+    ) -> Result<(PackageRecord, String, Vec<u8>), String> {
         let version = match version {
             Some(version) => version,
             None => package
@@ -381,7 +394,7 @@ impl RepositoryResolver {
         if record.recipe != published.recipe {
             return Err(format!("{id}: record differs from the published recipe"));
         }
-        Ok((record, published.record.clone()))
+        Ok((record, published.record.clone(), bytes))
     }
 
     fn read(&self, url: &str, sha256: &str, limit: usize) -> Result<Vec<u8>, String> {

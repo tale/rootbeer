@@ -21,6 +21,8 @@ enum Command {
         packages: Vec<String>,
         #[arg(long)]
         context: String,
+        #[command(flatten)]
+        published: Published,
     },
     /// Verify a signed package result against the requested identity and input key
     VerifyRecord {
@@ -143,7 +145,38 @@ enum Command {
         /// Maximum seconds for each configure, build, check, or install command
         #[arg(long, default_value_t = 1200)]
         phase_timeout: u64,
+        #[command(flatten)]
+        published: Published,
     },
+}
+
+/// A PDR whose published builds may stand in for compiling dependencies.
+#[derive(ClapArgs, Debug)]
+struct Published {
+    /// Take dependencies from this PDR root's published builds instead of compiling them
+    #[arg(long, requires = "pdr_public_key")]
+    pdr: Option<String>,
+    /// Key the PDR root and every record taken from it must verify against
+    #[arg(long, requires = "pdr")]
+    pdr_public_key: Option<String>,
+}
+
+impl Published {
+    fn resolver(
+        &self,
+    ) -> Result<Option<rootbeer_packaging::repository::RepositoryResolver>, String> {
+        let (Some(url), Some(public_key)) = (&self.pdr, &self.pdr_public_key) else {
+            return Ok(None);
+        };
+        let repository = rootbeer_packaging::repository::Repository {
+            url: url.clone(),
+            public_key: public_key.clone(),
+        };
+        let selection = repository.select(&rootbeer_packaging::state_dir(), true)?;
+        Ok(Some(
+            rootbeer_packaging::repository::RepositoryResolver::new(&selection.pin),
+        ))
+    }
 }
 
 pub fn run(args: Args) {
@@ -170,12 +203,18 @@ fn execute(args: Args) -> Result<(), String> {
     };
     let mut output = io::stdout().lock();
     match args.command {
-        Command::PackagePlan { packages, context } => {
+        Command::PackagePlan {
+            packages,
+            context,
+            published,
+        } => {
+            let pdr = published.resolver()?;
             let tasks = rootbeer_packaging::plan_packages(
                 catalog()?,
                 &packages,
                 &rootbeer_packaging::BuildOptions::default(),
                 &context,
+                pdr.as_ref(),
             )?;
             writeln!(
                 output,
@@ -450,7 +489,9 @@ fn execute(args: Args) -> Result<(), String> {
             cache_context,
             recheck,
             phase_timeout,
+            published,
         } => {
+            let pdr = published.resolver()?;
             let environment = read_environment(environment)?;
             if let Some(expected) = input_key {
                 if isolate || environment.is_some() {
@@ -461,6 +502,7 @@ fn execute(args: Args) -> Result<(), String> {
                     std::slice::from_ref(&name),
                     &rootbeer_packaging::BuildOptions::default(),
                     cache_context.as_deref().unwrap(),
+                    pdr.as_ref(),
                 )?;
                 if tasks.len() != 1 || tasks[0].key != expected {
                     return Err("package inputs or build environment changed since planning".into());
@@ -483,6 +525,7 @@ fn execute(args: Args) -> Result<(), String> {
                     phase_timeout: std::time::Duration::from_secs(phase_timeout),
                     ..Default::default()
                 },
+                pdr.as_ref(),
             )?;
             writeln!(
                 output,

@@ -65,6 +65,7 @@ pub fn release_package(
             registry,
             &destination,
             &realizer,
+            signer.public_key,
         )?
     } else {
         prepare_binary(
@@ -113,6 +114,7 @@ fn prepare_source(
     registry: &str,
     destination: &Path,
     realizer: &PackageRealizer,
+    public_key: &str,
 ) -> Result<Qualified, String> {
     fs::create_dir(destination.join("artifacts")).map_err(|error| error.to_string())?;
     let build: BuildArtifact =
@@ -121,7 +123,9 @@ fn prepare_source(
         return Err("release does not support runtime dependencies yet".into());
     }
     let id = build.package.id();
-    let mut inputs = crate::package_plan::dependency_inputs(catalog, &id, &build.system)?;
+    let published = crate::PublishedDependencies::from_receipt(catalog, &build, public_key)?;
+    let mut inputs =
+        crate::package_plan::dependency_inputs(catalog, &id, &build.system, &published)?;
     let mut dependencies = std::collections::BTreeMap::new();
     for (dependency, package) in &build.dependencies {
         let inputs = inputs

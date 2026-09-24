@@ -8,6 +8,8 @@ mod checks;
 mod prepare;
 pub use prepare::prepare_package;
 mod package_plan;
+mod published;
+pub use published::PublishedDependencies;
 mod publish_records;
 mod receipt;
 mod release;

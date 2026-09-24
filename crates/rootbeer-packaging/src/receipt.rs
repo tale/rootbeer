@@ -295,6 +295,7 @@ pub(crate) mod tests {
             system: "aarch64-linux".into(),
             build: recipe.build.clone().unwrap(),
             dependencies: BTreeMap::new(),
+            published_dependencies: BTreeMap::new(),
             resolver_inputs: PackageResolverInputs::default(),
             toolchain: BTreeMap::new(),
             package: LockedPackage {
