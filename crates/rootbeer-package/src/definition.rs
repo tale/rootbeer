@@ -395,6 +395,42 @@ mod tests {
     }
 
     #[test]
+    fn commands_fill_the_version_and_keep_every_other_brace() {
+        let source = r#"return {
+            name = "tool", description = "A tool", homepage = "https://example.com",
+            default_license = "MIT",
+            upstream = { github = "owner/tool", tag = "v{version}" },
+            source = { url = "https://example.com/{tag}.tar.gz", archive = "tar.gz", strip_prefix = "tool-{version}" },
+            build = {
+                backend = "custom",
+                steps = {
+                    build = { { "make", "-j{jobs}", "VERSION={version}" } },
+                    check = { { "make", "check" } },
+                    install = { { "sh", "-ec", "cp tool ${HOME} {prefix}/{tag}" } },
+                },
+            },
+            outputs = { bins = { "tool" }, checks = { { "tool", "--is={version}", "{len(x)}" } } },
+            platforms = { ["x86_64-linux"] = { default_version = "1.2" } },
+            versions = { ["1.2"] = { digests = { ["x86_64-linux"] = "DIGEST" } } },
+        }"#
+        .replace("DIGEST", &"a".repeat(64));
+        let definition = PackageDefinition::from_lua(&source).unwrap();
+        let recipe = definition.package.versions["1.2"]
+            .for_system("x86_64-linux")
+            .unwrap();
+        let build = recipe.build.as_ref().unwrap();
+
+        assert_eq!(recipe.checks, [["tool", "--is=1.2", "{len(x)}"]]);
+        let steps = build.steps.as_ref().unwrap();
+        assert_eq!(steps.build, [["make", "-j{jobs}", "VERSION=1.2"]]);
+        assert_eq!(
+            steps.install,
+            [["sh", "-ec", "cp tool ${HOME} {prefix}/v1.2"]]
+        );
+        assert!(definition.to_lua().unwrap().contains("--is={version}"));
+    }
+
+    #[test]
     fn a_build_cannot_restate_its_source() {
         for field in [
             r#"url = "https://example.com/x.tar.gz""#,

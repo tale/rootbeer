@@ -179,6 +179,22 @@ fn substitute(
     Ok(value)
 }
 
+/// Fills a command's version placeholders and keeps every other brace: the build fills
+/// `{prefix}` and `{jobs}` itself, and checks carry shell or Python of their own.
+fn fill_command(command: &[String], version: &str, tag: &str) -> Vec<String> {
+    command
+        .iter()
+        .map(|argument| argument.replace("{version}", version).replace("{tag}", tag))
+        .collect()
+}
+
+fn fill_commands(commands: &[Vec<String>], version: &str, tag: &str) -> Vec<Vec<String>> {
+    commands
+        .iter()
+        .map(|command| fill_command(command, version, tag))
+        .collect()
+}
+
 impl Spec {
     /// Platform and version overrides replace a shared field outright.
     fn overlay(&self, over: &Self) -> Self {
@@ -382,7 +398,7 @@ impl Recipe {
             sha256: None,
             bins: outputs.bins.clone().unwrap_or_default(),
             apps: outputs.apps.clone().unwrap_or_default(),
-            checks: outputs.checks.clone().unwrap_or_default(),
+            checks: fill_commands(outputs.checks.as_deref().unwrap_or_default(), version, &tag),
             mirror: false,
             extra: Default::default(),
         };
@@ -449,12 +465,17 @@ impl Recipe {
                 sha256: digest.to_string(),
                 archive,
                 strip_prefix,
-                configure: build.configure.clone(),
-                args: build.args.clone(),
+                configure: fill_command(&build.configure, version, &tag),
+                args: fill_command(&build.args, version, &tag),
                 patches: source.patches.clone(),
                 dependencies: build.dependencies.clone(),
                 libraries: build.libraries.clone(),
-                steps: build.steps.clone(),
+                steps: build.steps.as_ref().map(|steps| crate::BuildSteps {
+                    configure: fill_commands(&steps.configure, version, &tag),
+                    build: fill_commands(&steps.build, version, &tag),
+                    check: fill_commands(&steps.check, version, &tag),
+                    install: fill_commands(&steps.install, version, &tag),
+                }),
             });
         } else {
             return Err("a platform needs a prebuilt or a source".into());
