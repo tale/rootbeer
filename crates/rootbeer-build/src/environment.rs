@@ -383,10 +383,7 @@ fn hash_directory(root: &Path, directory: &Path) -> Result<String, String> {
         } else if kind.is_dir() {
             ("directory", hash_directory(root, &entry.path())?)
         } else if kind.is_file() {
-            (
-                "file",
-                hash_file(entry.path()).map_err(|error| error.to_string())?,
-            )
+            ("file", hash_input_file(root, &entry.path())?)
         } else {
             return Err(format!(
                 "unsupported build input file: {}",
@@ -402,6 +399,18 @@ fn hash_directory(root: &Path, directory: &Path) -> Result<String, String> {
     Ok(hash_bytes(
         &serde_json::to_vec(&entries).map_err(|error| error.to_string())?,
     ))
+}
+
+/// Rustup lists a toolchain's components in the order it happened to install them, so the
+/// same toolchain would pin differently from one fresh install to the next.
+fn hash_input_file(root: &Path, path: &Path) -> Result<String, String> {
+    if path.strip_prefix(root) != Ok(Path::new("rustlib/components")) {
+        return hash_file(path).map_err(|error| error.to_string());
+    }
+    let contents = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let mut components: Vec<&str> = contents.lines().collect();
+    components.sort_unstable();
+    Ok(hash_bytes(components.join("\n").as_bytes()))
 }
 
 #[cfg(test)]
@@ -520,6 +529,23 @@ mod tests {
 mod archive_tests {
     use super::*;
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn rust_component_order_does_not_change_a_sysroot_pin() {
+        let pin = |components: &str| {
+            let root = tempfile::tempdir().unwrap();
+            let lib = root.path().join("lib");
+            fs::create_dir_all(lib.join("rustlib")).unwrap();
+            fs::write(lib.join("rustlib/components"), components).unwrap();
+            fs::write(lib.join("librustc_driver.so"), "compiler").unwrap();
+            pin_input(&lib, false).unwrap().sha256
+        };
+        assert_eq!(
+            pin("rustc\ncargo\nrust-std\n"),
+            pin("cargo\nrust-std\nrustc\n")
+        );
+        assert_ne!(pin("rustc\ncargo\n"), pin("rustc\ncargo\nclippy\n"));
+    }
 
     #[test]
     fn apple_archives_ignore_member_timestamps_in_build_environments() {
