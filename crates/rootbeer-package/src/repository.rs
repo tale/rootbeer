@@ -253,6 +253,11 @@ impl RepositoryResolver {
         }
     }
 
+    /// The exact root this resolver reads.
+    pub fn pin(&self) -> &RepositoryPin {
+        &self.pin
+    }
+
     pub fn root(&self) -> Result<&Root, String> {
         self.root
             .get_or_init(|| Root::from_bytes(&self.root_bytes()?, &self.pin.public_key))

@@ -15,6 +15,9 @@ pub struct PackageTask {
     pub name: String,
     pub system: String,
     pub key: String,
+    /// The PDR root whose published dependencies the key names, so a builder reads the same one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdr_root: Option<String>,
 }
 
 /// What identifies every package in a build's closure, so a change to any of them is a new build.
@@ -101,6 +104,9 @@ pub fn plan_packages(
                 package: id,
                 name: package.name.clone(),
                 system: system.clone(),
+                pdr_root: pdr
+                    .filter(|_| recipe.build.is_some())
+                    .map(|pdr| pdr.pin().root.clone()),
             },
         );
     }

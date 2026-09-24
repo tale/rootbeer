@@ -159,6 +159,9 @@ struct Published {
     /// Key the PDR root and every record taken from it must verify against
     #[arg(long, requires = "pdr")]
     pdr_public_key: Option<String>,
+    /// Read this exact root instead of the current one, as a builder reading its planner's root
+    #[arg(long, requires = "pdr")]
+    pdr_root: Option<String>,
 }
 
 impl Published {
@@ -172,9 +175,24 @@ impl Published {
             url: url.clone(),
             public_key: public_key.clone(),
         };
-        let selection = repository.select(&rootbeer_packaging::state_dir(), true)?;
+        repository.validate()?;
+        let pin = match &self.pdr_root {
+            Some(root) if rootbeer_packaging::is_sha256(root) => {
+                rootbeer_packaging::repository::RepositoryPin {
+                    url: url.clone(),
+                    public_key: public_key.clone(),
+                    root: root.clone(),
+                }
+            }
+            Some(_) => return Err("--pdr-root must be a root digest".into()),
+            None => {
+                repository
+                    .select(&rootbeer_packaging::state_dir(), true)?
+                    .pin
+            }
+        };
         Ok(Some(
-            rootbeer_packaging::repository::RepositoryResolver::new(&selection.pin),
+            rootbeer_packaging::repository::RepositoryResolver::new(&pin),
         ))
     }
 }
