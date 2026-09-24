@@ -670,8 +670,9 @@ hash its source archive, and retain existing version recipes. Index qualificatio
 still builds and checks the new package on each supported platform. The package
 update does not advance `engine-revision`.
 
-The notification workflow uses `PDR_UPDATE_SSH_KEY`, a writable deploy key scoped
-to the index repository. It only commits the update request; discovery independently
+The notification workflow mints a short-lived token from the Rootbeer Bot GitHub App
+(`ROOTBEER_BOT_CLIENT_ID`, `ROOTBEER_BOT_PRIVATE_KEY`), scoped to the PDR repository. It only commits
+the update request; discovery independently
 checks the current source revision and CI result. The index also accepts a
 `rootbeer-update` repository dispatch. Without the key, polling remains active. The
 index's existing `PUBLISH_INDEX` switch controls automatic promotion and publication.
