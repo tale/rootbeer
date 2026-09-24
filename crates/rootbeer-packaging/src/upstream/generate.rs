@@ -59,10 +59,11 @@ fn pin(
     upstream: &PackageUpstream,
     system: &str,
     version: &str,
+    commit: Option<&str>,
     releases: &[Release],
     hash: &mut impl FnMut(&str) -> Result<String, String>,
 ) -> Result<Option<String>, String> {
-    let candidate = definition.candidate(system, version)?;
+    let candidate = definition.candidate(system, version, commit)?;
     if let Some(build) = &candidate.build {
         return hash(&build.url).map(Some);
     }
@@ -109,6 +110,7 @@ pub(super) fn discover(
     releases: &[Release],
     definition: &mut PackageDefinition,
     mut hash: impl FnMut(&str) -> Result<String, String>,
+    mut commit_of: impl FnMut(&str) -> Result<String, String>,
 ) -> Result<Vec<String>, String> {
     let versions = stable_versions(upstream, releases)?;
     if versions.is_empty() {
@@ -123,6 +125,19 @@ pub(super) fn discover(
         let digest = hash(url)?;
         hashed.insert(url.to_string(), digest.clone());
         Ok(digest)
+    };
+    let is_commit_needed = definition.uses_commit();
+    let mut commits: BTreeMap<String, String> = BTreeMap::new();
+    let mut commit_for = |version: &str| -> Result<Option<String>, String> {
+        if !is_commit_needed {
+            return Ok(None);
+        }
+        if let Some(commit) = commits.get(version) {
+            return Ok(Some(commit.clone()));
+        }
+        let commit = commit_of(&upstream.tag_for(version))?;
+        commits.insert(version.to_string(), commit.clone());
+        Ok(Some(commit))
     };
     let mut selected: BTreeMap<&str, BTreeMap<String, String>> = BTreeMap::new();
     let mut errors = Vec::new();
@@ -143,11 +158,19 @@ pub(super) fn discover(
             if current.as_ref().is_some_and(|current| key <= current) {
                 break;
             }
+            let commit = match commit_for(version) {
+                Ok(commit) => commit,
+                Err(error) => {
+                    errors.push(format!("{system}: {version}: {error}"));
+                    break;
+                }
+            };
             match pin(
                 definition,
                 upstream,
                 system,
                 version,
+                commit.as_deref(),
                 releases,
                 &mut hash_once,
             ) {
@@ -169,7 +192,7 @@ pub(super) fn discover(
 
     for (version, digests) in selected {
         let systems: Vec<String> = digests.keys().cloned().collect();
-        definition.add_version(version, digests, None)?;
+        definition.add_version(version, digests, None, commits.get(version).cloned())?;
         for system in &systems {
             definition.set_default_version(system, version)?;
         }
@@ -230,9 +253,14 @@ mod tests {
 
     fn run(recipe: &mut PackageDefinition, releases: &[Release]) -> Vec<String> {
         let upstream = recipe.upstreams().remove(0);
-        discover(&upstream.0, &upstream.1, releases, recipe, |url| {
-            panic!("a prebuilt must not download {url}")
-        })
+        discover(
+            &upstream.0,
+            &upstream.1,
+            releases,
+            recipe,
+            |url| panic!("a prebuilt must not download {url}"),
+            |tag| panic!("{tag} needs no commit"),
+        )
         .unwrap()
     }
 
@@ -379,6 +407,7 @@ mod tests {
             &releases,
             &mut recipe,
             |_| unreachable!(),
+            |tag| panic!("{tag} needs no commit"),
         )
         .unwrap_err();
         assert!(error.contains("narrow the upstream tag"), "{error}");
@@ -409,6 +438,66 @@ mod tests {
     }
 
     #[test]
+    fn a_version_records_the_commit_its_templates_embed() {
+        let mut recipe = PackageDefinition::from_lua(&format!(
+            r#"return {{
+                name = "tool", description = "A tool", homepage = "https://example.com",
+                default_license = "MIT",
+                upstream = {{ github = "owner/tool", tag = "v{{version}}" }},
+                source = {{ url = "https://example.com/tool-{{tag}}.tar.gz", archive = "tar.gz",
+                            strip_prefix = "tool-{{version}}" }},
+                build = {{ backend = "go", go = {{
+                    binaries = {{ tool = "./cmd" }},
+                    variables = {{ commit = "{{commit}}" }},
+                }} }},
+                outputs = {{ bins = {{ "tool" }}, checks = {{ {{ "tool", "--version" }} }} }},
+                platforms = {{
+                    ["aarch64-macos"] = {{ default_version = "98" }},
+                    ["x86_64-linux"] = {{ default_version = "98" }},
+                }},
+                versions = {{ ["98"] = {{ commit = "{old}", digests = {{
+                    ["aarch64-macos"] = "{digest}", ["x86_64-linux"] = "{digest}",
+                }} }} }},
+            }}"#,
+            old = "a".repeat(40),
+            digest = "b".repeat(64)
+        ))
+        .unwrap();
+        let releases = [release("v99", &[]), release("v98", &[])];
+        let (upstream, systems) = recipe.upstreams().remove(0);
+
+        let mut resolved = Vec::new();
+        discover(
+            &upstream,
+            &systems,
+            &releases,
+            &mut recipe,
+            |_| Ok("c".repeat(64)),
+            |tag| {
+                resolved.push(tag.to_string());
+                Ok("d".repeat(40))
+            },
+        )
+        .unwrap();
+        assert_eq!(resolved, ["v99"]);
+        for system in &systems {
+            let build = recipe.package.versions["99"].platforms[system]
+                .build
+                .as_ref()
+                .unwrap();
+            assert_eq!(
+                build.go.as_ref().unwrap().variables["commit"],
+                "d".repeat(40)
+            );
+        }
+        let rendered = recipe.to_lua().unwrap();
+        assert!(
+            rendered.contains(&format!("commit = \"{}\"", "d".repeat(40))),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn source_discovery_hashes_one_archive_for_every_platform() {
         let mut recipe = PackageDefinition::from_lua(&format!(
             r#"return {{
@@ -434,10 +523,17 @@ mod tests {
         let (upstream, systems) = recipe.upstreams().remove(0);
 
         let mut fetched = Vec::new();
-        discover(&upstream, &systems, &releases, &mut recipe, |url| {
-            fetched.push(url.to_string());
-            Ok("c".repeat(64))
-        })
+        discover(
+            &upstream,
+            &systems,
+            &releases,
+            &mut recipe,
+            |url| {
+                fetched.push(url.to_string());
+                Ok("c".repeat(64))
+            },
+            |tag| panic!("{tag} needs no commit"),
+        )
         .unwrap();
         assert_eq!(fetched, ["https://example.com/tool-v99.tar.gz"]);
         for system in &systems {
@@ -449,9 +545,14 @@ mod tests {
             assert_eq!(build.sha256, "c".repeat(64));
         }
 
-        discover(&upstream, &systems, &releases, &mut recipe, |_| {
-            panic!("an unchanged source must not be downloaded again")
-        })
+        discover(
+            &upstream,
+            &systems,
+            &releases,
+            &mut recipe,
+            |_| panic!("an unchanged source must not be downloaded again"),
+            |tag| panic!("{tag} needs no commit"),
+        )
         .unwrap();
     }
 }

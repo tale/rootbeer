@@ -59,7 +59,13 @@ fn discover_upstream(
         }
     }
 
-    let errors = generate::discover(upstream, systems, &releases, recipe, hash)?;
+    let commit_of = |tag: &str| {
+        fetch(&format!("{url}/commits/{tag}"))?["sha"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("{tag}: GitHub returned no commit"))
+    };
+    let errors = generate::discover(upstream, systems, &releases, recipe, hash, commit_of)?;
     let is_newly_pinned = upstream.repository_id.is_none();
     if is_newly_pinned {
         recipe.pin_repository_id(upstream.repository(), repository.id)?;

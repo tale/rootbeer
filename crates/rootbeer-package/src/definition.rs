@@ -147,6 +147,7 @@ impl PackageDefinition {
         version: &str,
         digests: BTreeMap<String, String>,
         license: Option<String>,
+        commit: Option<String>,
     ) -> Result<(), String> {
         let mut recipe = self
             .authoring
@@ -155,7 +156,7 @@ impl PackageDefinition {
         if digests.is_empty() {
             return Err(format!("{version}: a version builds at least one platform"));
         }
-        recipe.insert_version(version, digests, license);
+        recipe.insert_version(version, digests, license, commit);
         *self = recipe.expand()?;
         Ok(())
     }
@@ -187,11 +188,23 @@ impl PackageDefinition {
     ///
     /// Discovery pins the digest of exactly this asset or archive, so the digest and the
     /// download cannot come from different templates.
-    pub fn candidate(&self, system: &str, version: &str) -> Result<super::CatalogRecipe, String> {
+    pub fn candidate(
+        &self,
+        system: &str,
+        version: &str,
+        commit: Option<&str>,
+    ) -> Result<super::CatalogRecipe, String> {
         self.authoring
             .as_ref()
             .ok_or("resolving a candidate requires an authored recipe")?
-            .candidate(system, version)
+            .candidate(system, version, commit)
+    }
+
+    /// Whether a new version must record the commit its tag points at.
+    pub fn uses_commit(&self) -> bool {
+        self.authoring
+            .as_ref()
+            .is_some_and(recipe::Recipe::uses_commit)
     }
 
     /// Pins a repository ID wherever `repository` is declared without one.
@@ -465,6 +478,39 @@ mod tests {
         assert!(
             error.contains("`{patch}` needs a version with 3 parts"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn a_commit_template_needs_each_version_to_record_its_commit() {
+        let source = r#"return {
+            name = "tool", description = "A tool", homepage = "https://example.com",
+            default_license = "MIT",
+            source = { url = "https://example.com/{version}.tar.gz", archive = "tar.gz", strip_prefix = "tool-{version}" },
+            build = { backend = "go", go = { binaries = { tool = "./cmd" }, variables = { commit = "{commit}" } } },
+            outputs = { bins = { "tool" }, checks = { { "tool", "--version" } } },
+            platforms = { ["x86_64-linux"] = { default_version = "1" } },
+            versions = { ["1"] = { COMMIT digests = { ["x86_64-linux"] = "DIGEST" } } },
+        }"#
+        .replace("DIGEST", &"a".repeat(64));
+
+        let missing = PackageDefinition::from_lua(&source.replace("COMMIT", "")).unwrap_err();
+        assert!(missing.contains("record its `commit`"), "{missing}");
+
+        let short = source.replace("COMMIT", r#"commit = "abc123","#);
+        let error = PackageDefinition::from_lua(&short).unwrap_err();
+        assert!(error.contains("full lowercase SHA-1"), "{error}");
+
+        let recorded = source.replace("COMMIT", &format!(r#"commit = "{}","#, "f".repeat(40)));
+        let definition = PackageDefinition::from_lua(&recorded).unwrap();
+        assert!(definition.uses_commit());
+        let build = definition.package.versions["1"].platforms["x86_64-linux"]
+            .build
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            build.go.as_ref().unwrap().variables["commit"],
+            "f".repeat(40)
         );
     }
 

@@ -136,6 +136,9 @@ pub(super) struct Outputs {
 #[serde(deny_unknown_fields)]
 pub(super) struct Version {
     pub digests: BTreeMap<String, String>,
+    /// The commit this version's tag points at, for templates that embed `{commit}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
     #[serde(default = "one", skip_serializing_if = "is_one")]
@@ -148,6 +151,7 @@ impl Default for Version {
     fn default() -> Self {
         Self {
             digests: BTreeMap::new(),
+            commit: None,
             license: None,
             revision: one(),
             overrides: Spec::default(),
@@ -169,6 +173,7 @@ struct Placeholders<'a> {
     version: &'a str,
     tag: &'a str,
     target: Option<&'a str>,
+    commit: Option<&'a str>,
 }
 
 impl Placeholders<'_> {
@@ -179,6 +184,12 @@ impl Placeholders<'_> {
             .replace("{tag}", self.tag);
         if let Some(target) = self.target {
             value = value.replace("{target}", target);
+        }
+        if value.contains("{commit}") {
+            let commit = self
+                .commit
+                .ok_or("`{commit}` needs the version to record its `commit`")?;
+            value = value.replace("{commit}", commit);
         }
         let release = self.version.split(['-', '+']).next().unwrap_or_default();
         let parts: Vec<&str> = release.split('.').collect();
@@ -252,9 +263,13 @@ impl Recipe {
         version: &str,
         digests: BTreeMap<String, String>,
         license: Option<String>,
+        commit: Option<String>,
     ) {
         let entry = self.versions.entry(version.to_string()).or_default();
         entry.digests.extend(digests);
+        if commit.is_some() {
+            entry.commit = commit;
+        }
         if license.is_some() {
             entry.license = license;
         }
@@ -317,14 +332,20 @@ impl Recipe {
         &self,
         system: &str,
         version: &str,
+        commit: Option<&str>,
     ) -> Result<crate::CatalogRecipe, String> {
         let platform = self
             .platforms
             .get(system)
             .ok_or_else(|| format!("{}: {system} is not a declared platform", self.name))?;
         let spec = self.shared.overlay(&platform.overrides);
-        self.resolve(version, "", platform, &spec)
+        self.resolve(version, commit, "", platform, &spec)
             .map_err(|error| format!("{}@{version} {system}: {error}", self.name))
+    }
+
+    /// Whether any template embeds `{commit}`, so a new version must record its tag's commit.
+    pub(super) fn uses_commit(&self) -> bool {
+        serde_json::to_string(self).is_ok_and(|json| json.contains("{commit}"))
     }
 
     fn platform_upstream<'a>(&'a self, platform: &'a Platform) -> Option<&'a PackageUpstream> {
@@ -342,6 +363,17 @@ impl Recipe {
         }
         let mut versions: BTreeMap<String, crate::CatalogVersion> = BTreeMap::new();
         for (version, entry) in &self.versions {
+            if entry.commit.as_deref().is_some_and(|commit| {
+                commit.len() != 40
+                    || !commit
+                        .bytes()
+                        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            }) {
+                return Err(format!(
+                    "{}@{version}: commit must be a full lowercase SHA-1",
+                    self.name
+                ));
+            }
             let mut platforms = BTreeMap::new();
             for (system, digest) in &entry.digests {
                 let platform = self.platforms.get(system).ok_or_else(|| {
@@ -356,7 +388,7 @@ impl Recipe {
                     .overlay(&entry.overrides);
                 platforms.insert(
                     system.clone(),
-                    self.resolve(version, digest, platform, &spec)
+                    self.resolve(version, entry.commit.as_deref(), digest, platform, &spec)
                         .map_err(|error| format!("{}@{version} {system}: {error}", self.name))?,
                 );
             }
@@ -402,6 +434,7 @@ impl Recipe {
     fn resolve(
         &self,
         version: &str,
+        commit: Option<&str>,
         digest: &str,
         platform: &Platform,
         spec: &Spec,
@@ -417,6 +450,7 @@ impl Recipe {
             version,
             tag: &tag,
             target: platform.target.as_deref(),
+            commit,
         };
         let outputs = spec.outputs.clone().unwrap_or_default();
 
