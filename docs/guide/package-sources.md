@@ -1,8 +1,7 @@
 # Other package sources
 
 [Browse the catalog](https://search.rbpkg.com) for packages available by name. For another tool,
-you can request a GitHub release or an Aqua recipe with `rb run`, `rb use`, or
-`rb.packages()`.
+you can request a GitHub release with `rb run`, `rb use`, or `rb.packages()`.
 
 ## Define packages locally
 
@@ -23,16 +22,16 @@ rb.package_catalog("packages")
 rb.packages({ "my-tool", "jq" })
 ```
 
-Each file returns a [schema-2 package recipe](/contributing/packaging#definition-api),
-with its filename matching the package name. Use the same `inputs`, `build`,
-`outputs`, and `versions` fields as registry recipes. GitHub and Aqua prebuilts,
-source archives, Rust, Zig, Autotools, and custom build phases are supported.
-A source recipe's archive URL and SHA-256 remain required.
+Each file returns a [package recipe](/contributing/packaging#write-a-recipe), with
+its filename matching the package name. Use the same `prebuilt`, `source`, `build`,
+`outputs`, `platforms`, and `versions` fields as registry recipes. GitHub and URL
+prebuilts and every build backend are supported. Each version still pins a digest
+for every platform it covers.
 
 The directory is relative to the configuration script; absolute paths and `~`
 also work. Call `package_catalog` once. Local names and aliases take precedence
 over the selected registry, while other requests still use the registry normally.
-Explicit `github:` and `aqua:` requests keep their original meaning.
+Explicit `github:` requests keep their original meaning.
 
 Recipes can depend on other local recipes or packages from the selected registry.
 Source-capable local recipes build locally by default, even if they also declare
@@ -87,23 +86,15 @@ rb.packages({
 
 This asset targets Apple silicon macOS; select platform-specific declarations with
 normal Lua and `rb.host`. Keep versions in the request's `@version` syntax and
-resolvers in its `github:` or `aqua:` prefix. `asset` and `bins` are options for
+the resolver in its `github:` prefix. `asset` and `bins` are options for
 explicit GitHub requests. The CLI's `--bin` chooses an already exported command;
 it does not select a release asset or an archive path.
 
-`rb.package(entry)` accepts the same individual entry. Existing
-`rb.package("github:owner/repository@tag", { asset = "...", bins = { ... } })`
-calls remain supported. Exact raw package tables can also appear in the list;
-see the [package API](/reference/core#rootbeer-packages).
+`rb.package(entry)` accepts the same individual entry. Exact raw package tables
+can also appear in the list; see the [package API](/reference/core#rootbeer-packages).
 
-## Install from Aqua
-
-Use `aqua:owner/repository@version` to select an Aqua registry recipe. The prefix
-works with all three installation methods; you do not need Aqua installed.
-
-Direct GitHub and Aqua requests record download hashes in their saved resolutions.
-They do not carry the Rootbeer index publisher's signature. Aqua signatures and
-attestations are not verified.
+Direct GitHub requests record download hashes in their saved resolutions. They
+do not carry the Rootbeer repository publisher's signature.
 
 ## Use another repository
 

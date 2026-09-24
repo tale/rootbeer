@@ -72,7 +72,7 @@ an explicit version or index pin can resolve the affected declarations again.
 
 Offline reconciliation can reuse matching lock entries, saved standalone request
 resolutions, and verified cached binary index snapshots. Resolving an uncached
-Aqua/GitHub request or a source build requires an online run first.
+GitHub request or a source build requires an online run first.
 
 Lockfiles are written atomically, and identical contents are not rewritten.
 Malformed JSON or unresolved merge conflicts fail with the filename and parse
@@ -91,8 +91,7 @@ rather than the separate nightly download channel:
   your configuration lock implicitly. Explicit version pins remain unchanged.
 
 Run the command through the owning profile. Direct store paths and unrecognized
-symlinks cannot self-update. Older user profiles without saved requests require
-one explicit `rb use rootbeer --update` (or `rootbeer@VERSION`) to record your choice.
+symlinks cannot self-update.
 
 A matching configuration lock remains usable after upgrading `rb`.
 

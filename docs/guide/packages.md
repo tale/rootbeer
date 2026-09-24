@@ -200,7 +200,7 @@ service integration, use [Homebrew](/modules/brew) or another system package man
 
 Source-capable packages prefer a matching published binary. If the pinned index
 has no binary for the requested version and platform, Rootbeer builds its source
-recipe locally. Prebuilt-only packages remain supported; they reject source requests.
+recipe locally. Prebuilt-only packages reject source requests.
 
 ```lua
 rb.package("jq")                         -- Prefer the published binary.

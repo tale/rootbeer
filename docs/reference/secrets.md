@@ -12,9 +12,9 @@ local rb = require("rootbeer")
 ### 1Password (`op`)
 
 Rootbeer prepares its own [1Password CLI](https://developer.1password.com/docs/cli)
-from `aqua:1password/cli@v2.39.0` on the first provider call. It invokes the
-verified store executable directly, without using your shell's `op` or changing
-your user profile. The same runtime is shared by field reads, document downloads,
+from the repository's signed `op@2.39.0` package on the first provider call. It
+invokes the verified store executable directly, without using your shell's `op`
+or changing your user profile. The same runtime is shared by field reads, document downloads,
 and `identity_op` throughout planning and apply.
 
 The CLI installation is cached across runs; secret values are not. Offline
