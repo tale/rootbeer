@@ -1,4 +1,5 @@
 mod apply;
+mod bootstrap;
 mod cd;
 mod edit;
 mod init;
@@ -79,8 +80,27 @@ enum Commands {
     SelfUpdate,
 }
 
+impl Commands {
+    fn needs_store(&self) -> bool {
+        matches!(
+            self,
+            Commands::Run(_)
+                | Commands::Use(_)
+                | Commands::Unuse(_)
+                | Commands::Apply(_)
+                | Commands::SelfUpdate
+        )
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
+    if cli.command.needs_store() {
+        if let Err(error) = bootstrap::ensure() {
+            eprintln!("error: {error}");
+            std::process::exit(1);
+        }
+    }
 
     match cli.command {
         Commands::Licenses => print!(

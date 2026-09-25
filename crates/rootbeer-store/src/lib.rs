@@ -17,6 +17,14 @@ use sha2::{Digest, Sha256};
 
 use crate::deterministic::DeterministicOutput;
 pub mod deterministic;
+pub mod layout;
+
+/// Machine-wide root holding the shared store (`/opt/rootbeer`, or `ROOTBEER_ROOT`).
+pub fn root_dir() -> PathBuf {
+    std::env::var_os("ROOTBEER_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/opt/rootbeer"))
+}
 
 pub fn state_dir() -> PathBuf {
     if let Some(path) = std::env::var_os("XDG_STATE_HOME") {
@@ -171,7 +179,7 @@ impl Store {
 
 impl Default for Store {
     fn default() -> Self {
-        Self::new(state_dir().join("store"))
+        Self::new(root_dir().join("store"))
     }
 }
 

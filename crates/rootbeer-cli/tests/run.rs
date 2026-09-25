@@ -32,7 +32,7 @@ fn seed(root: &Path, name: &str, bin: &str, contents: &str) {
         output_sha256: None,
     };
     let realizer = PackageRealizer::with_dirs(
-        Store::new(state.join("store")),
+        Store::new(root.join("opt/store")),
         state.join("downloads"),
         state.join("tmp"),
     );
@@ -56,6 +56,7 @@ fn rb(root: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rb"));
     command
         .env("XDG_STATE_HOME", root)
+        .env("ROOTBEER_ROOT", root.join("opt"))
         .env("XDG_CONFIG_HOME", root.join("config"));
     command
 }

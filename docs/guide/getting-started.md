@@ -15,6 +15,10 @@ export PATH="$HOME/.rootbeer/bin:$PATH"
 This installs the current nightly `rb` to `~/.rootbeer/bin` and makes it available
 in this shell.
 
+Packages live in a store shared by every user at `/opt/rootbeer/store`. The first command
+that needs it asks for `sudo` once per machine to create it and prints the exact command
+first; without a terminal it prints the command and exits instead.
+
 Intel macOS is unsupported.
 
 ## Run a package

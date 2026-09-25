@@ -28,6 +28,7 @@ fn managed_update_refuses_before_network_or_store_mutation() {
         let output = Command::new(profile.join("current/bin/rb"))
             .arg("update")
             .env("XDG_STATE_HOME", root)
+            .env("ROOTBEER_ROOT", root.join("opt"))
             .current_dir(root)
             .output()
             .unwrap();
@@ -42,6 +43,7 @@ fn managed_update_refuses_before_network_or_store_mutation() {
     let output = Command::new(&binary)
         .arg("update")
         .env("XDG_STATE_HOME", root)
+        .env("ROOTBEER_ROOT", root.join("opt"))
         .output()
         .unwrap();
     assert!(!output.status.success());

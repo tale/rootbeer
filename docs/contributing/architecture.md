@@ -40,6 +40,11 @@ runtime references must resolve within the declared closure or the OS-runtime
 baseline. The audit runs before package checks, on cache hits, and when bundling
 source receipts.
 
+The store lives at `/opt/rootbeer/store` (`ROOTBEER_ROOT` overrides the root for tests
+and CI); per-user state stays in `~/.local/state/rootbeer`. `layout.json` in the root
+records the layout version so a newer `rb` migrates an older one. Stores from before
+the move are migrated on first use, leaving a symlink per entry.
+
 Runtime dependencies live in separate content-addressed store entries. Receipts
 and package locks carry exact recursive runtime facts; realization verifies the
 whole closure even when the requested output is cached. Loader-relative sibling
