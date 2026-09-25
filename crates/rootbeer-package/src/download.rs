@@ -1,6 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
@@ -11,6 +12,32 @@ use crate::store::hash_file;
 use crate::{state_dir, Execution};
 
 const USER_AGENT: &str = concat!("rootbeer/", env!("CARGO_PKG_VERSION"));
+
+/// A snapshot of one download, reported after every chunk and once when it ends.
+pub struct Progress<'a> {
+    pub url: &'a str,
+    pub received: u64,
+    pub total: Option<u64>,
+    pub is_done: bool,
+}
+
+static OBSERVER: OnceLock<fn(&Progress)> = OnceLock::new();
+
+/// Registers the process-wide receiver for download [`Progress`].
+pub fn observe(observer: fn(&Progress)) {
+    let _ = OBSERVER.set(observer);
+}
+
+fn report(url: &str, received: u64, total: Option<u64>, is_done: bool) {
+    if let Some(observer) = OBSERVER.get() {
+        observer(&Progress {
+            url,
+            received,
+            total,
+            is_done,
+        });
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DownloadCache {
@@ -155,8 +182,9 @@ impl DownloadCache {
                 .map(str::to_owned),
         };
         let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
+        let total = response.body().content_length();
         let mut reader = response.into_body().into_reader();
-        let sha256 = copy_reader_to_writer(url, &mut reader, &mut file, &self.execution)?;
+        let sha256 = copy_reader_to_writer(url, &mut reader, total, &mut file, &self.execution)?;
         file.as_file().sync_all()?;
         let downloaded = self.finish_download(file.path(), sha256, None, url)?;
         metadata.sha256 = downloaded.sha256.clone();
@@ -296,7 +324,7 @@ impl Default for DownloadCache {
 
 pub fn read_url(url: &str) -> io::Result<Vec<u8>> {
     with_retries(|| {
-        let mut reader = url_reader(url, &Execution::default())?;
+        let (mut reader, _) = url_reader(url, &Execution::default())?;
         let mut bytes = Vec::new();
         reader
             .read_to_end(&mut bytes)
@@ -323,36 +351,45 @@ fn copy_url_to_writer(
     writer: &mut impl Write,
     execution: &Execution,
 ) -> io::Result<String> {
-    let mut reader = url_reader(url, execution)?;
-    copy_reader_to_writer(url, &mut reader, writer, execution)
+    let (mut reader, total) = url_reader(url, execution)?;
+    copy_reader_to_writer(url, &mut reader, total, writer, execution)
 }
 
 fn copy_reader_to_writer(
     url: &str,
     reader: &mut impl Read,
+    total: Option<u64>,
     writer: &mut impl Write,
     execution: &Execution,
 ) -> io::Result<String> {
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 8192];
+    let mut received = 0;
 
-    loop {
-        execution.check()?;
-        let n = reader
-            .read(&mut buf)
-            .map_err(|error| body_error(url, error))?;
-        if n == 0 {
-            break;
+    let result = loop {
+        if let Err(error) = execution.check() {
+            break Err(error);
         }
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break Ok(()),
+            Ok(n) => n,
+            Err(error) => break Err(body_error(url, error)),
+        };
 
         hasher.update(&buf[..n]);
-        writer.write_all(&buf[..n])?;
-    }
+        if let Err(error) = writer.write_all(&buf[..n]) {
+            break Err(error);
+        }
+        received += n as u64;
+        report(url, received, total, false);
+    };
 
-    Ok(hex(hasher.finalize().as_slice()))
+    report(url, received, total, true);
+    result.map(|()| hex(hasher.finalize().as_slice()))
 }
 
-fn url_reader(url: &str, execution: &Execution) -> io::Result<Box<dyn Read>> {
+/// Opens a source and returns its length when known.
+fn url_reader(url: &str, execution: &Execution) -> io::Result<(Box<dyn Read>, Option<u64>)> {
     execution.check()?;
     if url.starts_with("ghcr://") {
         return super::ghcr::GhcrBlob::parse(url)
@@ -362,7 +399,8 @@ fn url_reader(url: &str, execution: &Execution) -> io::Result<Box<dyn Read>> {
     if let Some(path) = url.strip_prefix("file://") {
         let file = fs::File::open(path)
             .map_err(|e| io::Error::new(e.kind(), format!("failed to read {url}: {e}")))?;
-        return Ok(Box::new(file));
+        let length = file.metadata().ok().map(|metadata| metadata.len());
+        return Ok((Box::new(file), length));
     }
 
     if !(url.starts_with("https://") || url.starts_with("http://")) {
@@ -378,7 +416,8 @@ fn url_reader(url: &str, execution: &Execution) -> io::Result<Box<dyn Read>> {
             "unexpected HTTP 304 without cache validators",
         ));
     }
-    Ok(Box::new(response.into_body().into_reader()))
+    let length = response.body().content_length();
+    Ok((Box::new(response.into_body().into_reader()), length))
 }
 
 fn http_response(
