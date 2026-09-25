@@ -87,7 +87,7 @@ pub struct RunArgs {
 
     /// Use only a previously resolved request and cached package bytes
     #[arg(long, conflicts_with = "update")]
-    offline: bool,
+    pub(crate) offline: bool,
 
     /// Refresh the selected packages instead of reusing cached versions
     #[arg(long)]
@@ -104,7 +104,7 @@ pub struct UseArgs {
     source_selection: SourceArgs,
     /// Packages to install or replace, optionally pinned with @version
     #[arg(required = true)]
-    packages: Vec<String>,
+    pub(crate) packages: Vec<String>,
 
     /// Install an exact name@version from a signed record file or immutable GHCR reference
     #[arg(long, requires = "public_key", conflicts_with_all = ["offline", "update", "source", "head", "tag", "rev", "branch"])]
@@ -116,7 +116,7 @@ pub struct UseArgs {
 
     /// Use only previously resolved requests and cached package bytes
     #[arg(long, conflicts_with = "update")]
-    offline: bool,
+    pub(crate) offline: bool,
 
     /// Refresh the selected packages instead of reusing cached versions
     #[arg(long)]

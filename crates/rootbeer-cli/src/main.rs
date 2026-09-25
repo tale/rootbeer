@@ -91,6 +91,18 @@ impl Commands {
                 | Commands::SelfUpdate
         )
     }
+
+    /// Whether `rb` may install itself before running, which needs the network.
+    fn should_adopt(&self) -> bool {
+        match self {
+            Commands::Run(args) => !args.offline,
+            Commands::Use(args) => {
+                !args.offline && !args.packages.iter().any(|package| package == "rootbeer")
+            }
+            Commands::Apply(args) => !args.offline,
+            _ => false,
+        }
+    }
 }
 
 fn main() {
@@ -100,6 +112,9 @@ fn main() {
             eprintln!("error: {error}");
             std::process::exit(1);
         }
+    }
+    if cli.command.should_adopt() {
+        bootstrap::adopt();
     }
 
     match cli.command {

@@ -1,10 +1,13 @@
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::os::unix::fs::symlink;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use rootbeer_core::package::{profile, standalone, PackageRequest};
 use rootbeer_core::store::{layout, root_dir, state_dir, Store, StoreManifest};
+
+use crate::update::{self, Installation};
 
 /// Brings the machine-wide root up to date before a command touches the store.
 /// The common case is a few `stat`s and no output.
@@ -36,6 +39,83 @@ pub fn ensure() -> Result<(), String> {
     }
 
     migrate_legacy_store(&store).map_err(|error| format!("migrating the legacy store: {error}"))
+}
+
+/// Installs the published `rootbeer` into the user profile when running from a
+/// downloaded copy, so `rb` owns and updates itself from then on.
+pub fn adopt() {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let Ok((executable, Installation::Standalone)) = update::detect() else {
+        return;
+    };
+
+    let bin = profile::user_dir().join("bin");
+    let is_installed = bin.join("rb").exists();
+    if !is_installed {
+        eprintln!("installing rootbeer into your profile...");
+        let request = PackageRequest::parse("rootbeer");
+        let result = standalone::prepare_with_resolver(
+            &[request],
+            true,
+            false,
+            false,
+            rootbeer_build::consumer::self_update_resolver_stack,
+        );
+        if let Err(error) = result {
+            eprintln!("warning: could not install rootbeer into your profile: {error}");
+            return;
+        }
+    }
+
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let is_linked = match home.map(|home| link_legacy_bin(&home, &executable, &bin)) {
+        Some(Ok(is_linked)) => is_linked,
+        Some(Err(error)) => {
+            eprintln!("warning: could not link ~/.rootbeer/bin to your profile: {error}");
+            false
+        }
+        None => false,
+    };
+    if !is_installed && !is_linked && !is_on_path(&bin) {
+        eprintln!(
+            "Run eval \"$({}/rb env)\" to add installed commands to this shell.",
+            bin.display()
+        );
+    }
+}
+
+fn is_on_path(directory: &Path) -> bool {
+    let Ok(directory) = fs::canonicalize(directory) else {
+        return false;
+    };
+    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .any(|entry| fs::canonicalize(entry).is_ok_and(|entry| entry == directory))
+}
+
+// TODO(legacy-install): remove once `rb.sh` installs into ~/.rootbeer/bin are gone.
+/// Replaces the old `rb.sh` install directory with a link to the profile's `bin`,
+/// so existing PATH lines keep working and run the profile's `rb`.
+fn link_legacy_bin(home: &Path, executable: &Path, bin: &Path) -> io::Result<bool> {
+    let legacy = home.join(".rootbeer/bin");
+    let Ok(metadata) = fs::symlink_metadata(&legacy) else {
+        return Ok(false);
+    };
+    if !metadata.is_dir()
+        || fs::canonicalize(legacy.join("rb")).ok().as_deref() != Some(executable)
+        || fs::read_dir(&legacy)?.count() != 1
+    {
+        return Ok(false);
+    }
+
+    let link = home.join(".rootbeer/.bin.link");
+    let _ = fs::remove_file(&link);
+    symlink(bin, &link)?;
+    fs::remove_file(legacy.join("rb"))?;
+    fs::remove_dir(&legacy)?;
+    fs::rename(link, legacy)?;
+    Ok(true)
 }
 
 fn create_root(root: &Path, store: &Path) -> Result<(), String> {
@@ -154,5 +234,43 @@ fn move_entry(
             fs::remove_dir_all(path)
         }
         Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn legacy_install(home: &Path) -> PathBuf {
+        let legacy = home.join(".rootbeer/bin");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("rb"), "rb").unwrap();
+        fs::canonicalize(legacy.join("rb")).unwrap()
+    }
+
+    #[test]
+    fn links_the_legacy_install_directory_to_the_profile() {
+        let home = tempfile::tempdir().unwrap();
+        let executable = legacy_install(home.path());
+        let bin = home.path().join("profile/bin");
+        fs::create_dir_all(&bin).unwrap();
+
+        assert!(link_legacy_bin(home.path(), &executable, &bin).unwrap());
+        assert_eq!(
+            fs::read_link(home.path().join(".rootbeer/bin")).unwrap(),
+            bin
+        );
+    }
+
+    #[test]
+    fn leaves_legacy_directories_it_does_not_own() {
+        let home = tempfile::tempdir().unwrap();
+        let executable = legacy_install(home.path());
+        let bin = home.path().join("profile/bin");
+        fs::write(home.path().join(".rootbeer/bin/other"), "").unwrap();
+
+        assert!(!link_legacy_bin(home.path(), &executable, &bin).unwrap());
+        assert!(!link_legacy_bin(home.path(), &home.path().join("elsewhere"), &bin).unwrap());
+        assert!(home.path().join(".rootbeer/bin/rb").is_file());
     }
 }
