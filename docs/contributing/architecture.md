@@ -54,6 +54,13 @@ needs no trust in the caller. An overridden root, or `rb` running as root, write
 directly. Root-owned entries are trusted without rehashing on use, since only the
 helper can create them; entries the caller could have written are verified every time.
 
+The helper has a release (`helper::RELEASE`, bumped on any change) separate from the
+stream protocols it reads (`helper::PROTOCOLS`). The sudo setup records what the
+installed binary reports (`rb-store version`) in `layout.json`. `rb` reinstalls its own
+helper, with one sudo prompt, only when the installed one lacks the protocol `rb` sends
+or is below `helper::MINIMUM_RELEASE`; a newer helper is never downgraded, so helpers
+keep reading older protocols.
+
 Runtime dependencies live in separate content-addressed store entries. Receipts
 and package locks carry exact recursive runtime facts; realization verifies the
 whole closure even when the requested output is cached. Loader-relative sibling

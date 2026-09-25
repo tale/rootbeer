@@ -16,12 +16,18 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let [command, name, version] = arguments.as_slice() else {
-        return Err("usage: rb-store add <name> <version> < tree".into());
+    let (name, version) = match arguments.as_slice() {
+        [command] if command == "version" => {
+            let helper = rootbeer_store::helper::current();
+            println!(
+                "{}",
+                serde_json::to_string(&helper).map_err(|e| e.to_string())?
+            );
+            return Ok(());
+        }
+        [command, name, version] if command == "add" => (name, version),
+        _ => return Err("usage: rb-store add <name> <version> < tree | rb-store version".into()),
     };
-    if command != "add" {
-        return Err(format!("unknown command {command}"));
-    }
 
     unsafe { libc::umask(0o022) };
     let entry = Store::new(root().join("store"))

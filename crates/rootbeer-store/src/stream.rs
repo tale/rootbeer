@@ -12,6 +12,8 @@ use std::path::Path;
 
 use crate::{collect_entries, MANIFEST_DIR};
 
+/// The stream format `rb` sends; see [`crate::helper::PROTOCOLS`] for what a helper reads.
+pub const PROTOCOL: u32 = 1;
 const MAGIC: &[u8] = b"rootbeer-tree-1\n";
 const MAX_PATH: usize = 4096;
 
@@ -178,6 +180,11 @@ mod tests {
         }
         bytes.push(END);
         bytes
+    }
+
+    #[test]
+    fn magic_names_the_protocol() {
+        assert_eq!(MAGIC, format!("rootbeer-tree-{PROTOCOL}\n").as_bytes());
     }
 
     #[test]

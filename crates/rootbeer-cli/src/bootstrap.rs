@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use rootbeer_core::package::{profile, standalone, PackageRequest};
-use rootbeer_core::store::{layout, root_dir, state_dir, Store, StoreManifest, DEFAULT_ROOT};
+use rootbeer_core::store::{
+    helper, layout, root_dir, state_dir, Store, StoreManifest, DEFAULT_ROOT,
+};
 
 use crate::update::{self, Installation};
 
@@ -13,16 +15,21 @@ use crate::update::{self, Installation};
 /// The common case is a few `stat`s and no output.
 pub fn ensure() -> Result<(), String> {
     let root = root_dir();
-    match layout::read(&root).map_err(|error| error.to_string())? {
-        Some(version) if version > layout::VERSION => {
-            return Err(format!(
-                "{} uses layout v{version}, newer than this rootbeer understands (v{}); update rootbeer",
-                root.display(),
-                layout::VERSION
-            ));
-        }
-        Some(layout::VERSION) => {}
-        _ => provision(&root)?,
+    let layout = layout::read(&root).map_err(|error| error.to_string())?;
+    let version = layout.as_ref().map(|layout| layout.version);
+    if let Some(version) = version.filter(|version| *version > layout::VERSION) {
+        return Err(format!(
+            "{} uses layout v{version}, newer than this rootbeer understands (v{}); update rootbeer",
+            root.display(),
+            layout::VERSION
+        ));
+    }
+
+    let installed = layout.as_ref().and_then(|layout| layout.helper.as_ref());
+    let is_current =
+        version == Some(layout::VERSION) && (!is_shared(&root) || helper::is_sufficient(installed));
+    if !is_current {
+        provision(&root, version)?;
     }
 
     let lock = match fs::OpenOptions::new()
@@ -41,14 +48,24 @@ pub fn ensure() -> Result<(), String> {
         .map_err(|error| format!("migrating the legacy store: {error}"))
 }
 
-/// Creates the root, or converts one from an older layout. The machine-wide
-/// root is owned by root and written through the setuid `rb-store` helper; an
-/// overridden root (tests, CI) or a root user writes directly.
-fn provision(root: &Path) -> Result<(), String> {
-    let is_elevated = unsafe { libc::geteuid() } == 0;
-    if root == Path::new(DEFAULT_ROOT) && !is_elevated {
-        let helper = helper_source()?;
-        return run_as_root(&shared_setup(root, &helper));
+/// The machine-wide root is owned by root and written through the setuid
+/// `rb-store` helper; an overridden root (tests, CI) or a root user writes directly.
+fn is_shared(root: &Path) -> bool {
+    root == Path::new(DEFAULT_ROOT) && unsafe { libc::geteuid() } != 0
+}
+
+/// Creates the root, converts one from an older layout, or installs the helper
+/// this build ships when the installed one is too old.
+fn provision(root: &Path, version: Option<u32>) -> Result<(), String> {
+    if is_shared(root) {
+        let is_converting = version != Some(layout::VERSION);
+        let lines = shared_setup(root, &helper_source()?, is_converting);
+        let reason = if is_converting {
+            "set up its store for this machine"
+        } else {
+            "update its store helper"
+        };
+        return run_as_root(reason, &lines);
     }
 
     let store = root.join("store");
@@ -56,40 +73,46 @@ fn provision(root: &Path) -> Result<(), String> {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
             let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
-            run_as_root(&[format!(
-                "install -d -o {uid} -g {gid} {} {}",
-                quote(root),
-                quote(&store)
-            )])?;
+            run_as_root(
+                "set up its store for this machine",
+                &[format!(
+                    "install -d -o {uid} -g {gid} {} {}",
+                    quote(root),
+                    quote(&store)
+                )],
+            )?;
         }
         Err(error) => return Err(format!("{}: {error}", store.display())),
     }
     layout::write(root).map_err(|error| error.to_string())
 }
 
-fn shared_setup(root: &Path, helper: &Path) -> Vec<String> {
+fn shared_setup(root: &Path, helper: &Path, is_converting: bool) -> Vec<String> {
     let bin = root.join("bin");
+    let installed = quote(&bin.join("rb-store"));
     let lock = quote(&root.join(".lock"));
-    vec![
-        format!(
+    let mut lines = Vec::new();
+    if is_converting {
+        lines.push(format!(
             "install -d -m 755 {} {} {}",
             quote(root),
             quote(&root.join("store")),
             quote(&bin)
-        ),
-        format!("chown -R 0:0 {}", quote(root)),
-        format!(
-            "install -m 4755 -o 0 -g 0 {} {}",
-            quote(helper),
-            quote(&bin.join("rb-store"))
-        ),
-        format!("touch {lock} && chmod 666 {lock}"),
-        format!(
-            "echo '{{\"version\":{}}}' > {}",
-            layout::VERSION,
-            quote(&root.join("layout.json"))
-        ),
-    ]
+        ));
+        lines.push(format!("chown -R 0:0 {}", quote(root)));
+        lines.push(format!("touch {lock} && chmod 666 {lock}"));
+    }
+    lines.push(format!(
+        "install -m 4755 -o 0 -g 0 {} {installed}",
+        quote(helper)
+    ));
+    // Recorded from the installed binary itself, so the marker cannot drift from it.
+    lines.push(format!(
+        "printf '{{\"version\":{},\"helper\":%s}}\\n' \"$({installed} version)\" > {}",
+        layout::VERSION,
+        quote(&root.join("layout.json"))
+    ));
+    lines
 }
 
 /// `rb-store` ships next to `rb` in the tarball and the `rootbeer` package.
@@ -107,22 +130,20 @@ fn helper_source() -> Result<PathBuf, String> {
     Ok(helper)
 }
 
-fn run_as_root(lines: &[String]) -> Result<(), String> {
+fn run_as_root(reason: &str, lines: &[String]) -> Result<(), String> {
     let listing: String = lines.iter().map(|line| format!("\n  {line}")).collect();
     if !io::stdin().is_terminal() {
-        return Err(format!(
-            "rootbeer must set up its store once for this machine; run as root:{listing}"
-        ));
+        return Err(format!("rootbeer must {reason}; run as root:{listing}"));
     }
 
-    eprintln!("rootbeer needs sudo once to set up its store for this machine:{listing}");
+    eprintln!("rootbeer needs sudo to {reason}:{listing}");
     let script = format!("set -e\n{}\n", lines.join("\n"));
     let status = Command::new("sudo")
         .args(["sh", "-c", &script])
         .status()
         .map_err(|error| format!("running sudo: {error}"))?;
     if !status.success() {
-        return Err("setting up the store as root failed".into());
+        return Err(format!("failed to {reason} as root"));
     }
     Ok(())
 }
@@ -295,6 +316,7 @@ fn move_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn legacy_install(home: &Path) -> PathBuf {
         let legacy = home.join(".rootbeer/bin");
@@ -305,16 +327,45 @@ mod tests {
 
     #[test]
     fn shared_setup_is_valid_shell_and_quotes_paths() {
-        let lines = shared_setup(Path::new("/opt/root'beer"), Path::new("/tmp/a b/rb-store"));
-        let script = lines.join("\n");
-        let status = Command::new("sh")
-            .args(["-n", "-c", &script])
-            .status()
-            .unwrap();
+        for is_converting in [true, false] {
+            let root = Path::new("/opt/root'beer");
+            let lines = shared_setup(root, Path::new("/tmp/a b/rb-store"), is_converting);
+            let script = lines.join("\n");
+            let status = Command::new("sh")
+                .args(["-n", "-c", &script])
+                .status()
+                .unwrap();
 
-        assert!(status.success());
-        assert!(script.contains("'/opt/root'\\''beer/bin/rb-store'"));
-        assert!(script.contains("install -m 4755 -o 0 -g 0 '/tmp/a b/rb-store'"));
+            assert!(status.success());
+            assert!(script.contains("'/opt/root'\\''beer/bin/rb-store' version"));
+            assert!(script.contains("install -m 4755 -o 0 -g 0 '/tmp/a b/rb-store'"));
+            assert_eq!(script.contains("chown -R"), is_converting);
+        }
+    }
+
+    #[test]
+    fn shared_setup_records_what_the_installed_helper_reports() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::write(
+            bin.join("rb-store"),
+            "#!/bin/sh\necho '{\"release\":7,\"protocols\":[1]}'\n",
+        )
+        .unwrap();
+        fs::set_permissions(bin.join("rb-store"), fs::Permissions::from_mode(0o755)).unwrap();
+
+        let record = shared_setup(root.path(), Path::new("unused"), false)
+            .pop()
+            .unwrap();
+        assert!(Command::new("sh")
+            .args(["-c", &record])
+            .status()
+            .unwrap()
+            .success());
+
+        let helper = layout::read(root.path()).unwrap().unwrap().helper.unwrap();
+        assert_eq!(helper.release, 7);
     }
 
     #[test]

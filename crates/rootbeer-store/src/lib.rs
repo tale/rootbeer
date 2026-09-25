@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 
 use crate::deterministic::DeterministicOutput;
 pub mod deterministic;
+pub mod helper;
 pub mod layout;
 pub mod stream;
 

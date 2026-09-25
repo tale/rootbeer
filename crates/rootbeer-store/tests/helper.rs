@@ -95,3 +95,15 @@ fn unwritable_store_inserts_through_the_helper() {
     assert_eq!(entry.output_sha256, hash_tree(&source).unwrap());
     Store::new(&store).verify_entry(&entry.path).unwrap();
 }
+
+#[test]
+fn helper_reports_its_release_and_protocols() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rb-store"))
+        .arg("version")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let reported: rootbeer_store::layout::Helper = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reported, rootbeer_store::helper::current());
+}
