@@ -45,16 +45,17 @@ config, so you can run `rb` and `rootbeer-forge` directly after building.
 
 ### Prebuilt Forge
 
-Successful main CI publishes the tested Forge binaries in a `forge-<commit>`
-GitHub prerelease for Linux x86-64, Linux ARM64, and macOS ARM64. The index pins
-an exact engine commit and verifies the binary's GitHub build attestation before
-running it. Building from source remains available for local development.
+Successful main CI pushes the tested Forge binaries to
+`ghcr.io/rootbeer-org/rootbeer-forge:<commit>-<target>` as OCI artifacts for
+Linux x86-64, Linux ARM64, and macOS ARM64. The index pins an exact engine
+commit and verifies the binary's GitHub build attestation before running it.
+Building from source remains available for local development.
 
-For example, on Linux x86-64, set `revision` to the full engine commit:
+For example, on Linux x86-64 with [ORAS](https://oras.land), set `revision` to
+the full engine commit:
 
 ```sh
-gh release download "forge-$revision" --repo rootbeer-org/rootbeer \
-  --pattern rootbeer-forge-x86_64-unknown-linux-gnu
+oras pull "ghcr.io/rootbeer-org/rootbeer-forge:$revision-x86_64-unknown-linux-gnu"
 gh attestation verify rootbeer-forge-x86_64-unknown-linux-gnu --repo rootbeer-org/rootbeer \
   --signer-workflow rootbeer-org/rootbeer/.github/workflows/build.yml \
   --source-ref refs/heads/main --source-digest "$revision" --deny-self-hosted-runners
