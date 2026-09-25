@@ -103,3 +103,20 @@ rb use --update jq ripgrep
 
 Use `rb apply --update` for packages declared in Lua. See
 [updates and offline use](/guide/package-locks) for saved versions and locks.
+
+## Uninstall
+
+Remove the `eval` line from your shell profile, then delete your Rootbeer state:
+
+```sh
+rm -rf ~/.local/state/rootbeer ~/.local/share/rootbeer ~/.rootbeer
+```
+
+Your configuration in `~/.config/rootbeer` and any files it applied stay in place;
+delete them yourself if you no longer want them. On macOS, also remove app links
+Rootbeer added to `~/Applications`. Once no other user on the machine uses Rootbeer,
+remove the shared store:
+
+```sh
+sudo rm -rf /opt/rootbeer
+```
