@@ -8,7 +8,7 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -97,7 +97,7 @@ impl Store {
             fs::remove_dir_all(&tmp)?;
         }
 
-        copy_normalized_tree(src, &tmp)?;
+        copy_normalized_tree(src, &tmp).map_err(|error| self.explain_denied(error))?;
         let manifest = StoreManifest {
             schema: 1,
             name: name.clone(),
@@ -160,6 +160,23 @@ impl Store {
             sanitize(name),
             sanitize(version)
         ))
+    }
+
+    fn explain_denied(&self, error: io::Error) -> io::Error {
+        if error.kind() != io::ErrorKind::PermissionDenied {
+            return error;
+        }
+        let Ok(metadata) = fs::metadata(&self.root) else {
+            return error;
+        };
+        io::Error::new(
+            error.kind(),
+            format!(
+                "{} is owned by uid {} and cannot be shared with other users yet",
+                self.root.display(),
+                metadata.uid()
+            ),
+        )
     }
 
     fn temp_path(&self, name: &str, version: &str) -> PathBuf {
@@ -395,6 +412,24 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unwritable_store_names_its_owner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("bin"), "hello").unwrap();
+        let root = tmp.path().join("store");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let error = Store::new(&root)
+            .add_tree("demo", "1", &source)
+            .unwrap_err();
+
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(error.to_string().contains("is owned by uid"), "{error}");
+    }
 
     #[test]
     fn tree_hash_ignores_manifest_metadata() {
