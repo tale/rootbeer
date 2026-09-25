@@ -71,6 +71,6 @@ the formatter evolves.
 When you do need to verify side-effects (file writes, symlink
 overwrites), drive the executor against a tempdir with a recording
 `ExecutionHandler`. Examples in
-[`executor/apply.rs`](https://github.com/tale/rootbeer/blob/main/crates/rootbeer-core/src/executor/apply.rs)
+[`executor/apply.rs`](https://github.com/rootbeer-org/rootbeer/blob/main/crates/rootbeer-core/src/executor/apply.rs)
 and
-[`executor/dry_run.rs`](https://github.com/tale/rootbeer/blob/main/crates/rootbeer-core/src/executor/dry_run.rs).
+[`executor/dry_run.rs`](https://github.com/rootbeer-org/rootbeer/blob/main/crates/rootbeer-core/src/executor/dry_run.rs).

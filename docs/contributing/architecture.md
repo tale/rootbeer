@@ -315,7 +315,7 @@ See [Packaging](./packaging) for distribution-specific build instructions.
    intro followed by a VitePress `@include` directive that pulls in the
    generated reference from `docs/api/_generated/<name>.md`. Copy the
    footer pattern from any existing module page (e.g.
-   [`docs/modules/zsh.md`](https://github.com/tale/rootbeer/blob/main/docs/modules/zsh.md))
+   [`docs/modules/zsh.md`](https://github.com/rootbeer-org/rootbeer/blob/main/docs/modules/zsh.md))
    verbatim. Register the page in the appropriate sidebar category in
    `.vitepress/nav.ts`. Never hand-edit files under `docs/api/_generated/`.
 
@@ -326,15 +326,15 @@ predictable API across providers. At the Rust layer, deferred writes
 flow through a single `Op::WriteFile { source: WriteSource::<Provider> }`
 variant — there is no per-provider write op. To add a provider:
 
-1. Add a `WriteSource` variant in [`plan.rs`](https://github.com/tale/rootbeer/blob/main/crates/rootbeer-core/src/plan.rs)
+1. Add a `WriteSource` variant in [`plan.rs`](https://github.com/rootbeer-org/rootbeer/blob/main/crates/rootbeer-core/src/plan.rs)
    carrying whatever the provider needs to fetch at apply time (e.g.
    `Rage { ciphertext: PathBuf, identity: PathBuf }`).
-2. Extend `resolve_source` in [`apply.rs`](https://github.com/tale/rootbeer/blob/main/crates/rootbeer-core/src/executor/apply.rs)
+2. Extend `resolve_source` in [`apply.rs`](https://github.com/rootbeer-org/rootbeer/blob/main/crates/rootbeer-core/src/executor/apply.rs)
    with the shell-out, and `WriteSource::fetch_label` in `plan.rs` so
    the CLI announces the fetch automatically.
 3. Add `rb.secret.<provider>(…)` (sync) and `rb.secret.<provider>_document(…)`
-   (deferred) bindings in [`lua/secret.rs`](https://github.com/tale/rootbeer/blob/main/crates/rootbeer-core/src/lua/secret.rs),
-   plus matching annotations in [`lua/rootbeer/secret.lua`](https://github.com/tale/rootbeer/blob/main/lua/rootbeer/secret.lua).
+   (deferred) bindings in [`lua/secret.rs`](https://github.com/rootbeer-org/rootbeer/blob/main/crates/rootbeer-core/src/lua/secret.rs),
+   plus matching annotations in [`lua/rootbeer/secret.lua`](https://github.com/rootbeer-org/rootbeer/blob/main/lua/rootbeer/secret.lua).
 
 No CLI changes are required — the dry-run / apply output picks up the
 new provider through `fetch_label`.

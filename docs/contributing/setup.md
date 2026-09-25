@@ -53,10 +53,10 @@ running it. Building from source remains available for local development.
 For example, on Linux x86-64, set `revision` to the full engine commit:
 
 ```sh
-gh release download "forge-$revision" --repo tale/rootbeer \
+gh release download "forge-$revision" --repo rootbeer-org/rootbeer \
   --pattern rootbeer-forge-x86_64-unknown-linux-gnu
-gh attestation verify rootbeer-forge-x86_64-unknown-linux-gnu --repo tale/rootbeer \
-  --signer-workflow tale/rootbeer/.github/workflows/build.yml \
+gh attestation verify rootbeer-forge-x86_64-unknown-linux-gnu --repo rootbeer-org/rootbeer \
+  --signer-workflow rootbeer-org/rootbeer/.github/workflows/build.yml \
   --source-ref refs/heads/main --source-digest "$revision" --deny-self-hosted-runners
 chmod +x rootbeer-forge-x86_64-unknown-linux-gnu
 ```

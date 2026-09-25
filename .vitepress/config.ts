@@ -26,7 +26,7 @@ export default defineConfig({
         const source = ["modules/index.md", "reference/index.md"].includes(filePath)
           ? ".vitepress/nav.ts"
           : `docs/${filePath}`;
-        return `https://github.com/tale/rootbeer/edit/main/${source}`;
+        return `https://github.com/rootbeer-org/rootbeer/edit/main/${source}`;
       },
       text: "Improve this page",
     },
@@ -37,7 +37,7 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: "github", link: "https://github.com/tale/rootbeer" },
+      { icon: "github", link: "https://github.com/rootbeer-org/rootbeer" },
       { icon: "githubsponsors", link: "https://github.com/sponsors/tale" },
     ],
   },
