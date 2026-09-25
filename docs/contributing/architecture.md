@@ -51,7 +51,8 @@ insert through `rb-store`, a small setuid-root helper installed at
 stdin (`rootbeer_store::stream`); the helper never opens a path the caller names,
 rejects entries that escape the tree, and files what it wrote under its own hash, so it
 needs no trust in the caller. An overridden root, or `rb` running as root, writes
-directly.
+directly. Root-owned entries are trusted without rehashing on use, since only the
+helper can create them; entries the caller could have written are verified every time.
 
 Runtime dependencies live in separate content-addressed store entries. Receipts
 and package locks carry exact recursive runtime facts; realization verifies the

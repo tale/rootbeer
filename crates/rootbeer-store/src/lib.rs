@@ -79,14 +79,52 @@ impl Store {
         version: impl Into<String>,
         src: impl AsRef<Path>,
     ) -> io::Result<StoreEntry> {
-        let name = name.into();
-        let version = version.into();
         let src = src.as_ref();
         let output_sha256 = hash_tree(src)?;
-        let path = self.store_path(&output_sha256, &name, &version);
+        self.insert(name.into(), version.into(), src, output_sha256, false)
+    }
 
+    /// Adds a tree whose output hash the caller already knows, hashing it once
+    /// after it lands instead of before.
+    pub fn add_tree_expecting(
+        &self,
+        name: impl Into<String>,
+        version: impl Into<String>,
+        src: impl AsRef<Path>,
+        expected: &str,
+    ) -> io::Result<StoreEntry> {
+        self.insert(
+            name.into(),
+            version.into(),
+            src.as_ref(),
+            expected.to_owned(),
+            true,
+        )
+    }
+
+    /// Whether an entry is owned by root while the caller is not, so it was
+    /// verified by `rb-store` on insert and cannot have changed since.
+    pub fn is_sealed(&self, path: impl AsRef<Path>) -> bool {
+        let Ok(metadata) = fs::symlink_metadata(path) else {
+            return false;
+        };
+        let is_elevated = unsafe { libc::geteuid() } == 0;
+        metadata.is_dir() && metadata.uid() == 0 && !is_elevated && metadata.mode() & 0o022 == 0
+    }
+
+    fn insert(
+        &self,
+        name: String,
+        version: String,
+        src: &Path,
+        output_sha256: String,
+        should_verify_copy: bool,
+    ) -> io::Result<StoreEntry> {
+        let path = self.store_path(&output_sha256, &name, &version);
         if path.exists() {
-            self.verify_entry(&path)?;
+            if !self.is_sealed(&path) {
+                self.verify_entry(&path)?;
+            }
             return Ok(StoreEntry {
                 path,
                 name,
@@ -111,6 +149,14 @@ impl Store {
                 return self.add_through_helper(&helper, name, version, src, output_sha256);
             }
             Err(error) => return Err(error),
+        }
+
+        if should_verify_copy {
+            let actual = hash_tree(&tmp)?;
+            if actual != output_sha256 {
+                let _ = fs::remove_dir_all(&tmp);
+                return Err(mismatch(&name, &version, &output_sha256, &actual));
+            }
         }
         self.commit(&tmp, name, version, output_sha256)
     }
@@ -218,14 +264,8 @@ impl Store {
         let path = self.store_path(&output_sha256, &name, &version);
         let stored = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
         if stored.file_name() != path.file_name() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "{} stored a different tree than {}",
-                    helper.display(),
-                    src.display()
-                ),
-            ));
+            let stored = stored.file_name().unwrap_or_default().to_string_lossy();
+            return Err(mismatch(&name, &version, &output_sha256, &stored));
         }
 
         Ok(StoreEntry {
@@ -324,6 +364,13 @@ impl DeterministicOutput for StoreManifest {
     fn output_sha256(&self) -> &str {
         &self.output_sha256
     }
+}
+
+fn mismatch(name: &str, version: &str, expected: &str, actual: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("{name}@{version} output hash mismatch: expected {expected}, got {actual}"),
+    )
 }
 
 pub fn hash_tree(path: impl AsRef<Path>) -> io::Result<String> {
@@ -522,6 +569,34 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn add_tree_expecting_hashes_the_copy_and_rejects_a_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("bin"), "hello").unwrap();
+        let store = Store::new(tmp.path().join("store"));
+        let expected = hash_tree(&source).unwrap();
+
+        let error = store
+            .add_tree_expecting("demo", "1", &source, &"0".repeat(64))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("output hash mismatch"),
+            "{error}"
+        );
+        assert_eq!(fs::read_dir(store.root()).unwrap().count(), 0);
+
+        let entry = store
+            .add_tree_expecting("demo", "1", &source, &expected)
+            .unwrap();
+        assert_eq!(
+            store.verify_entry(&entry.path).unwrap().output_sha256,
+            expected
+        );
+        assert!(!store.is_sealed(&entry.path));
+    }
 
     #[test]
     fn unwritable_store_names_its_owner() {
