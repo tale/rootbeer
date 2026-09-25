@@ -4,16 +4,17 @@ Install Rootbeer, then run your first tool. A Lua configuration is optional.
 
 ## Install Rootbeer
 
-Rootbeer supports Apple silicon macOS, Linux ARM64, and Linux x86-64. The installer requires
-`curl` and `unzip`; on Ubuntu, install them with `sudo apt install curl unzip`.
+Rootbeer supports Apple silicon macOS, Linux ARM64, and Linux x86-64. The installer only
+needs `curl` (or `wget`) and `tar`.
 
 ```sh
 sh -c "$(curl -fsSL https://rbpkg.com/rb.sh)"
-export PATH="$HOME/.rootbeer/bin:$PATH"
+eval "$("$HOME/.local/state/rootbeer/profiles/user/current/bin/rb" env)"
 ```
 
-This installs the current nightly `rb` to `~/.rootbeer/bin` and makes it available
-in this shell.
+The installer downloads a bootstrap `rb`, which installs the published `rootbeer` package
+into your user profile; from then on `rb` updates itself with `rb self-update`. Add the
+`eval` line to your shell profile to keep installed commands on `PATH`.
 
 Packages live in a store shared by every user at `/opt/rootbeer/store`. The first command
 that needs it asks for `sudo` once per machine to create it and prints the exact command
@@ -46,8 +47,7 @@ command. Add these lines to `~/.bashrc` for Bash or `~/.zshrc` for Zsh to make
 your tools available in new terminals:
 
 ```sh
-export PATH="$HOME/.rootbeer/bin:$PATH"
-eval "$(rb env)"
+eval "$("$HOME/.local/state/rootbeer/profiles/user/current/bin/rb" env)"
 ```
 
 See [using packages](/guide/packages) for exact versions, additional commands,

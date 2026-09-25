@@ -142,6 +142,7 @@ jobs:
           mkdir -p .vitepress/dist/nightly
           for name in linux-x86_64 linux-aarch64 macos-aarch64; do
             (cd "artifacts/rb-${name}" && zip "../../.vitepress/dist/nightly/rb-${name}.zip" rb)
+            tar -czf ".vitepress/dist/nightly/rb-${name}.tar.gz" -C "artifacts/rb-${name}" rb
           done
           echo '${{ needs.changes.outputs.timestamp }}' > .vitepress/dist/nightly/version.txt
           echo '${{ github.sha }}' > .vitepress/dist/nightly/source-sha.txt
@@ -151,8 +152,10 @@ jobs:
         run: |
           mkdir -p .vitepress/dist/nightly
           for name in linux-x86_64 linux-aarch64 macos-aarch64; do
-            curl -fsSL "https://rbpkg.com/nightly/rb-${name}.zip" \
-              -o ".vitepress/dist/nightly/rb-${name}.zip" || true
+            for extension in zip tar.gz; do
+              curl -fsSL "https://rbpkg.com/nightly/rb-${name}.${extension}" \
+                -o ".vitepress/dist/nightly/rb-${name}.${extension}" || true
+            done
           done
           curl -fsSL "https://rbpkg.com/nightly/version.txt" \
             -o ".vitepress/dist/nightly/version.txt" || true
