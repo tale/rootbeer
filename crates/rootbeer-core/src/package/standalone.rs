@@ -119,7 +119,7 @@ pub fn prepare_with_resolver(
         let identity =
             serde_json::to_vec(&(ResolveContext::current(), request)).map_err(|e| e.to_string())?;
         let lock_path = root.join("requests").join(hash_bytes(&identity));
-        let cached = read_lock(&lock_path).map_err(|e| e.to_string())?;
+        let cached = read_cached_request(&lock_path).map_err(|e| e.to_string())?;
         let lock = match cached.as_ref() {
             Some(lock) if !should_update => lock.clone(),
             _ if is_offline => {
@@ -203,7 +203,7 @@ pub(crate) fn cached_resolution(
     let path = crate::state_dir()
         .join("standalone/requests")
         .join(hash_bytes(&identity));
-    let Some(lock) = read_lock(&path)? else {
+    let Some(lock) = read_cached_request(&path)? else {
         return Ok(None);
     };
     lock.resolution_for_request(request, context)
@@ -323,6 +323,15 @@ fn read_lock(path: &Path) -> io::Result<Option<RootbeerLock>> {
         Ok(lock) => Ok(Some(lock)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
+    }
+}
+
+/// Request locks only cache resolutions, so one an older rootbeer wrote in a
+/// format this build cannot parse is a miss rather than an error.
+fn read_cached_request(path: &Path) -> io::Result<Option<RootbeerLock>> {
+    match read_lock(path) {
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => Ok(None),
+        result => result,
     }
 }
 
