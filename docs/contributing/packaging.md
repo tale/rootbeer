@@ -383,9 +383,11 @@ Runtime edges propagate only through other runtime edges; a compiler's own runti
 dependencies remain build inputs for its consumer.
 
 Source-capable dependencies always use their source recipe, even when upstream
-binaries exist. Verified outputs are reused from the build cache; a miss compiles the
-dependency. Binary-only dependencies use their pinned upstream artifacts. A failed
-source build never falls back to an upstream binary.
+binaries exist. With `--pdr`, a dependency the PDR has published for its current recipe
+and revision installs from its signed record instead of compiling, and its dependents'
+input keys name that published build. Otherwise verified outputs are reused from the
+build cache, and a miss compiles the dependency. Binary-only dependencies use their
+pinned upstream artifacts. A failed source build never falls back to an upstream binary.
 
 ### Libraries
 
@@ -560,15 +562,19 @@ Metadata-only changes and unrelated engine updates don't rebuild anything. Each 
 runs the same commands you can run by hand:
 
 ```sh
-rootbeer-forge --catalog packages package-plan shfmt@3.14.1 --context "$BUILD_CONTEXT"
-rootbeer-forge --catalog packages build shfmt@3.14.1 --input-key "$INPUT_KEY" \
-  --output result --cache "$CACHE" --cache-context "$BUILD_CONTEXT"
+pdr=(--pdr https://pdr.rbpkg.com/v3/current.json --pdr-public-key "$PDR_PUBLIC_KEY")
+rootbeer-forge --catalog packages package-plan curl@8.22.0 --context "$BUILD_CONTEXT" "${pdr[@]}"
+rootbeer-forge --catalog packages build curl@8.22.0 --input-key "$INPUT_KEY" \
+  --output result --cache "$CACHE" --cache-context "$BUILD_CONTEXT" \
+  "${pdr[@]}" --pdr-root "$PDR_ROOT"
 ```
 
 `package-plan` emits one task per exact package supported on the current machine,
 each with an input key covering its recipe and checks, platform, build backend, and
 tool and environment hashes. `build --input-key` stops if this machine's inputs
-differ, rather than producing a result under the wrong key.
+differ, rather than producing a result under the wrong key. A source task also names the
+PDR root it planned against; `--pdr-root` makes the build read that same root, so a
+publication in between can't change which dependencies it installs.
 
 PR jobs have no signing credentials. After merge, publication promotes the exact
 verified artifacts from the PR without rebuilding. Each package is signed in its own
@@ -582,7 +588,8 @@ rootbeer-forge push release --public-key "$PDR_PUBLIC_KEY"
 ```
 
 `release` checks the recipe, archive, installed contents, and runtime audit against
-the receipt, then signs a record. It does not rebuild or execute the package, and the
+the receipt, and verifies every published dependency the receipt used against the PDR
+key, then signs a record. It does not rebuild or execute the package, and the
 signature doesn't authenticate the receipt's producer: CI must establish that before
 handing it over. `push` needs ORAS authenticated to GHCR; it uploads the release,
 checks anonymous downloads, and tags the record `inputs-<key>`. Retry it after upload
