@@ -45,6 +45,14 @@ and CI); per-user state stays in `~/.local/state/rootbeer`. `layout.json` in the
 records the layout version so a newer `rb` migrates an older one. Stores from before
 the move are migrated on first use, leaving a symlink per entry.
 
+`/opt/rootbeer` is owned by root and shared by every user without a daemon. Users
+insert through `rb-store`, a small setuid-root helper installed at
+`/opt/rootbeer/bin/rb-store` by the one-time sudo setup. `rb` streams the tree to it on
+stdin (`rootbeer_store::stream`); the helper never opens a path the caller names,
+rejects entries that escape the tree, and files what it wrote under its own hash, so it
+needs no trust in the caller. An overridden root, or `rb` running as root, writes
+directly.
+
 Runtime dependencies live in separate content-addressed store entries. Receipts
 and package locks carry exact recursive runtime facts; realization verifies the
 whole closure even when the requested output is cached. Loader-relative sibling

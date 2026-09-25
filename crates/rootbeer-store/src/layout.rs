@@ -7,7 +7,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u32 = 1;
+/// v2: owned by root and written through the setuid `rb-store` helper.
+pub const VERSION: u32 = 2;
 const FILE: &str = "layout.json";
 
 #[derive(Serialize, Deserialize)]

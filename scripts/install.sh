@@ -60,7 +60,7 @@ main() {
 	echo "downloading rootbeer nightly for ${platform}..."
 	download "${BASE_URL}/rb-${platform}.tar.gz" "${tmpdir}/rb.tar.gz"
 	tar -xzf "${tmpdir}/rb.tar.gz" -C "${tmpdir}"
-	chmod +x "${tmpdir}/rb"
+	chmod +x "${tmpdir}/rb" "${tmpdir}/rb-store"
 
 	# The downloaded rb is only a bootstrap; rootbeer installs and updates itself from the profile.
 	"${tmpdir}/rb" use rootbeer

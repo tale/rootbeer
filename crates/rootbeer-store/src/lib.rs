@@ -10,6 +10,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -18,12 +19,15 @@ use sha2::{Digest, Sha256};
 use crate::deterministic::DeterministicOutput;
 pub mod deterministic;
 pub mod layout;
+pub mod stream;
 
-/// Machine-wide root holding the shared store (`/opt/rootbeer`, or `ROOTBEER_ROOT`).
+pub const DEFAULT_ROOT: &str = "/opt/rootbeer";
+
+/// Machine-wide root holding the shared store ([`DEFAULT_ROOT`], or `ROOTBEER_ROOT`).
 pub fn root_dir() -> PathBuf {
     std::env::var_os("ROOTBEER_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/opt/rootbeer"))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_ROOT))
 }
 
 pub fn state_dir() -> PathBuf {
@@ -97,7 +101,60 @@ impl Store {
             fs::remove_dir_all(&tmp)?;
         }
 
-        copy_normalized_tree(src, &tmp).map_err(|error| self.explain_denied(error))?;
+        match copy_normalized_tree(src, &tmp) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                let helper = self.helper();
+                if !helper.is_file() {
+                    return Err(self.explain_denied(error));
+                }
+                return self.add_through_helper(&helper, name, version, src, output_sha256);
+            }
+            Err(error) => return Err(error),
+        }
+        self.commit(&tmp, name, version, output_sha256)
+    }
+
+    /// Unpacks a [`stream`] into the store, hashing what was written rather than
+    /// trusting the sender. This is what `rb-store` runs with elevated privileges.
+    pub fn add_stream(
+        &self,
+        name: impl Into<String>,
+        version: impl Into<String>,
+        input: &mut impl Read,
+    ) -> io::Result<StoreEntry> {
+        let name = name.into();
+        let version = version.into();
+        fs::create_dir_all(&self.root)?;
+        let tmp = self.temp_path(&name, &version);
+        if let Err(error) = stream::read_tree(input, &tmp) {
+            let _ = fs::remove_dir_all(&tmp);
+            return Err(error);
+        }
+
+        let output_sha256 = hash_tree(&tmp)?;
+        let path = self.store_path(&output_sha256, &name, &version);
+        if path.exists() {
+            fs::remove_dir_all(&tmp)?;
+            self.verify_entry(&path)?;
+            return Ok(StoreEntry {
+                path,
+                name,
+                version,
+                output_sha256,
+            });
+        }
+        self.commit(&tmp, name, version, output_sha256)
+    }
+
+    fn commit(
+        &self,
+        tmp: &Path,
+        name: String,
+        version: String,
+        output_sha256: String,
+    ) -> io::Result<StoreEntry> {
+        let path = self.store_path(&output_sha256, &name, &version);
         let manifest = StoreManifest {
             schema: 1,
             name: name.clone(),
@@ -105,17 +162,70 @@ impl Store {
             output_sha256: output_sha256.clone(),
         };
 
-        write_manifest(&tmp, &manifest)?;
-        match fs::rename(&tmp, &path) {
+        write_manifest(tmp, &manifest)?;
+        match fs::rename(tmp, &path) {
             Ok(()) => {}
             Err(_) if path.exists() => {
                 // Another process may have created this exact store entry after
                 // our initial existence check. Reuse it only if it verifies.
-                fs::remove_dir_all(&tmp)?;
+                fs::remove_dir_all(tmp)?;
                 self.verify_entry(&path)?;
             }
 
             Err(err) => return Err(err),
+        }
+
+        Ok(StoreEntry {
+            path,
+            name,
+            version,
+            output_sha256,
+        })
+    }
+
+    /// The setuid `rb-store` helper that inserts into a store owned by root.
+    fn helper(&self) -> PathBuf {
+        self.root
+            .parent()
+            .unwrap_or(&self.root)
+            .join("bin/rb-store")
+    }
+
+    fn add_through_helper(
+        &self,
+        helper: &Path,
+        name: String,
+        version: String,
+        src: &Path,
+        output_sha256: String,
+    ) -> io::Result<StoreEntry> {
+        let mut child = Command::new(helper)
+            .args(["add", &name, &version])
+            .env("ROOTBEER_ROOT", self.root.parent().unwrap_or(&self.root))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut stdin = io::BufWriter::new(child.stdin.take().expect("piped stdin"));
+        let written = stream::write_tree(src, &mut stdin).and_then(|()| stdin.flush());
+        drop(stdin);
+
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            return Err(io::Error::other(format!("{} failed", helper.display())));
+        }
+        written?;
+
+        let path = self.store_path(&output_sha256, &name, &version);
+        let stored = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        if stored.file_name() != path.file_name() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} stored a different tree than {}",
+                    helper.display(),
+                    src.display()
+                ),
+            ));
         }
 
         Ok(StoreEntry {

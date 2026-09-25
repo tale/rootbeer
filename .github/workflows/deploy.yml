@@ -104,7 +104,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rb-${{ matrix.name }}
-          path: target/${{ matrix.target }}/release/rb
+          path: |
+            target/${{ matrix.target }}/release/rb
+            target/${{ matrix.target }}/release/rb-store
 
   deploy:
     name: Deploy
@@ -142,7 +144,8 @@ jobs:
           mkdir -p .vitepress/dist/nightly
           for name in linux-x86_64 linux-aarch64 macos-aarch64; do
             (cd "artifacts/rb-${name}" && zip "../../.vitepress/dist/nightly/rb-${name}.zip" rb)
-            tar -czf ".vitepress/dist/nightly/rb-${name}.tar.gz" -C "artifacts/rb-${name}" rb
+            chmod +x "artifacts/rb-${name}/rb" "artifacts/rb-${name}/rb-store"
+            tar -czf ".vitepress/dist/nightly/rb-${name}.tar.gz" -C "artifacts/rb-${name}" rb rb-store
           done
           echo '${{ needs.changes.outputs.timestamp }}' > .vitepress/dist/nightly/version.txt
           echo '${{ github.sha }}' > .vitepress/dist/nightly/source-sha.txt

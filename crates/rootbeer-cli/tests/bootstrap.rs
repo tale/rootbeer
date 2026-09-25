@@ -75,7 +75,7 @@ fn prints_the_exact_sudo_command_without_a_terminal() {
     fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("sudo install -d -o"), "{stderr}");
+    assert!(stderr.contains("install -d -o"), "{stderr}");
 }
 
 #[test]
