@@ -5,9 +5,9 @@ use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use rootbeer_core::package::download;
+use rootbeer_core::package::progress::Event;
 
-static IS_DOWNLOADING: AtomicBool = AtomicBool::new(false);
+static IS_REPORTING: AtomicBool = AtomicBool::new(false);
 static LAST_DOWNLOAD_DRAW: Mutex<Option<Instant>> = Mutex::new(None);
 
 pub(crate) struct Progress {
@@ -55,8 +55,8 @@ fn is_interactive() -> bool {
     io::stderr().is_terminal() && std::env::var("TERM").as_deref() != Ok("dumb")
 }
 
-/// Draws the active download on one line; registered with [`download::observe`].
-pub(crate) fn download(progress: &download::Progress) {
+/// Draws package progress on one line; registered with `progress::observe`.
+pub(crate) fn report(event: &Event) {
     if !is_interactive() {
         return;
     }
@@ -64,34 +64,41 @@ pub(crate) fn download(progress: &download::Progress) {
     let mut last = LAST_DOWNLOAD_DRAW
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut stderr = io::stderr().lock();
-    if progress.is_done {
-        *last = None;
-        IS_DOWNLOADING.store(false, Ordering::Relaxed);
-        let _ = write!(stderr, "\r\x1b[2K");
-        let _ = stderr.flush();
-        return;
-    }
-    if last.is_some_and(|drawn| drawn.elapsed() < Duration::from_millis(100)) {
-        return;
-    }
-    *last = Some(Instant::now());
-    IS_DOWNLOADING.store(true, Ordering::Relaxed);
-
-    let size = match progress.total {
-        Some(total) if total >= progress.received && total > 0 => format!(
-            "{} / {} ({}%)",
-            bytes(progress.received),
-            bytes(total),
-            progress.received * 100 / total
-        ),
-        _ => bytes(progress.received),
+    let line = match event {
+        Event::Done => {
+            *last = None;
+            IS_REPORTING.store(false, Ordering::Relaxed);
+            let mut stderr = io::stderr().lock();
+            let _ = write!(stderr, "\r\x1b[2K");
+            let _ = stderr.flush();
+            return;
+        }
+        Event::Install { name } => format!("installing {name}"),
+        Event::Download {
+            url,
+            received,
+            total,
+        } => {
+            if last.is_some_and(|drawn| drawn.elapsed() < Duration::from_millis(100)) {
+                return;
+            }
+            *last = Some(Instant::now());
+            let size = match total {
+                Some(total) if total >= received && *total > 0 => format!(
+                    "{} / {} ({}%)",
+                    bytes(*received),
+                    bytes(*total),
+                    received * 100 / total
+                ),
+                _ => bytes(*received),
+            };
+            format!("downloading {} {size}", download_name(url))
+        }
     };
-    let _ = write!(
-        stderr,
-        "\r\x1b[2K  downloading {} {size}",
-        download_name(progress.url)
-    );
+
+    IS_REPORTING.store(true, Ordering::Relaxed);
+    let mut stderr = io::stderr().lock();
+    let _ = write!(stderr, "\r\x1b[2K  {line}");
     let _ = stderr.flush();
 }
 
@@ -112,7 +119,7 @@ fn bytes(count: u64) -> String {
 }
 
 fn draw(label: &str, frame: usize, started: Instant) {
-    if IS_DOWNLOADING.load(Ordering::Relaxed) {
+    if IS_REPORTING.load(Ordering::Relaxed) {
         return;
     }
     let frames = ['|', '/', '-', '\\'];

@@ -1,43 +1,17 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::progress::{report, Event};
 use crate::store::hash_file;
 use crate::{state_dir, Execution};
 
 const USER_AGENT: &str = concat!("rootbeer/", env!("CARGO_PKG_VERSION"));
-
-/// A snapshot of one download, reported after every chunk and once when it ends.
-pub struct Progress<'a> {
-    pub url: &'a str,
-    pub received: u64,
-    pub total: Option<u64>,
-    pub is_done: bool,
-}
-
-static OBSERVER: OnceLock<fn(&Progress)> = OnceLock::new();
-
-/// Registers the process-wide receiver for download [`Progress`].
-pub fn observe(observer: fn(&Progress)) {
-    let _ = OBSERVER.set(observer);
-}
-
-fn report(url: &str, received: u64, total: Option<u64>, is_done: bool) {
-    if let Some(observer) = OBSERVER.get() {
-        observer(&Progress {
-            url,
-            received,
-            total,
-            is_done,
-        });
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct DownloadCache {
@@ -381,10 +355,14 @@ fn copy_reader_to_writer(
             break Err(error);
         }
         received += n as u64;
-        report(url, received, total, false);
+        report(&Event::Download {
+            url,
+            received,
+            total,
+        });
     };
 
-    report(url, received, total, true);
+    report(&Event::Done);
     result.map(|()| hex(hasher.finalize().as_slice()))
 }
 

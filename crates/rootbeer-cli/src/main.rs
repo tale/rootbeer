@@ -107,7 +107,7 @@ impl Commands {
 
 fn main() {
     let cli = Cli::parse();
-    rootbeer_core::package::download::observe(progress::download);
+    rootbeer_core::package::progress::observe(progress::report);
     if cli.command.needs_store() {
         if let Err(error) = bootstrap::ensure() {
             eprintln!("error: {error}");
