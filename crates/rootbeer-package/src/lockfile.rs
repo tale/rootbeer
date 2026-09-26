@@ -109,6 +109,22 @@ impl fmt::Display for LockError {
 
 impl std::error::Error for LockError {}
 
+fn invalid_lock(path: &Path, error: serde_json::Error) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("invalid package lock {}: {error}", path.display()),
+    )
+}
+
+fn retain_parseable<T: serde::de::DeserializeOwned>(map: &mut serde_json::Value) -> bool {
+    let Some(map) = map.as_object_mut() else {
+        return false;
+    };
+    let before = map.len();
+    map.retain(|_, entry| T::deserialize(&*entry).is_ok());
+    map.len() != before
+}
+
 impl RootbeerLock {
     pub fn from_packages(
         packages: impl IntoIterator<Item = LockedPackage>,
@@ -282,26 +298,52 @@ impl RootbeerLock {
     pub fn read(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
         let bytes = fs::read(path)?;
-        let lock: Self = serde_json::from_slice(&bytes).map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid package lock {}: {error}", path.display()),
-            )
-        })?;
-        if !matches!(lock.schema, 1..=3) {
+        let lock: Self =
+            serde_json::from_slice(&bytes).map_err(|error| invalid_lock(path, error))?;
+        lock.validate()
+    }
+
+    /// Reads a lock another rootbeer wrote, dropping the resolver inputs,
+    /// resolutions, and packages this build no longer understands so they
+    /// resolve again. Returns whether anything was dropped. JSON that does not
+    /// parse at all, such as a merge conflict, is still an error.
+    pub fn read_compatible(path: impl AsRef<Path>) -> io::Result<(Self, bool)> {
+        let path = path.as_ref();
+        let bytes = fs::read(path)?;
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|error| invalid_lock(path, error))?;
+
+        let mut is_salvaged = false;
+        if let Some(resolvers) = value.pointer_mut("/inputs/resolvers") {
+            is_salvaged |= retain_parseable::<super::ResolverInput>(resolvers);
+        }
+        if let Some(resolutions) = value.get_mut("resolutions") {
+            is_salvaged |= retain_parseable::<PackageLockResolution>(resolutions);
+        }
+        if let Some(packages) = value.get_mut("packages") {
+            is_salvaged |= retain_parseable::<LockedPackage>(packages);
+        }
+
+        let lock: Self =
+            serde_json::from_value(value).map_err(|error| invalid_lock(path, error))?;
+        Ok((lock.validate()?, is_salvaged))
+    }
+
+    fn validate(self) -> io::Result<Self> {
+        if !matches!(self.schema, 1..=3) {
             return Err(io::Error::other(
                 "unsupported package lock schema; update Rootbeer",
             ));
         }
-        for package in lock.packages.values() {
-            if lock.schema < 3 && !package.runtime_dependencies.is_empty() {
+        for package in self.packages.values() {
+            if self.schema < 3 && !package.runtime_dependencies.is_empty() {
                 return Err(io::Error::other(
                     "runtime dependencies require package lock schema 3",
                 ));
             }
             crate::runtime::closure(package).map_err(io::Error::other)?;
         }
-        Ok(lock)
+        Ok(self)
     }
 
     pub fn write(&self, path: impl AsRef<Path>) -> io::Result<()> {

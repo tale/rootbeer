@@ -213,8 +213,20 @@ impl PlannedPipeline {
         if !crate::package::lockfile::has_package_ops(&self.ops) && !path.exists() {
             return Ok(self.ops.clone());
         }
+        let mut is_salvaged = false;
         let existing = if path.exists() {
-            Some(RootbeerLock::read(&path)?)
+            let lock;
+            (lock, is_salvaged) = RootbeerLock::read_compatible(&path)?;
+            if is_salvaged && self.opts.package_lock.is_locked {
+                return Err(io::Error::other(
+                    "rootbeer.lock is from an older rootbeer; run without --locked to update it",
+                )
+                .into());
+            }
+            if is_salvaged {
+                notice("updating rootbeer.lock from an older rootbeer");
+            }
+            Some(lock)
         } else {
             None
         };
@@ -231,7 +243,7 @@ impl PlannedPipeline {
             return crate::package::lockfile::apply_to_ops(lock, &self.ops).map_err(Into::into);
         }
 
-        if !self.opts.package_lock.should_update {
+        if !self.opts.package_lock.should_update && !is_salvaged {
             if let Some(lock) = existing.as_ref() {
                 if self.lock_matches_plan(lock)? {
                     match crate::package::lockfile::apply_to_ops(lock, &self.ops) {
@@ -766,6 +778,48 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(RootbeerLock::read(&path).unwrap().packages.is_empty());
+    }
+
+    #[test]
+    fn lock_entries_from_another_rootbeer_resolve_again_unless_locked() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("rootbeer.lock");
+        let lock = r#"{
+            "schema": 2,
+            "inputs": { "resolvers": { "aqua": { "type": "aqua_registry" } } },
+            "resolutions": { "abc": { "package": "aqua:tool@1", "proof": { "type": "gone" } } },
+            "packages": {}
+        }"#;
+        for is_locked in [false, true] {
+            fs::write(&path, lock).unwrap();
+            let mut options = opts(root.path().into(), Mode::Apply);
+            options.package_lock.is_locked = is_locked;
+            let planned = PlannedPipeline {
+                tools: Default::default(),
+                package_resolver: crate::package::resolver_stack_for_inputs,
+                package_repository: None,
+                local_catalog: None,
+                opts: options,
+                ops: vec![],
+            };
+            let mut notices = Vec::new();
+            let result =
+                planned.locked_ops_for_apply(&mut |notice| notices.push(notice.to_owned()));
+
+            if is_locked {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains("older rootbeer"), "{error}");
+                assert_eq!(fs::read_to_string(&path).unwrap(), lock);
+                continue;
+            }
+            result.unwrap();
+            assert_eq!(notices, ["updating rootbeer.lock from an older rootbeer"]);
+            assert!(RootbeerLock::read(&path)
+                .unwrap()
+                .inputs
+                .resolvers
+                .is_empty());
+        }
     }
 
     #[test]
