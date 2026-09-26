@@ -30,6 +30,8 @@ fn migrates_the_legacy_store_and_keeps_existing_links_resolving() {
     let root = tempfile::tempdir().unwrap();
     let legacy = root.path().join("rootbeer/store");
     let entry = seed(&legacy, "tool");
+    let browsed = seed(&legacy, "browsed");
+    fs::write(browsed.join(".DS_Store"), "finder").unwrap();
     let invalid = legacy.join("sha256-broken-tool-1");
     fs::create_dir_all(&invalid).unwrap();
     let profile = root.path().join("profile");
@@ -45,6 +47,9 @@ fn migrates_the_legacy_store_and_keeps_existing_links_resolving() {
     assert_eq!(fs::read_to_string(&profile).unwrap(), "tool");
     assert!(invalid.is_dir());
     assert!(legacy.join(".migrated").exists());
+    let moved = opt.join("store").join(browsed.file_name().unwrap());
+    Store::new(opt.join("store")).verify_entry(&moved).unwrap();
+    assert!(!moved.join(".DS_Store").exists());
 }
 
 #[test]

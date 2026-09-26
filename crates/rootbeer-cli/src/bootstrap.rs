@@ -260,6 +260,7 @@ fn migrate_legacy_store(store: &Path) -> io::Result<()> {
             continue;
         }
 
+        remove_finder_metadata(&path)?;
         let manifest = match source.verify_entry(&path) {
             Ok(manifest) => manifest,
             Err(error) => {
@@ -283,6 +284,20 @@ fn migrate_legacy_store(store: &Path) -> io::Result<()> {
     }
 
     fs::write(marker, "")
+}
+
+/// Finder drops `.DS_Store` into browsed entries, which changes their hash.
+fn remove_finder_metadata(path: &Path) -> io::Result<()> {
+    for child in fs::read_dir(path)? {
+        let child = child?;
+        let file_type = child.file_type()?;
+        if file_type.is_dir() {
+            remove_finder_metadata(&child.path())?;
+        } else if file_type.is_file() && child.file_name() == ".DS_Store" {
+            fs::remove_file(child.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn finish_interrupted(link: &Path, entry: &Path) -> io::Result<()> {
