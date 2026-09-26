@@ -44,8 +44,9 @@ pub fn ensure() -> Result<(), String> {
     };
     lock.lock().map_err(|error| error.to_string())?;
 
-    migrate_legacy_store(&root.join("store"))
-        .map_err(|error| format!("migrating the legacy store: {error}"))
+    // Unmoved entries keep resolving where they are, and the next run retries.
+    let _ = migrate_legacy_store(&root.join("store"));
+    Ok(())
 }
 
 /// The machine-wide root is owned by root and written through the setuid
@@ -181,14 +182,9 @@ pub fn adopt() {
     }
 
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let is_linked = match home.map(|home| link_legacy_bin(&home, &executable, &bin)) {
-        Some(Ok(is_linked)) => is_linked,
-        Some(Err(error)) => {
-            eprintln!("warning: could not link ~/.rootbeer/bin to your profile: {error}");
-            false
-        }
-        None => false,
-    };
+    let is_linked = home
+        .and_then(|home| link_legacy_bin(&home, &executable, &bin).ok())
+        .unwrap_or(false);
     if !is_installed && !is_linked && !is_on_path(&bin) {
         eprintln!(
             "Run eval \"$({}/rb env)\" to add installed commands to this shell.",
@@ -238,11 +234,6 @@ fn migrate_legacy_store(store: &Path) -> io::Result<()> {
         return Ok(());
     }
 
-    eprintln!(
-        "moving packages from {} to {}...",
-        legacy.display(),
-        store.display()
-    );
     let source = Store::new(&legacy);
     let target = Store::new(store);
     for entry in fs::read_dir(&legacy)? {
@@ -261,12 +252,8 @@ fn migrate_legacy_store(store: &Path) -> io::Result<()> {
         }
 
         remove_finder_metadata(&path)?;
-        let manifest = match source.verify_entry(&path) {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                eprintln!("warning: leaving {} in place: {error}", path.display());
-                continue;
-            }
+        let Ok(manifest) = source.verify_entry(&path) else {
+            continue;
         };
 
         // The link is staged first so an interrupted move can still be finished.

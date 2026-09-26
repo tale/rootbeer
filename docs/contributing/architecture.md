@@ -42,8 +42,7 @@ source receipts.
 
 The store lives at `/opt/rootbeer/store` (`ROOTBEER_ROOT` overrides the root for tests
 and CI); per-user state stays in `~/.local/state/rootbeer`. `layout.json` in the root
-records the layout version so a newer `rb` migrates an older one. Stores from before
-the move are migrated on first use, leaving a symlink per entry.
+records the layout version so a newer `rb` migrates an older one.
 
 `/opt/rootbeer` is owned by root and shared by every user without a daemon. Users
 insert through `rb-store`, a small setuid-root helper installed at
