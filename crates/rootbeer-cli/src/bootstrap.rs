@@ -4,7 +4,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use rootbeer_core::package::{profile, standalone, PackageRequest};
+use rootbeer_core::package::{profile, roots, standalone, PackageRequest};
 use rootbeer_core::store::{
     helper, layout, root_dir, state_dir, Store, StoreManifest, DEFAULT_ROOT,
 };
@@ -46,6 +46,7 @@ pub fn ensure() -> Result<(), String> {
 
     // Unmoved entries keep resolving where they are, and the next run retries.
     let _ = migrate_legacy_store(&root.join("store"));
+    let _ = roots::seed(&Store::new(root.join("store")));
     Ok(())
 }
 
@@ -225,12 +226,19 @@ fn link_legacy_bin(home: &Path, executable: &Path, bin: &Path) -> io::Result<boo
     Ok(true)
 }
 
+/// Bumped when migration learns to move entries it used to leave behind, so
+/// stores migrated by an older `rb` are scanned again.
+const MIGRATION_VERSION: u32 = 2;
+
 // TODO(legacy-store): remove once stores from before /opt/rootbeer are gone.
 fn migrate_legacy_store(store: &Path) -> io::Result<()> {
     let legacy = state_dir().join("store");
     let marker = legacy.join(".migrated");
-    if !legacy.is_dir() || marker.exists() || fs::canonicalize(&legacy)? == fs::canonicalize(store)?
-    {
+    let migrated = fs::read_to_string(&marker)
+        .ok()
+        .and_then(|version| version.trim().parse::<u32>().ok());
+    let is_current = migrated.is_some_and(|version| version >= MIGRATION_VERSION);
+    if !legacy.is_dir() || is_current || fs::canonicalize(&legacy)? == fs::canonicalize(store)? {
         return Ok(());
     }
 
@@ -270,7 +278,7 @@ fn migrate_legacy_store(store: &Path) -> io::Result<()> {
         fs::rename(&link, &path)?;
     }
 
-    fs::write(marker, "")
+    fs::write(marker, format!("{MIGRATION_VERSION}\n"))
 }
 
 /// Finder drops `.DS_Store` into browsed entries, which changes their hash.

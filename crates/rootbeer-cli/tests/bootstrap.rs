@@ -46,10 +46,26 @@ fn migrates_the_legacy_store_and_keeps_existing_links_resolving() {
     assert_eq!(fs::read_link(&entry).unwrap(), moved);
     assert_eq!(fs::read_to_string(&profile).unwrap(), "tool");
     assert!(invalid.is_dir());
-    assert!(legacy.join(".migrated").exists());
+    assert_eq!(fs::read_to_string(legacy.join(".migrated")).unwrap(), "2\n");
     let moved = opt.join("store").join(browsed.file_name().unwrap());
     Store::new(opt.join("store")).verify_entry(&moved).unwrap();
     assert!(!moved.join(".DS_Store").exists());
+}
+
+#[test]
+fn rescans_a_store_an_older_rootbeer_migrated() {
+    let root = tempfile::tempdir().unwrap();
+    let legacy = root.path().join("rootbeer/store");
+    let entry = seed(&legacy, "browsed");
+    fs::write(entry.join(".DS_Store"), "finder").unwrap();
+    fs::write(legacy.join(".migrated"), "").unwrap();
+
+    let opt = root.path().join("opt");
+    rb(root.path(), &opt);
+
+    let moved = opt.join("store").join(entry.file_name().unwrap());
+    Store::new(opt.join("store")).verify_entry(&moved).unwrap();
+    assert_eq!(fs::read_link(&entry).unwrap(), moved);
 }
 
 #[test]

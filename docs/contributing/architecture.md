@@ -64,7 +64,8 @@ Garbage collection works from roots rather than scanning references. Each user o
 `/opt/rootbeer/var/roots/<uid>/` (created by `rb-store roots`, so no one can claim
 another user's directory), with one file per owner (`user`, `configuration`) listing
 the store entry names that owner's runtime closure needs. `rb use`, `rb unuse`, and
-`rb apply` rewrite their root after activating. `rb gc` (`rb-store gc` for a shared
+`rb apply` rewrite their root after activating; any command that touches the store
+first writes whichever of the caller's roots are missing from what is installed. `rb gc` (`rb-store gc` for a shared
 store) deletes every entry no root lists, under the root's `.lock`. Entries younger
 than an hour are kept, which covers an install that has committed an entry but not yet
 written its root. Deletion renames the entry first so a partly deleted tree never

@@ -255,3 +255,41 @@ fn gc_removes_only_entries_the_user_profile_no_longer_uses() {
     let output = Command::new(profile.join("bin/second")).output().unwrap();
     assert_eq!(output.stdout, b"second\n");
 }
+
+#[test]
+fn gc_keeps_configuration_packages_linked_before_roots_existed() {
+    let root = tempfile::tempdir().unwrap();
+    seed(
+        root.path(),
+        "linked",
+        "linked",
+        "#!/bin/sh\nprintf 'linked\\n'\n",
+    );
+    let store = root.path().join("opt/store");
+    let entry = fs::read_dir(&store)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_string_lossy().ends_with("-linked-1"))
+        .unwrap();
+    let bin = root.path().join("rootbeer/profiles/default/current/bin");
+    fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(entry.join("payload"), bin.join("linked")).unwrap();
+    let status = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "touch -t 200001010000 \"$0\"/*",
+            store.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let output = rb(root.path()).arg("gc").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(entry.is_dir());
+}
