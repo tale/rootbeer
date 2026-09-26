@@ -154,7 +154,8 @@ fn quote(path: &Path) -> String {
 /// Installs the published `rootbeer` into the user profile when running from a
 /// downloaded copy, so `rb` owns and updates itself from then on.
 pub fn adopt() {
-    if cfg!(debug_assertions) {
+    // An overridden root is a test, CI, or dev store; only a real install adopts itself.
+    if cfg!(debug_assertions) || std::env::var_os("ROOTBEER_ROOT").is_some() {
         return;
     }
     let Ok((executable, Installation::Standalone)) = update::detect() else {
