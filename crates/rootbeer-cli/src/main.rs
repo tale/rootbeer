@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(
     name = "rb",
-    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("RB_BUILD_TIMESTAMP"), ")"),
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("RB_SOURCE_REVISION"), ")"),
     about,
     long_about = None,
     max_term_width = 80
