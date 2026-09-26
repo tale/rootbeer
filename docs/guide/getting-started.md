@@ -17,8 +17,9 @@ into your user profile; from then on `rb` updates itself with `rb self-update`. 
 `eval` line to your shell profile to keep installed commands on `PATH`.
 
 Packages live in a store shared by every user at `/opt/rootbeer/store`. The first command
-that needs it asks for `sudo` once per machine to create it and prints the exact command
-first; without a terminal it prints the command and exits instead.
+that needs it asks for `sudo` once per machine to create it, printing the exact commands
+first; without a terminal it prints them and exits instead. Other users on the machine
+need no `sudo`. A later Rootbeer update asks again only if it needs a newer store helper.
 
 Intel macOS is unsupported.
 
