@@ -74,6 +74,9 @@ Remove a package from your user profile with `rb unuse bobrwm`. This removes its
 owned app link when no other profile needs it, while retaining cached package files.
 For Lua-managed apps, remove the declaration and run `rb apply`.
 
+`rb gc` deletes store entries that no user profile or configuration still uses, and
+prints each one it removes. Entries added in the last hour are kept.
+
 ## Keep tools installed
 
 ### Install an individually signed package

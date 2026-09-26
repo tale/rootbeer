@@ -27,6 +27,19 @@ pub struct RealizedPackage {
     pub apps: BTreeMap<String, PathBuf>,
 }
 
+impl RealizedPackage {
+    /// Store entries this package needs at runtime, itself included.
+    pub fn runtime_paths(&self, store: &Store) -> io::Result<Vec<PathBuf>> {
+        let mut paths = vec![self.store_entry.path.clone()];
+        for dependency in crate::runtime::closure(&self.package).map_err(io::Error::other)? {
+            let directory =
+                crate::runtime::store_directory(dependency).map_err(io::Error::other)?;
+            paths.push(store.root().join(directory));
+        }
+        Ok(paths)
+    }
+}
+
 impl PackageRealizer {
     pub fn new(store: Store) -> Self {
         Self::with_dirs(
@@ -68,6 +81,10 @@ impl PackageRealizer {
             },
             temp_dir: temp_dir.into(),
         }
+    }
+
+    pub fn store(&self) -> &Store {
+        &self.store
     }
 
     /// Shares cancellation and the download deadline with the caller.

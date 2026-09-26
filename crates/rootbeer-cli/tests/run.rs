@@ -203,3 +203,55 @@ fn offline_miss_does_not_install_or_run_a_host_command() {
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("not cached"));
 }
+
+#[test]
+fn gc_removes_only_entries_the_user_profile_no_longer_uses() {
+    let root = tempfile::tempdir().unwrap();
+    seed(
+        root.path(),
+        "first",
+        "first",
+        "#!/bin/sh\nprintf 'first\\n'\n",
+    );
+    seed(
+        root.path(),
+        "second",
+        "second",
+        "#!/bin/sh\nprintf 'second\\n'\n",
+    );
+    for name in ["first@1", "second@1"] {
+        let output = rb(root.path())
+            .args(["use", name, "--offline"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+    }
+    let output = rb(root.path()).args(["unuse", "first"]).output().unwrap();
+    assert!(output.status.success());
+
+    // Ages every entry past the grace period.
+    let store = root.path().join("opt/store");
+    let status = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "touch -t 200001010000 \"$0\"/*",
+            store.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let output = rb(root.path()).arg("gc").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let removed = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(removed.lines().count(), 1, "{removed}");
+    assert!(removed.ends_with("-first-1\n"), "{removed}");
+
+    let profile = root.path().join("rootbeer/profiles/user/current");
+    let output = Command::new(profile.join("bin/second")).output().unwrap();
+    assert_eq!(output.stdout, b"second\n");
+}

@@ -5,10 +5,10 @@ use crate::layout::Helper;
 use crate::stream;
 
 /// Bumped whenever the helper's code changes.
-pub const RELEASE: u32 = 1;
+pub const RELEASE: u32 = 2;
 
 /// Raised only for fixes every machine must take; forces a sudo reinstall.
-pub const MINIMUM_RELEASE: u32 = 1;
+pub const MINIMUM_RELEASE: u32 = 2;
 
 /// Stream formats this helper reads. Older ones stay so older `rb`s keep working.
 pub const PROTOCOLS: &[u32] = &[stream::PROTOCOL];

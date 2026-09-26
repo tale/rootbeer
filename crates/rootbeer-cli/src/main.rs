@@ -2,6 +2,7 @@ mod apply;
 mod bootstrap;
 mod cd;
 mod edit;
+mod gc;
 mod init;
 mod progress;
 mod remote;
@@ -69,6 +70,9 @@ enum Commands {
     /// Apply the rootbeer configuration
     Apply(apply::Args),
 
+    /// Delete store entries no profile or configuration uses
+    Gc,
+
     /// Print shell setup for installed packages (sh, Bash, or Zsh)
     Env,
 
@@ -88,6 +92,7 @@ impl Commands {
                 | Commands::Use(_)
                 | Commands::Unuse(_)
                 | Commands::Apply(_)
+                | Commands::Gc
                 | Commands::SelfUpdate
         )
     }
@@ -132,6 +137,7 @@ fn main() {
         Commands::Cd => cd::run(),
         Commands::Edit => edit::run(),
         Commands::Apply(args) => apply::run(args, cli.lua_dir.as_ref()),
+        Commands::Gc => gc::run(),
         Commands::Env => print!("{}", rootbeer_core::package::profile::env_contents()),
         Commands::Remote(args) => remote::run(args),
         Commands::SelfUpdate => update::run(),

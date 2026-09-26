@@ -238,7 +238,8 @@ fn install_profile(
     let generation = write_environment_with_requests(root, &realized, &selections)?;
     applications.synchronize_with("user", &app_exports(&realized)?, || {
         activate(profile, &generation)
-    })
+    })?;
+    write_root(realizer.store(), &realized)
 }
 
 /// Removes packages from the persistent user profile while retaining cached downloads.
@@ -298,7 +299,26 @@ fn remove_from_profile(
     let generation = write_environment_with_requests(root, &realized, &selections)?;
     applications.synchronize_with("user", &app_exports(&realized)?, || {
         activate(profile, &generation)
-    })
+    })?;
+    write_root(realizer.store(), &realized)
+}
+
+/// Records the user profile's runtime closure as its garbage collection root.
+pub fn write_user_root(store: &Store) -> io::Result<()> {
+    let profile = super::profile::user_dir();
+    let live = match read_lock(&profile.join("packages.json"))? {
+        Some(lock) => lock.store_paths(store).map_err(io::Error::other)?,
+        None => Default::default(),
+    };
+    store.write_root("user", &live)
+}
+
+fn write_root(store: &Store, packages: &[RealizedPackage]) -> io::Result<()> {
+    let mut live = std::collections::BTreeSet::new();
+    for package in packages {
+        live.extend(package.runtime_paths(store)?);
+    }
+    store.write_root("user", &live)
 }
 
 fn app_exports(packages: &[RealizedPackage]) -> io::Result<BTreeMap<String, PathBuf>> {

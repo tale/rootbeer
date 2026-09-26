@@ -107,3 +107,33 @@ fn helper_reports_its_release_and_protocols() {
     let reported: rootbeer_store::layout::Helper = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(reported, rootbeer_store::helper::current());
 }
+
+#[test]
+fn helper_creates_roots_and_collects_only_old_unrooted_entries() {
+    let root = tempfile::tempdir().unwrap();
+    let opt = root.path().join("opt");
+    let source = root.path().join("source");
+    sample(&source);
+    let store = Store::new(opt.join("store"));
+    let entry = store.add_tree("tool", "1", &source).unwrap();
+    let helper = |command: &str| {
+        Command::new(env!("CARGO_BIN_EXE_rb-store"))
+            .arg(command)
+            .env("ROOTBEER_ROOT", &opt)
+            .output()
+            .unwrap()
+    };
+
+    let output = helper("roots");
+    assert!(output.status.success());
+    let uid = unsafe { libc::getuid() }.to_string();
+    assert!(opt.join("var/roots").join(uid).is_dir());
+
+    let output = helper("gc");
+    assert!(output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "young entries survive the grace period"
+    );
+    assert!(entry.path.is_dir());
+}

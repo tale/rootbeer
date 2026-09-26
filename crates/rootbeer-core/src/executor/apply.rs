@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -65,14 +65,18 @@ pub fn apply_with_options(
     handler: &mut impl ExecutionHandler,
     options: ApplyOptions,
 ) -> io::Result<ExecutionReport> {
-    let package_realizer = if options.package_offline {
-        PackageRealizer::offline(Store::default())
-    } else {
-        PackageRealizer::default()
-    };
-
     #[cfg(test)]
     let application_root = tempfile::tempdir()?;
+    #[cfg(test)]
+    let store = Store::new(application_root.path().join("store"));
+    #[cfg(not(test))]
+    let store = Store::default();
+    let package_realizer = if options.package_offline {
+        PackageRealizer::offline(store)
+    } else {
+        PackageRealizer::new(store)
+    };
+
     #[cfg(test)]
     let applications = Applications::new(
         application_root.path().join("state"),
@@ -103,6 +107,7 @@ fn apply_with_package_realizer(
 ) -> io::Result<ExecutionReport> {
     let mut report = ExecutionReport::default();
     let mut desired_apps = BTreeMap::new();
+    let mut live = BTreeSet::new();
 
     for op in ops {
         handler.on_start(op);
@@ -312,6 +317,7 @@ fn apply_with_package_realizer(
             Op::RealizePackage { package } => {
                 let is_cached = package_realizer.is_cached(package)?;
                 let realized = package_realizer.realize(package)?;
+                live.extend(realized.runtime_paths(package_realizer.store())?);
                 for (name, path) in &realized.apps {
                     if desired_apps
                         .insert(name.clone(), path.clone())
@@ -359,6 +365,9 @@ fn apply_with_package_realizer(
         .any(|result| matches!(result, OpResult::CommandRan { status, .. } if *status != 0))
     {
         applications.synchronize("configuration", &desired_apps)?;
+        package_realizer
+            .store()
+            .write_root("configuration", &live)?;
     }
     Ok(report)
 }

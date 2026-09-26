@@ -61,11 +61,22 @@ helper, with one sudo prompt, only when the installed one lacks the protocol `rb
 or is below `helper::MINIMUM_RELEASE`; a newer helper is never downgraded, so helpers
 keep reading older protocols.
 
+Garbage collection works from roots rather than scanning references. Each user owns
+`/opt/rootbeer/var/roots/<uid>/` (created by `rb-store roots`, so no one can claim
+another user's directory), with one file per owner (`user`, `configuration`) listing
+the store entry names that owner's runtime closure needs. `rb use`, `rb unuse`, and
+`rb apply` rewrite their root after activating. `rb gc` (`rb-store gc` for a shared
+store) deletes every entry no root lists, under the root's `.lock`. Entries younger
+than an hour are kept, which covers an install that has committed an entry but not yet
+written its root. Deletion renames the entry first so a partly deleted tree never
+looks sealed. Cached `rb run` environments are not roots; they fetch again after
+collection.
+
 Runtime dependencies live in separate content-addressed store entries. Receipts
 and package locks carry exact recursive runtime facts; realization verifies the
 whole closure even when the requested output is cached. Loader-relative sibling
 references survive store relocation. Lockfiles expose all retained store paths
-for future garbage collection. The build audit checks declared sibling entries
+for garbage collection roots. The build audit checks declared sibling entries
 without consulting the host's library search paths.
 
 The current executor builds for its own host. Cross-compilation remains separate work. Build environment locks pin declared executable
