@@ -84,6 +84,10 @@ pub fn apply_with_options(
     );
     #[cfg(not(test))]
     let applications = Applications::default();
+    #[cfg(test)]
+    let bin_dir = application_root.path().join("profile/bin");
+    #[cfg(not(test))]
+    let bin_dir = package_profile::bin_dir();
 
     apply_with_package_realizer(
         tools,
@@ -91,7 +95,7 @@ pub fn apply_with_options(
         force,
         handler,
         &package_realizer,
-        &package_profile::bin_dir(),
+        &bin_dir,
         &applications,
     )
 }
@@ -108,6 +112,7 @@ fn apply_with_package_realizer(
     let mut report = ExecutionReport::default();
     let mut desired_apps = BTreeMap::new();
     let mut live = BTreeSet::new();
+    let mut desired_bins = BTreeSet::new();
 
     for op in ops {
         handler.on_start(op);
@@ -318,6 +323,7 @@ fn apply_with_package_realizer(
                 let is_cached = package_realizer.is_cached(package)?;
                 let realized = package_realizer.realize(package)?;
                 live.extend(realized.runtime_paths(package_realizer.store())?);
+                desired_bins.extend(realized.bins.keys().cloned());
                 for (name, path) in &realized.apps {
                     if desired_apps
                         .insert(name.clone(), path.clone())
@@ -365,11 +371,43 @@ fn apply_with_package_realizer(
         .any(|result| matches!(result, OpResult::CommandRan { status, .. } if *status != 0))
     {
         applications.synchronize("configuration", &desired_apps)?;
-        package_realizer
-            .store()
-            .write_root("configuration", &live)?;
     }
+    package_realizer
+        .store()
+        .write_root("configuration", &live)?;
+    remove_stale_package_bins(&desired_bins, package_realizer.store(), package_bin_dir)?;
     Ok(report)
+}
+
+/// Removes links to store entries for commands no package in the plan exports.
+fn remove_stale_package_bins(
+    desired: &BTreeSet<String>,
+    store: &Store,
+    bin_dir: &Path,
+) -> io::Result<()> {
+    let entries = match fs::read_dir(bin_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    // TODO(legacy-store): links made before the move still point at the old store.
+    let legacy = crate::state_dir().join("store");
+
+    for entry in entries {
+        let entry = entry?;
+        let is_desired = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| desired.contains(name));
+        if is_desired || !entry.file_type()?.is_symlink() {
+            continue;
+        }
+        let target = fs::read_link(entry.path())?;
+        if target.starts_with(store.root()) || target.starts_with(&legacy) {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn activate_package_bins(
@@ -737,6 +775,60 @@ mod tests {
             runtime_dependencies: Default::default(),
             output_sha256: None,
         }
+    }
+
+    #[test]
+    fn roots_survive_failed_commands_and_dropped_packages_lose_their_links() {
+        let root = tempfile::tempdir().unwrap();
+        let (_archive_root, archive) = archive_source();
+        let realizer = PackageRealizer::with_dirs(
+            Store::new(root.path().join("store")),
+            root.path().join("downloads"),
+            root.path().join("tmp"),
+        );
+        let bins = root.path().join("profile/bin");
+        let apps = Applications::new(
+            root.path().join("app-state"),
+            root.path().join("Applications"),
+        );
+        let apply = |ops: &[Op]| {
+            apply_with_package_realizer(
+                &crate::tools::ToolRuntime::default(),
+                ops,
+                false,
+                &mut Recorder::default(),
+                &realizer,
+                &bins,
+                &apps,
+            )
+            .unwrap()
+        };
+        let uid = unsafe { libc::getuid() }.to_string();
+        let root_file = root
+            .path()
+            .join("var/roots")
+            .join(uid)
+            .join("configuration");
+
+        apply(&[
+            Op::RealizePackage {
+                package: locked_package(&archive),
+            },
+            Op::Exec {
+                cmd: "/bin/sh".into(),
+                args: vec!["-c".into(), "exit 7".into()],
+                cwd: root.path().into(),
+            },
+        ]);
+        assert!(fs::read_to_string(&root_file)
+            .unwrap()
+            .contains("-demo-1.0.0"));
+
+        unix_fs::symlink(root.path(), bins.join("mine")).unwrap();
+        apply(&[]);
+        assert!(!bins.join("demo").is_symlink());
+        assert!(bins.join("mine").is_symlink());
+        assert!(fs::read_to_string(&root_file).unwrap().is_empty());
     }
 
     #[test]
