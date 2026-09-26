@@ -42,6 +42,15 @@ download() {
 	fi
 }
 
+# Piped installs (curl | sh) still reach the terminal for the one-time sudo prompt.
+interactive() {
+	if [ -t 0 ] || ! (: </dev/tty) 2>/dev/null; then
+		"$@"
+	else
+		"$@" </dev/tty
+	fi
+}
+
 main() {
 	if ! command -v tar >/dev/null 2>&1; then
 		echo "error: tar is required" >&2
@@ -63,7 +72,7 @@ main() {
 	chmod +x "${tmpdir}/rb" "${tmpdir}/rb-store"
 
 	# The downloaded rb is only a bootstrap; rootbeer installs and updates itself from the profile.
-	"${tmpdir}/rb" use rootbeer
+	interactive "${tmpdir}/rb" use rootbeer
 
 	echo ""
 	echo "add this to your shell profile:"
@@ -72,7 +81,7 @@ main() {
 	if [ $# -gt 0 ]; then
 		echo ""
 		echo "running: rb $*"
-		PATH="${PROFILE_BIN}:$PATH" "${PROFILE_BIN}/rb" "$@"
+		PATH="${PROFILE_BIN}:$PATH" interactive "${PROFILE_BIN}/rb" "$@"
 	fi
 }
 

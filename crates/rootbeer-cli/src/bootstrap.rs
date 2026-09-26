@@ -91,17 +91,16 @@ fn shared_setup(root: &Path, helper: &Path, is_converting: bool) -> Vec<String> 
     let bin = root.join("bin");
     let installed = quote(&bin.join("rb-store"));
     let lock = quote(&root.join(".lock"));
-    let mut lines = Vec::new();
+    let mut lines = vec![format!(
+        "install -d -m 755 {} {} {}",
+        quote(root),
+        quote(&root.join("store")),
+        quote(&bin)
+    )];
     if is_converting {
-        lines.push(format!(
-            "install -d -m 755 {} {} {}",
-            quote(root),
-            quote(&root.join("store")),
-            quote(&bin)
-        ));
         lines.push(format!("chown -R 0:0 {}", quote(root)));
-        lines.push(format!("touch {lock} && chmod 666 {lock}"));
     }
+    lines.push(format!("touch {lock} && chmod 666 {lock}"));
     lines.push(format!(
         "install -m 4755 -o 0 -g 0 {} {installed}",
         quote(helper)
