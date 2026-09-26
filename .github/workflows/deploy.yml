@@ -98,7 +98,7 @@ jobs:
           ROOTBEER_PDR_PUBLIC_KEY: ${{ vars.ROOTBEER_PDR_PUBLIC_KEY }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
-          RB_BUILD_TIMESTAMP: ${{ needs.changes.outputs.timestamp }}
+          RB_SOURCE_REVISION: ${{ github.sha }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

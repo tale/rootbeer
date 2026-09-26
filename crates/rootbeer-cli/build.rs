@@ -1,19 +1,10 @@
 fn main() {
-    println!("cargo:rerun-if-env-changed=RB_BUILD_TIMESTAMP");
-    let timestamp = match std::env::var("RB_BUILD_TIMESTAMP") {
-        Ok(val) => val,
-        Err(_) => {
-            let now = time::OffsetDateTime::now_utc();
-            format!(
-                "{:04}-{:02}-{:02} {:02}:{:02} UTC",
-                now.year(),
-                now.month() as u8,
-                now.day(),
-                now.hour(),
-                now.minute(),
-            )
-        }
-    };
+    println!("cargo:rerun-if-env-changed=RB_SOURCE_REVISION");
 
-    println!("cargo:rustc-env=RB_BUILD_TIMESTAMP={timestamp}");
+    // Builds that name no source commit say so rather than embedding the clock,
+    // which would make every build of the same source differ.
+    let revision = std::env::var("RB_SOURCE_REVISION")
+        .map(|revision| revision.chars().take(12).collect::<String>())
+        .unwrap_or_else(|_| "dev".into());
+    println!("cargo:rustc-env=RB_SOURCE_REVISION={revision}");
 }
