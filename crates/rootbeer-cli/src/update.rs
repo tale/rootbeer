@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use rootbeer_core::package::{profile, standalone, PackageRequest};
 
 #[derive(Debug, PartialEq, Eq)]
-enum Installation {
+pub(crate) enum Installation {
     Standalone,
     UserProfile,
     Configuration,
@@ -18,13 +18,24 @@ pub fn run() {
     }
 }
 
-fn update() -> Result<(), String> {
+/// Returns the running executable and the owner responsible for updating it.
+pub(crate) fn detect() -> Result<(PathBuf, Installation), String> {
     let executable = std::env::current_exe()
         .and_then(|path| path.canonicalize())
         .map_err(|error| error.to_string())?;
     let invocation = invocation_path()?;
+    let installation = installation(
+        &executable,
+        &invocation,
+        &profile::user_dir(),
+        &profile::dir(),
+    );
+    Ok((executable, installation))
+}
+
+fn update() -> Result<(), String> {
+    let (executable, installation) = detect()?;
     let user_profile = profile::user_dir();
-    let installation = installation(&executable, &invocation, &user_profile, &profile::dir());
     match installation {
         Installation::Configuration => {
             return Err("Rootbeer is managed by your Lua configuration; run `rb apply --update` from that configuration to update its lock and profile. Explicit version pins remain unchanged.".into());

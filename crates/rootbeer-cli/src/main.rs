@@ -1,4 +1,5 @@
 mod apply;
+mod bootstrap;
 mod cd;
 mod edit;
 mod init;
@@ -79,8 +80,43 @@ enum Commands {
     SelfUpdate,
 }
 
+impl Commands {
+    fn needs_store(&self) -> bool {
+        matches!(
+            self,
+            Commands::Run(_)
+                | Commands::Use(_)
+                | Commands::Unuse(_)
+                | Commands::Apply(_)
+                | Commands::SelfUpdate
+        )
+    }
+
+    /// Whether `rb` may install itself before running, which needs the network.
+    fn should_adopt(&self) -> bool {
+        match self {
+            Commands::Run(args) => !args.offline,
+            Commands::Use(args) => {
+                !args.offline && !args.packages.iter().any(|package| package == "rootbeer")
+            }
+            Commands::Apply(args) => !args.offline,
+            _ => false,
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
+    rootbeer_core::package::progress::observe(progress::report);
+    if cli.command.needs_store() {
+        if let Err(error) = bootstrap::ensure() {
+            eprintln!("error: {error}");
+            std::process::exit(1);
+        }
+    }
+    if cli.command.should_adopt() {
+        bootstrap::adopt();
+    }
 
     match cli.command {
         Commands::Licenses => print!(

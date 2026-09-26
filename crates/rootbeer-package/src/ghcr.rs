@@ -28,12 +28,14 @@ impl GhcrBlob {
 
     pub fn reader(&self) -> io::Result<Box<dyn Read>> {
         self.reader_with_execution(&crate::Execution::default())
+            .map(|(reader, _)| reader)
     }
 
+    /// Returns the blob body and its length when the registry reports one.
     pub(crate) fn reader_with_execution(
         &self,
         execution: &crate::Execution,
-    ) -> io::Result<Box<dyn Read>> {
+    ) -> io::Result<(Box<dyn Read>, Option<u64>)> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .https_only(true)
             .timeout_resolve(Some(Duration::from_secs(30)))
@@ -76,7 +78,8 @@ impl GhcrBlob {
             .call()
             .map_err(|e| io::Error::other(format!("cannot fetch public GHCR blob: {e}")))?
             .into_parts();
-        Ok(Box::new(body.into_reader()))
+        let length = body.content_length();
+        Ok((Box::new(body.into_reader()), length))
     }
 }
 

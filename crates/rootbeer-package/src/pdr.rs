@@ -132,7 +132,10 @@ pub fn verify_root(bytes: &[u8], public_key: &str) -> Result<serde_json::Value, 
         ));
     }
     if schema != u64::from(ROOT_SCHEMA) {
-        return Err(format!("unsupported PDR root schema {schema}"));
+        return Err(format!(
+            "this package repository serves an older PDR root (schema {schema}, expected {ROOT_SCHEMA}); \
+             check that ROOTBEER_PDR_URL points at the current repository"
+        ));
     }
     let sequence = value["sequence"]
         .as_u64()

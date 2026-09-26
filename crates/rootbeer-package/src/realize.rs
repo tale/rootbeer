@@ -105,6 +105,7 @@ impl PackageRealizer {
         }
 
         let source = self.fetch_source(&package.source)?;
+        let _step = crate::progress::install(&package.name);
         let extracted;
         let install_source = match (&source, &package.install) {
             (SourceMaterial::File(source), LockedInstall::Binary { path }) => {
@@ -166,22 +167,14 @@ impl PackageRealizer {
             }
         }
 
-        let store_entry =
-            self.store
-                .add_tree(package.name.clone(), package.version.clone(), &install_root)?;
-        if let Some(expected) = &package.output_sha256 {
-            if store_entry.output_sha256 != *expected {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "package {} output hash mismatch: expected {}, got {}",
-                        package.id(),
-                        expected,
-                        store_entry.output_sha256
-                    ),
-                ));
+        let (name, version) = (package.name.clone(), package.version.clone());
+        let store_entry = match &package.output_sha256 {
+            Some(expected) => {
+                self.store
+                    .add_tree_expecting(name, version, &install_root, expected)?
             }
-        }
+            None => self.store.add_tree(name, version, &install_root)?,
+        };
 
         let bins = package
             .provides
@@ -210,7 +203,9 @@ impl PackageRealizer {
             return Ok(None);
         }
 
-        self.store.verify_entry(&path)?;
+        if !self.store.is_sealed(&path) {
+            self.store.verify_entry(&path)?;
+        }
         validate_provides(&path, &package.provides)?;
         let store_entry = StoreEntry {
             path,

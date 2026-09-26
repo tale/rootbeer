@@ -17,6 +17,7 @@ pub mod graph;
 mod inputs;
 mod intent;
 pub mod pdr;
+pub mod progress;
 pub mod realize;
 pub mod repository;
 mod resolve;

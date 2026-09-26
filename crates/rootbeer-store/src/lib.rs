@@ -8,8 +8,9 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,18 @@ use sha2::{Digest, Sha256};
 
 use crate::deterministic::DeterministicOutput;
 pub mod deterministic;
+pub mod helper;
+pub mod layout;
+pub mod stream;
+
+pub const DEFAULT_ROOT: &str = "/opt/rootbeer";
+
+/// Machine-wide root holding the shared store ([`DEFAULT_ROOT`], or `ROOTBEER_ROOT`).
+pub fn root_dir() -> PathBuf {
+    std::env::var_os("ROOTBEER_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_ROOT))
+}
 
 pub fn state_dir() -> PathBuf {
     if let Some(path) = std::env::var_os("XDG_STATE_HOME") {
@@ -67,14 +80,52 @@ impl Store {
         version: impl Into<String>,
         src: impl AsRef<Path>,
     ) -> io::Result<StoreEntry> {
-        let name = name.into();
-        let version = version.into();
         let src = src.as_ref();
         let output_sha256 = hash_tree(src)?;
-        let path = self.store_path(&output_sha256, &name, &version);
+        self.insert(name.into(), version.into(), src, output_sha256, false)
+    }
 
+    /// Adds a tree whose output hash the caller already knows, hashing it once
+    /// after it lands instead of before.
+    pub fn add_tree_expecting(
+        &self,
+        name: impl Into<String>,
+        version: impl Into<String>,
+        src: impl AsRef<Path>,
+        expected: &str,
+    ) -> io::Result<StoreEntry> {
+        self.insert(
+            name.into(),
+            version.into(),
+            src.as_ref(),
+            expected.to_owned(),
+            true,
+        )
+    }
+
+    /// Whether an entry is owned by root while the caller is not, so it was
+    /// verified by `rb-store` on insert and cannot have changed since.
+    pub fn is_sealed(&self, path: impl AsRef<Path>) -> bool {
+        let Ok(metadata) = fs::symlink_metadata(path) else {
+            return false;
+        };
+        let is_elevated = unsafe { libc::geteuid() } == 0;
+        metadata.is_dir() && metadata.uid() == 0 && !is_elevated && metadata.mode() & 0o022 == 0
+    }
+
+    fn insert(
+        &self,
+        name: String,
+        version: String,
+        src: &Path,
+        output_sha256: String,
+        should_verify_copy: bool,
+    ) -> io::Result<StoreEntry> {
+        let path = self.store_path(&output_sha256, &name, &version);
         if path.exists() {
-            self.verify_entry(&path)?;
+            if !self.is_sealed(&path) {
+                self.verify_entry(&path)?;
+            }
             return Ok(StoreEntry {
                 path,
                 name,
@@ -89,7 +140,68 @@ impl Store {
             fs::remove_dir_all(&tmp)?;
         }
 
-        copy_normalized_tree(src, &tmp)?;
+        match copy_normalized_tree(src, &tmp) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                let helper = self.helper();
+                if !helper.is_file() {
+                    return Err(self.explain_denied(error));
+                }
+                return self.add_through_helper(&helper, name, version, src, output_sha256);
+            }
+            Err(error) => return Err(error),
+        }
+
+        if should_verify_copy {
+            let actual = hash_tree(&tmp)?;
+            if actual != output_sha256 {
+                let _ = fs::remove_dir_all(&tmp);
+                return Err(mismatch(&name, &version, &output_sha256, &actual));
+            }
+        }
+        self.commit(&tmp, name, version, output_sha256)
+    }
+
+    /// Unpacks a [`stream`] into the store, hashing what was written rather than
+    /// trusting the sender. This is what `rb-store` runs with elevated privileges.
+    pub fn add_stream(
+        &self,
+        name: impl Into<String>,
+        version: impl Into<String>,
+        input: &mut impl Read,
+    ) -> io::Result<StoreEntry> {
+        let name = name.into();
+        let version = version.into();
+        fs::create_dir_all(&self.root)?;
+        let tmp = self.temp_path(&name, &version);
+        if let Err(error) = stream::read_tree(input, &tmp) {
+            let _ = fs::remove_dir_all(&tmp);
+            return Err(error);
+        }
+
+        let output_sha256 = hash_tree(&tmp)?;
+        let path = self.store_path(&output_sha256, &name, &version);
+        if path.exists() {
+            fs::remove_dir_all(&tmp)?;
+            self.verify_entry(&path)?;
+            return Ok(StoreEntry {
+                path,
+                name,
+                version,
+                output_sha256,
+            });
+        }
+        self.commit(&tmp, name, version, output_sha256)
+    }
+
+    fn commit(
+        &self,
+        tmp: &Path,
+        name: String,
+        version: String,
+        output_sha256: String,
+    ) -> io::Result<StoreEntry> {
+        let path = self.store_path(&output_sha256, &name, &version);
         let manifest = StoreManifest {
             schema: 1,
             name: name.clone(),
@@ -97,17 +209,64 @@ impl Store {
             output_sha256: output_sha256.clone(),
         };
 
-        write_manifest(&tmp, &manifest)?;
-        match fs::rename(&tmp, &path) {
+        write_manifest(tmp, &manifest)?;
+        match fs::rename(tmp, &path) {
             Ok(()) => {}
             Err(_) if path.exists() => {
                 // Another process may have created this exact store entry after
                 // our initial existence check. Reuse it only if it verifies.
-                fs::remove_dir_all(&tmp)?;
+                fs::remove_dir_all(tmp)?;
                 self.verify_entry(&path)?;
             }
 
             Err(err) => return Err(err),
+        }
+
+        Ok(StoreEntry {
+            path,
+            name,
+            version,
+            output_sha256,
+        })
+    }
+
+    /// The setuid `rb-store` helper that inserts into a store owned by root.
+    fn helper(&self) -> PathBuf {
+        self.root
+            .parent()
+            .unwrap_or(&self.root)
+            .join("bin/rb-store")
+    }
+
+    fn add_through_helper(
+        &self,
+        helper: &Path,
+        name: String,
+        version: String,
+        src: &Path,
+        output_sha256: String,
+    ) -> io::Result<StoreEntry> {
+        let mut child = Command::new(helper)
+            .args(["add", &name, &version])
+            .env("ROOTBEER_ROOT", self.root.parent().unwrap_or(&self.root))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut stdin = io::BufWriter::new(child.stdin.take().expect("piped stdin"));
+        let written = stream::write_tree(src, &mut stdin).and_then(|()| stdin.flush());
+        drop(stdin);
+
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            return Err(io::Error::other(format!("{} failed", helper.display())));
+        }
+        written?;
+
+        let path = self.store_path(&output_sha256, &name, &version);
+        let stored = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        if stored.file_name() != path.file_name() {
+            let stored = stored.file_name().unwrap_or_default().to_string_lossy();
+            return Err(mismatch(&name, &version, &output_sha256, &stored));
         }
 
         Ok(StoreEntry {
@@ -154,6 +313,23 @@ impl Store {
         ))
     }
 
+    fn explain_denied(&self, error: io::Error) -> io::Error {
+        if error.kind() != io::ErrorKind::PermissionDenied {
+            return error;
+        }
+        let Ok(metadata) = fs::metadata(&self.root) else {
+            return error;
+        };
+        io::Error::new(
+            error.kind(),
+            format!(
+                "{} is owned by uid {} and cannot be shared with other users yet",
+                self.root.display(),
+                metadata.uid()
+            ),
+        )
+    }
+
     fn temp_path(&self, name: &str, version: &str) -> PathBuf {
         let pid = std::process::id();
         let epoch = SystemTime::now()
@@ -171,7 +347,7 @@ impl Store {
 
 impl Default for Store {
     fn default() -> Self {
-        Self::new(state_dir().join("store"))
+        Self::new(root_dir().join("store"))
     }
 }
 
@@ -189,6 +365,13 @@ impl DeterministicOutput for StoreManifest {
     fn output_sha256(&self) -> &str {
         &self.output_sha256
     }
+}
+
+fn mismatch(name: &str, version: &str, expected: &str, actual: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("{name}@{version} output hash mismatch: expected {expected}, got {actual}"),
+    )
 }
 
 pub fn hash_tree(path: impl AsRef<Path>) -> io::Result<String> {
@@ -387,6 +570,52 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn add_tree_expecting_hashes_the_copy_and_rejects_a_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("bin"), "hello").unwrap();
+        let store = Store::new(tmp.path().join("store"));
+        let expected = hash_tree(&source).unwrap();
+
+        let error = store
+            .add_tree_expecting("demo", "1", &source, &"0".repeat(64))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("output hash mismatch"),
+            "{error}"
+        );
+        assert_eq!(fs::read_dir(store.root()).unwrap().count(), 0);
+
+        let entry = store
+            .add_tree_expecting("demo", "1", &source, &expected)
+            .unwrap();
+        assert_eq!(
+            store.verify_entry(&entry.path).unwrap().output_sha256,
+            expected
+        );
+        assert!(!store.is_sealed(&entry.path));
+    }
+
+    #[test]
+    fn unwritable_store_names_its_owner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("bin"), "hello").unwrap();
+        let root = tmp.path().join("store");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let error = Store::new(&root)
+            .add_tree("demo", "1", &source)
+            .unwrap_err();
+
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(error.to_string().contains("is owned by uid"), "{error}");
+    }
 
     #[test]
     fn tree_hash_ignores_manifest_metadata() {

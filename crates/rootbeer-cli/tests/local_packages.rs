@@ -7,6 +7,7 @@ use rootbeer_core::package::{download::DownloadCache, lockfile::RootbeerLock, Re
 fn apply(root: &Path, flags: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_rb"))
         .env("XDG_STATE_HOME", root.join("state"))
+        .env("ROOTBEER_ROOT", root.join("opt"))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .args(["apply", "--script"])
         .arg(root.join("rootbeer.lua"))

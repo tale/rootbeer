@@ -1614,6 +1614,7 @@ name = "rootbeer-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
  "owo-colors",
  "rootbeer-build",
  "rootbeer-core",
@@ -1696,6 +1697,7 @@ dependencies = [
 name = "rootbeer-store"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "sha2 0.10.9",

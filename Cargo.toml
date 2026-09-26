@@ -8,3 +8,7 @@ resolver = "2"
 
 [workspace.package]
 rust-version = "1.93"
+
+# Hashing and decompression dominate installs; keep them fast in debug builds.
+[profile.dev.package."*"]
+opt-level = 3

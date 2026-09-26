@@ -372,3 +372,17 @@ fn profile_generations_preserve_selections_and_remove_only_selected_requests() {
     fs::write(profile.join("requests.json"), "invalid").unwrap();
     assert!(installed_request(&profile, "second").is_err());
 }
+
+#[test]
+fn unparseable_request_cache_is_a_miss() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("request");
+    fs::write(
+        &path,
+        r#"{"schema":3,"resolvers":{"rootbeer":{"official_index":{}}}}"#,
+    )
+    .unwrap();
+
+    assert!(read_cached_request(&path).unwrap().is_none());
+    assert!(read_lock(&path).is_err());
+}

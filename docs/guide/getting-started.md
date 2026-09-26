@@ -4,16 +4,22 @@ Install Rootbeer, then run your first tool. A Lua configuration is optional.
 
 ## Install Rootbeer
 
-Rootbeer supports Apple silicon macOS, Linux ARM64, and Linux x86-64. The installer requires
-`curl` and `unzip`; on Ubuntu, install them with `sudo apt install curl unzip`.
+Rootbeer supports Apple silicon macOS, Linux ARM64, and Linux x86-64. The installer only
+needs `curl` (or `wget`) and `tar`.
 
 ```sh
 sh -c "$(curl -fsSL https://rbpkg.com/rb.sh)"
-export PATH="$HOME/.rootbeer/bin:$PATH"
+eval "$("$HOME/.local/state/rootbeer/profiles/user/current/bin/rb" env)"
 ```
 
-This installs the current nightly `rb` to `~/.rootbeer/bin` and makes it available
-in this shell.
+The installer downloads a bootstrap `rb`, which installs the published `rootbeer` package
+into your user profile; from then on `rb` updates itself with `rb self-update`. Add the
+`eval` line to your shell profile to keep installed commands on `PATH`.
+
+Packages live in a store shared by every user at `/opt/rootbeer/store`. The first command
+that needs it asks for `sudo` once per machine to create it, printing the exact commands
+first; without a terminal it prints them and exits instead. Other users on the machine
+need no `sudo`. A later Rootbeer update asks again only if it needs a newer store helper.
 
 Intel macOS is unsupported.
 
@@ -42,8 +48,7 @@ command. Add these lines to `~/.bashrc` for Bash or `~/.zshrc` for Zsh to make
 your tools available in new terminals:
 
 ```sh
-export PATH="$HOME/.rootbeer/bin:$PATH"
-eval "$(rb env)"
+eval "$("$HOME/.local/state/rootbeer/profiles/user/current/bin/rb" env)"
 ```
 
 See [using packages](/guide/packages) for exact versions, additional commands,
@@ -99,3 +104,20 @@ rb use --update jq ripgrep
 
 Use `rb apply --update` for packages declared in Lua. See
 [updates and offline use](/guide/package-locks) for saved versions and locks.
+
+## Uninstall
+
+Remove the `eval` line from your shell profile, then delete your Rootbeer state:
+
+```sh
+rm -rf ~/.local/state/rootbeer ~/.local/share/rootbeer ~/.rootbeer
+```
+
+Your configuration in `~/.config/rootbeer` and any files it applied stay in place;
+delete them yourself if you no longer want them. On macOS, also remove app links
+Rootbeer added to `~/Applications`. Once no other user on the machine uses Rootbeer,
+remove the shared store:
+
+```sh
+sudo rm -rf /opt/rootbeer
+```

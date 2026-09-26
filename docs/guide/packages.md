@@ -174,11 +174,10 @@ unversioned requests; exact versions stay fixed. See
 Add these lines to `~/.bashrc` for Bash or `~/.zshrc` for Zsh:
 
 ```sh
-export PATH="$HOME/.rootbeer/bin:$PATH"
-eval "$(rb env)"
+eval "$("$HOME/.local/state/rootbeer/profiles/user/current/bin/rb" env)"
 ```
 
-The first line finds `rb` in its default installation directory. The second adds
+This runs `rb` from your user profile, where the installer puts it, and adds
 commands from your user and configuration profiles. Fish syntax is not supported.
 
 If you manage Zsh with Rootbeer, [`zsh.config()`](/modules/zsh) sets up package

@@ -4,7 +4,7 @@
 set -e
 
 BASE_URL="https://rbpkg.com/nightly"
-INSTALL_DIR="${HOME}/.rootbeer/bin"
+PROFILE_BIN="${XDG_STATE_HOME:-${HOME}/.local/state}/rootbeer/profiles/user/current/bin"
 
 detect_platform() {
 	os=$(uname -s)
@@ -31,13 +31,31 @@ detect_platform() {
 	echo "${os}-${arch}"
 }
 
+download() {
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL "$1" -o "$2"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q "$1" -O "$2"
+	else
+		echo "error: curl or wget is required" >&2
+		exit 1
+	fi
+}
+
+# Piped installs (curl | sh) still reach the terminal for the one-time sudo prompt.
+interactive() {
+	if [ -t 0 ] || ! (: </dev/tty) 2>/dev/null; then
+		"$@"
+	else
+		"$@" </dev/tty
+	fi
+}
+
 main() {
-	for tool in curl unzip; do
-		if ! command -v "$tool" >/dev/null 2>&1; then
-			echo "error: $tool is required; install it with your system package manager and retry" >&2
-			exit 1
-		fi
-	done
+	if ! command -v tar >/dev/null 2>&1; then
+		echo "error: tar is required" >&2
+		exit 1
+	fi
 
 	platform=$(detect_platform)
 	if [ "$platform" = "macos-x86_64" ]; then
@@ -45,30 +63,25 @@ main() {
 		exit 1
 	fi
 
-	artifact="rb-${platform}.zip"
-	url="${BASE_URL}/${artifact}"
-
 	tmpdir=$(mktemp -d)
 	trap 'rm -rf "$tmpdir"' EXIT
 
 	echo "downloading rootbeer nightly for ${platform}..."
-	curl -fsSL "$url" -o "${tmpdir}/rb.zip"
-	unzip -q "${tmpdir}/rb.zip" -d "${tmpdir}"
-	chmod +x "${tmpdir}/rb"
+	download "${BASE_URL}/rb-${platform}.tar.gz" "${tmpdir}/rb.tar.gz"
+	tar -xzf "${tmpdir}/rb.tar.gz" -C "${tmpdir}"
+	chmod +x "${tmpdir}/rb" "${tmpdir}/rb-store"
 
-	mkdir -p "${INSTALL_DIR}"
-	mv "${tmpdir}/rb" "${INSTALL_DIR}/rb"
+	# The downloaded rb is only a bootstrap; rootbeer installs and updates itself from the profile.
+	interactive "${tmpdir}/rb" use rootbeer
 
-	echo ""
-	echo "rootbeer installed to ${INSTALL_DIR}/rb"
 	echo ""
 	echo "add this to your shell profile:"
-	echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+	echo "  eval \"\$(\"${PROFILE_BIN}/rb\" env)\""
 
 	if [ $# -gt 0 ]; then
 		echo ""
-		echo "running: ${INSTALL_DIR}/rb $*"
-		PATH="${INSTALL_DIR}:$PATH" "${INSTALL_DIR}/rb" "$@"
+		echo "running: rb $*"
+		PATH="${PROFILE_BIN}:$PATH" interactive "${PROFILE_BIN}/rb" "$@"
 	fi
 }
 
